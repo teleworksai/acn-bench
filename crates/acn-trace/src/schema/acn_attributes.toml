@@ -1,0 +1,1011 @@
+# acn_attributes.toml — the complete `acn.*` inventory (TRC-20). FROZEN SET (CON-7):
+# every change is a Class C PR and moves `env_hash` and `engine_hash`.
+#
+# Spans, span events, attributes (type, unit, producers, where they sit, when an
+# optional one is present, whether it is promoted to a typed Parquet column, TRC-25),
+# run options with their defaults (CON-29), and the per-provider normalisation (TRC-21).
+# Units follow the suffix: `_ms` float milliseconds, `_ns` int nanoseconds on the run
+# clock, `_tokens` and `*bytes*` ints, `_kbps` float; booleans carry no suffix.
+# An optional attribute is present when `when` holds and absent, never zero, otherwise.
+# Order is normative: the promoted columns of `spans.parquet` follow the TRC-25 columns
+# in the order of this file, and a closed `values` list is written in the spec's order.
+
+schema_version = 1
+
+[[span]]
+name = "acn.session"
+kind = ["internal"]
+parents = ["root"]
+producers = ["acn-harness", "acn-gen"]
+requirement = "TRC-10"
+
+[[span]]
+name = "acn.turn"
+kind = ["internal"]
+parents = ["acn.session"]
+producers = ["acn-harness", "acn-gen"]
+requirement = "TRC-11"
+
+[[span]]
+name = "chat"
+kind = ["client"]
+parents = ["acn.turn", "invoke_agent"]
+producers = ["acn-harness", "acn-gen"]
+requirement = "TRC-12"
+
+[[span]]
+name = "execute_tool"
+kind = ["internal", "client"]
+parents = ["acn.turn", "invoke_agent"]
+producers = ["acn-harness", "acn-gen"]
+requirement = "TRC-13"
+
+[[span]]
+name = "invoke_agent"
+kind = ["internal"]
+parents = ["acn.turn", "invoke_agent", "execute_tool"]
+producers = ["acn-harness", "acn-gen"]
+requirement = "TRC-14"
+
+[[span]]
+name = "acn.link"
+kind = ["internal"]
+parents = ["chat", "execute_tool"]
+producers = ["acn-emu"]
+requirement = "TRC-15"
+
+[[span]]
+name = "acn.scenario"
+kind = ["internal"]
+parents = ["root"]
+producers = ["acn-emu"]
+requirement = "TRC-16"
+
+[[span]]
+name = "acn.replay.roundtrip"
+kind = ["internal"]
+parents = ["acn.session"]
+producers = ["acn-replay"]
+requirement = "TRC-17"
+
+[[event]]
+name = "acn.stream.first_token"
+on = "chat"
+producers = ["acn-harness", "acn-gen"]
+requirement = "TRC-12"
+
+[[event]]
+name = "acn.stream.last_token"
+on = "chat"
+producers = ["acn-harness", "acn-gen"]
+requirement = "TRC-12"
+
+[[event]]
+name = "acn.stream.stall"
+on = "chat"
+producers = ["acn-harness", "acn-gen"]
+requirement = "TRC-12"
+fields = [{ name = "gap_ms", type = "float", unit = "ms" }, { name = "tokens_before", type = "int", unit = "tokens" }]
+
+[[event]]
+name = "acn.scenario.step"
+on = "acn.scenario"
+producers = ["acn-emu"]
+requirement = "TRC-15"
+fields = [{ name = "step", type = "string", unit = "" }, { name = "params", type = "string", unit = "" }]
+
+[[event]]
+name = "acn.scenario.outage"
+on = "acn.scenario"
+producers = ["acn-emu"]
+requirement = "TRC-15"
+fields = [{ name = "start_ns", type = "int", unit = "ns" }, { name = "end_ns", type = "int", unit = "ns" }, { name = "cause", type = "string", unit = "", values = ["handover", "scheduled", "trace"] }]
+
+[[attribute]]
+name = "acn.run_id"
+on = ["acn.session"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-10"
+doc = "run identifier (CON-29), lowercase hex"
+
+[[attribute]]
+name = "acn.hypothesis.id"
+on = ["acn.session"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-10"
+doc = "hypothesis id, or `none`"
+
+[[attribute]]
+name = "acn.hypothesis.status"
+on = ["acn.session"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+values = ["candidate", "frozen"]
+requirement = "TRC-10"
+doc = "status decided by HYP-3"
+
+[[attribute]]
+name = "acn.backend"
+on = ["acn.session"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-10"
+doc = "inference backend; an open list (mockllm, anthropic, openai, vllm, sglang, …)"
+
+[[attribute]]
+name = "acn.mode"
+on = ["acn.session"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+values = ["sim", "live", "netem"]
+requirement = "TRC-10"
+doc = "execution mode"
+
+[[attribute]]
+name = "acn.scenario.hash"
+on = ["acn.session", "acn.scenario"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen", "acn-emu"]
+required = true
+promoted = true
+requirement = "TRC-10"
+doc = "BLAKE3 of the scenario file (CON-27a)"
+
+[[attribute]]
+name = "acn.workload.hash"
+on = ["acn.session"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-10"
+doc = "BLAKE3 of the workload file (CON-27a)"
+
+[[attribute]]
+name = "acn.seed"
+on = ["acn.session"]
+type = "int"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-10"
+doc = "run seed, 63-bit (CON-30)"
+
+[[attribute]]
+name = "acn.replicate"
+on = ["acn.session"]
+type = "int"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-10"
+doc = "replicate index i (CON-30a)"
+
+[[attribute]]
+name = "acn.role"
+on = ["acn.session"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+values = ["treatment", "control", "researcher"]
+requirement = "TRC-10"
+doc = "arm, or researcher for LOOP-21 sessions"
+
+[[attribute]]
+name = "acn.harness.knobs"
+on = ["acn.session"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = false
+requirement = "TRC-10"
+doc = "JSON string of the knob map in force (SPEC 040)"
+
+[[attribute]]
+name = "acn.stall_threshold_ms"
+on = ["acn.session"]
+type = "float"
+unit = "ms"
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-12"
+doc = "gap above which a stream stall event is emitted; the value of `opt.stall_threshold_ms`"
+
+[[attribute]]
+name = "acn.keep_content"
+on = ["acn.session"]
+type = "bool"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-42"
+doc = "whether raw provider content is kept in the sidecar; the value of `opt.keep_content`"
+
+[[attribute]]
+name = "acn.turn.index"
+on = ["acn.turn"]
+type = "int"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-11"
+doc = "turn index within the session, from 0"
+
+[[attribute]]
+name = "acn.turn.deadline_ms"
+on = ["acn.turn"]
+type = "float"
+unit = "ms"
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "the turn has a deadline"
+promoted = true
+requirement = "TRC-11"
+doc = "turn deadline"
+
+[[attribute]]
+name = "acn.turn.outcome"
+on = ["acn.turn"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+values = ["success", "failure", "timeout", "aborted"]
+requirement = "TRC-11"
+doc = "decided by the workload's checker"
+
+[[attribute]]
+name = "acn.turn.first_useful_result_ms"
+on = ["acn.turn"]
+type = "float"
+unit = "ms"
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "a useful result was produced"
+promoted = true
+requirement = "TRC-11"
+doc = "offset from turn start"
+
+[[attribute]]
+name = "acn.turn.compaction"
+on = ["acn.turn"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+values = ["none", "window_full", "read_cost_threshold"]
+requirement = "TRC-11"
+doc = "compaction that ran in this turn"
+
+[[attribute]]
+name = "acn.call.index"
+on = ["chat"]
+type = "int"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-12"
+doc = "index of the chat within one lineage and turn, from 0, in start order"
+
+[[attribute]]
+name = "acn.call.input_tokens"
+on = ["chat"]
+type = "int"
+unit = "tokens"
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "the provider returned usage"
+promoted = true
+requirement = "TRC-12"
+doc = "total prompt length, cached or not (TRC-21)"
+
+[[attribute]]
+name = "acn.call.new_input_tokens"
+on = ["chat"]
+type = "int"
+unit = "tokens"
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "the provider returned usage"
+promoted = true
+requirement = "TRC-12"
+doc = "input tokens beyond the longest common prefix with the previous context of the lineage"
+
+[[attribute]]
+name = "acn.call.new_input_tokens_method"
+on = ["chat"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+values = ["tokens", "bytes_scaled"]
+requirement = "TRC-12"
+doc = "how this run measures new_input_tokens; one method per run (HYP-20), stated on every call whether or not the provider returned usage"
+
+[[attribute]]
+name = "acn.call.output_tokens"
+on = ["chat"]
+type = "int"
+unit = "tokens"
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "the provider returned usage"
+promoted = true
+requirement = "TRC-12"
+doc = "completion length"
+
+[[attribute]]
+name = "acn.call.stop_reason"
+on = ["chat"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "the call ended with a provider stop reason or was cut by the client or the link"
+promoted = true
+values = ["end_turn", "tool_use", "max_tokens", "stop_sequence", "content_filter", "client_abort", "transport_error", "other"]
+requirement = "TRC-12"
+doc = "normalised stop reason (TRC-21)"
+
+[[attribute]]
+name = "acn.call.stop_reason_raw"
+on = ["chat"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "the provider reported one"
+promoted = true
+requirement = "TRC-12"
+doc = "the provider's own stop value"
+
+[[attribute]]
+name = "acn.cache.read_tokens"
+on = ["chat"]
+type = "int"
+unit = "tokens"
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "the provider reported a cache-read count, or returned usage and its mapping says an absent count means zero"
+promoted = true
+requirement = "TRC-12"
+doc = "tokens served from the provider's cache (TRC-21)"
+
+[[attribute]]
+name = "acn.cache.write_tokens"
+on = ["chat"]
+type = "int"
+unit = "tokens"
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "the provider returned usage"
+promoted = true
+requirement = "TRC-12"
+doc = "tokens written to the provider's cache; 0 when the provider has no such concept (TRC-21)"
+
+[[attribute]]
+name = "acn.call.ttft_ms"
+on = ["chat"]
+type = "float"
+unit = "ms"
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "at least one token arrived"
+promoted = true
+requirement = "TRC-12"
+doc = "time to first token; total time for a non-streamed call"
+
+[[attribute]]
+name = "acn.call.itl_p50_ms"
+on = ["chat"]
+type = "float"
+unit = "ms"
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "streamed, at least two tokens"
+promoted = true
+requirement = "TRC-12"
+doc = "median inter-token latency"
+
+[[attribute]]
+name = "acn.call.itl_p99_ms"
+on = ["chat"]
+type = "float"
+unit = "ms"
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "streamed, at least two tokens"
+promoted = true
+requirement = "TRC-12"
+doc = "99th percentile inter-token latency"
+
+[[attribute]]
+name = "acn.call.wire_bytes_up"
+on = ["chat"]
+type = "int"
+unit = "bytes"
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-12"
+doc = "request bytes on the wire"
+
+[[attribute]]
+name = "acn.call.wire_bytes_down"
+on = ["chat"]
+type = "int"
+unit = "bytes"
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-12"
+doc = "response bytes on the wire"
+
+[[attribute]]
+name = "acn.call.streamed"
+on = ["chat"]
+type = "bool"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-12"
+doc = "whether the response was streamed"
+
+[[attribute]]
+name = "acn.call.retries"
+on = ["chat"]
+type = "int"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-12"
+doc = "retries before this call completed"
+
+[[attribute]]
+name = "acn.call.error_class"
+on = ["chat"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "the call failed"
+promoted = true
+requirement = "TRC-12"
+doc = "class of the failure"
+
+[[attribute]]
+name = "acn.server.queue_ms"
+on = ["chat"]
+type = "float"
+unit = "ms"
+producers = ["acn-trace"]
+required = false
+when = "the inference node's spans allow it"
+promoted = true
+requirement = "TRC-18"
+doc = "server-side queue time, derived at ingest"
+
+[[attribute]]
+name = "acn.server.prefill_ms"
+on = ["chat"]
+type = "float"
+unit = "ms"
+producers = ["acn-trace"]
+required = false
+when = "the inference node's spans allow it"
+promoted = true
+requirement = "TRC-18"
+doc = "server-side prefill time, derived at ingest"
+
+[[attribute]]
+name = "acn.server.decode_ms"
+on = ["chat"]
+type = "float"
+unit = "ms"
+producers = ["acn-trace"]
+required = false
+when = "the inference node's spans allow it"
+promoted = true
+requirement = "TRC-18"
+doc = "server-side decode time, derived at ingest"
+
+[[attribute]]
+name = "acn.tool.class"
+on = ["execute_tool"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+values = ["file", "shell", "search", "http", "subagent", "testbed", "other"]
+requirement = "TRC-13"
+doc = "tool class"
+
+[[attribute]]
+name = "acn.tool.result_bytes"
+on = ["execute_tool"]
+type = "int"
+unit = "bytes"
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-13"
+doc = "size of the tool result"
+
+[[attribute]]
+name = "acn.tool.placement"
+on = ["execute_tool"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+values = ["local", "remote"]
+requirement = "TRC-13"
+doc = "where the tool ran"
+
+[[attribute]]
+name = "acn.tool.requesting_call"
+on = ["execute_tool"]
+type = "int"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-13"
+doc = "acn.call.index of the chat whose response asked for this tool"
+
+[[attribute]]
+name = "acn.fanout.parent_turn"
+on = ["invoke_agent"]
+type = "int"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-14"
+doc = "turn index of the spawning chat"
+
+[[attribute]]
+name = "acn.fanout.parent_call"
+on = ["invoke_agent"]
+type = "int"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-14"
+doc = "acn.call.index of the spawning chat"
+
+[[attribute]]
+name = "acn.fanout.parent_lineage"
+on = ["invoke_agent"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "the spawner is itself a sub-agent"
+promoted = true
+requirement = "TRC-14"
+doc = "span_id, 16 lowercase hex, of the spawner's own invoke_agent"
+
+[[attribute]]
+name = "acn.fanout.depth"
+on = ["invoke_agent"]
+type = "int"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-14"
+doc = "1 for a child of the main chain"
+
+[[attribute]]
+name = "acn.fanout.width"
+on = ["invoke_agent"]
+type = "int"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-14"
+doc = "siblings spawned by the same parent call, this one included"
+
+[[attribute]]
+name = "acn.fanout.shared_prefix_tokens"
+on = ["invoke_agent"]
+type = "int"
+unit = "tokens"
+producers = ["acn-harness", "acn-gen"]
+required = true
+promoted = true
+requirement = "TRC-14"
+doc = "prefix shared with the parent context"
+
+[[attribute]]
+name = "acn.link.id"
+on = ["acn.link"]
+type = "string"
+unit = ""
+producers = ["acn-emu"]
+required = true
+promoted = true
+requirement = "TRC-15"
+doc = "the scenario's name for the link"
+
+[[attribute]]
+name = "acn.link.direction"
+on = ["acn.link"]
+type = "string"
+unit = ""
+producers = ["acn-emu"]
+required = true
+promoted = true
+values = ["up", "down"]
+requirement = "TRC-15"
+doc = "direction across the boundary"
+
+[[attribute]]
+name = "acn.link.bytes"
+on = ["acn.link"]
+type = "int"
+unit = "bytes"
+producers = ["acn-emu"]
+required = true
+promoted = true
+requirement = "TRC-15"
+doc = "size of the message or segment"
+
+[[attribute]]
+name = "acn.link.enqueue_ns"
+on = ["acn.link"]
+type = "int"
+unit = "ns"
+producers = ["acn-emu"]
+required = true
+promoted = true
+requirement = "TRC-15"
+doc = "enqueue time on the run clock"
+
+[[attribute]]
+name = "acn.link.dequeue_ns"
+on = ["acn.link"]
+type = "int"
+unit = "ns"
+producers = ["acn-emu"]
+required = true
+promoted = true
+requirement = "TRC-15"
+doc = "dequeue time on the run clock"
+
+[[attribute]]
+name = "acn.link.applied_delay_ms"
+on = ["acn.link"]
+type = "float"
+unit = "ms"
+producers = ["acn-emu"]
+required = true
+promoted = true
+requirement = "TRC-15"
+doc = "delay the link model applied"
+
+[[attribute]]
+name = "acn.link.dropped"
+on = ["acn.link"]
+type = "bool"
+unit = ""
+producers = ["acn-emu"]
+required = true
+promoted = true
+requirement = "TRC-15"
+doc = "whether the link dropped it"
+
+[[attribute]]
+name = "acn.link.reordered"
+on = ["acn.link"]
+type = "bool"
+unit = ""
+producers = ["acn-emu"]
+required = true
+promoted = true
+requirement = "TRC-15"
+doc = "whether it was delivered out of order"
+
+[[attribute]]
+name = "acn.link.rate_limited_ms"
+on = ["acn.link"]
+type = "float"
+unit = "ms"
+producers = ["acn-emu"]
+required = true
+promoted = true
+requirement = "TRC-15"
+doc = "time held by the rate limiter"
+
+[[attribute]]
+name = "acn.link.model"
+on = ["acn.link"]
+type = "string"
+unit = ""
+producers = ["acn-emu"]
+required = true
+promoted = true
+requirement = "TRC-15"
+doc = "scenario link-model name"
+
+[[attribute]]
+name = "acn.scenario.toml"
+on = ["acn.scenario"]
+type = "string"
+unit = ""
+producers = ["acn-emu"]
+required = true
+promoted = false
+requirement = "TRC-16"
+doc = "the full scenario file"
+
+[[attribute]]
+name = "acn.replay.frame_index"
+on = ["acn.replay.roundtrip"]
+type = "int"
+unit = ""
+producers = ["acn-replay"]
+required = true
+promoted = true
+requirement = "TRC-17"
+doc = "frame index"
+
+[[attribute]]
+name = "acn.replay.obs_age_ms"
+on = ["acn.replay.roundtrip"]
+type = "float"
+unit = "ms"
+producers = ["acn-replay"]
+required = true
+promoted = true
+requirement = "TRC-17"
+doc = "age of the observation when acted on"
+
+[[attribute]]
+name = "acn.replay.deadline_ms"
+on = ["acn.replay.roundtrip"]
+type = "float"
+unit = "ms"
+producers = ["acn-replay"]
+required = true
+promoted = true
+requirement = "TRC-17"
+doc = "cycle deadline"
+
+[[attribute]]
+name = "acn.replay.deadline_missed"
+on = ["acn.replay.roundtrip"]
+type = "bool"
+unit = ""
+producers = ["acn-replay"]
+required = true
+promoted = true
+requirement = "TRC-17"
+doc = "whether the deadline was missed"
+
+[[attribute]]
+name = "acn.replay.fallback"
+on = ["acn.replay.roundtrip"]
+type = "bool"
+unit = ""
+producers = ["acn-replay"]
+required = true
+promoted = true
+requirement = "TRC-17"
+doc = "whether the fallback policy acted"
+
+[[attribute]]
+name = "acn.replay.bitrate_kbps"
+on = ["acn.replay.roundtrip"]
+type = "float"
+unit = "kbps"
+producers = ["acn-replay"]
+required = true
+promoted = true
+requirement = "TRC-17"
+doc = "sensor bitrate in force"
+
+[[attribute]]
+name = "acn.replay.score"
+on = ["acn.replay.roundtrip"]
+type = "float"
+unit = ""
+producers = ["acn-replay"]
+required = true
+promoted = true
+requirement = "TRC-17"
+doc = "task score of the cycle"
+
+[[attribute]]
+name = "acn.replay.mcap_topic"
+on = ["acn.replay.roundtrip"]
+type = "string"
+unit = ""
+producers = ["acn-replay"]
+required = true
+promoted = true
+requirement = "TRC-40"
+doc = "MCAP topic of the frame"
+
+[[attribute]]
+name = "acn.replay.log_time_ns"
+on = ["acn.replay.roundtrip"]
+type = "int"
+unit = "ns"
+producers = ["acn-replay"]
+required = true
+promoted = true
+requirement = "TRC-40"
+doc = "MCAP log time of the frame"
+
+[[attribute]]
+name = "acn.ingest.clock_offset_ns"
+on = ["*"]
+type = "int"
+unit = "ns"
+producers = ["acn-trace"]
+required = false
+when = "the span came from a producer on another machine"
+promoted = true
+requirement = "TRC-26"
+doc = "clock offset the ingester applied"
+
+[[attribute]]
+name = "acn.engine_hash"
+on = ["resource"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen", "acn-emu", "acn-mockllm", "acn-replay"]
+required = true
+promoted = false
+requirement = "TRC-19"
+doc = "engine hash (CON-28)"
+
+[[attribute]]
+name = "acn.build_hash"
+on = ["resource"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen", "acn-emu", "acn-mockllm", "acn-replay"]
+required = true
+promoted = false
+requirement = "TRC-19"
+doc = "build hash (CON-31)"
+
+# ---- run options (CON-29). A run parameter `opt.<name>` enters `params_hash` only when
+# ---- it differs from the default recorded here, so adding an option changes no
+# ---- existing run_id and changing a default moves `engine_hash`. A default is written
+# ---- in the text form of CON-27(c) and the loader rejects any other spelling. An option
+# ---- differs from its default when its value, parsed to the declared type and written
+# ---- as CON-27(c), is not byte-equal to `default`; raw command-line text is never
+# ---- compared. An option records into one required `acn.session` attribute of its own.
+
+[[option]]
+name = "opt.stall_threshold_ms"
+type = "float"
+default = "250.0"
+attribute = "acn.stall_threshold_ms"
+doc = "gap above which `acn.stream.stall` is emitted"
+
+[[option]]
+name = "opt.keep_content"
+type = "bool"
+default = "false"
+attribute = "acn.keep_content"
+doc = "keep raw provider message content in the sidecar (TRC-42); such a run is never published"
+
+# ---- provider normalisation (TRC-21). The rules are part of this frozen file:
+# ----  * A path is a dotted path into the COMPLETE response object: the non-streamed body,
+# ----    or for a streamed call the object the stream assembles to. Anthropic Messages:
+# ----    `message_start.message` with `message_delta.delta` and `message_delta.usage`
+# ----    merged over it, later values winning. OpenAI-compatible Chat Completions: the
+# ----    per-choice deltas accumulated, `usage` from the final chunk, which exists only
+# ----    when the request set `stream_options.include_usage`. The OpenAI Responses API
+# ----    has other field names and is not mapped.
+# ----  * `input_tokens` lists the fields that are SUMMED to the total prompt length,
+# ----    because providers differ on whether the prompt count includes cached tokens
+# ----    (TRC-12). `input_tokens_base` is the provider's own prompt count: when it is
+# ----    absent there is no usage and every count is absent; a `usage` object without
+# ----    it is an error, not silence.
+# ----  * `cache_read_absent` says what a missing cache-read field means once usage is
+# ----    present: `zero` when the provider always reports the field, `absent` when it
+# ----    may simply not report it. vLLM reports it only under
+# ----    `--enable-prompt-tokens-details` and SGLang only under `--enable-cache-report`,
+# ----    and both may omit it when the count is zero: for them, and for OpenAI, a
+# ----    missing field is unknown, never an invented zero.
+# ----  * No `cache_write` key means the provider has no such concept: the value is 0.
+# ----  * A count is a non-negative integer that fits a signed 64-bit column; a cache-read
+# ----    count above the total is an error.
+# ----  * A stop value that is not listed maps to `other`; the raw value is always kept.
+# ----    `client_abort` and `transport_error` are what the harness observes when the
+# ----    client or the link cut the call: no provider value may map to them.
+
+[[provider]]
+name = "anthropic"
+input_tokens = ["usage.input_tokens", "usage.cache_read_input_tokens", "usage.cache_creation_input_tokens"]
+input_tokens_base = "usage.input_tokens"
+output_tokens = "usage.output_tokens"
+cache_read = "usage.cache_read_input_tokens"
+cache_read_absent = "zero"
+cache_write = "usage.cache_creation_input_tokens"
+stop_reason_field = "stop_reason"
+stop_reason = { end_turn = "end_turn", tool_use = "tool_use", max_tokens = "max_tokens", stop_sequence = "stop_sequence", refusal = "content_filter", pause_turn = "other", model_context_window_exceeded = "max_tokens" }
+
+[[provider]]
+name = "openai"
+input_tokens = ["usage.prompt_tokens"]
+input_tokens_base = "usage.prompt_tokens"
+output_tokens = "usage.completion_tokens"
+cache_read = "usage.prompt_tokens_details.cached_tokens"
+cache_read_absent = "absent"
+stop_reason_field = "choices.0.finish_reason"
+stop_reason = { stop = "end_turn", tool_calls = "tool_use", function_call = "tool_use", length = "max_tokens", content_filter = "content_filter" }
+
+[[provider]]
+name = "vllm"
+input_tokens = ["usage.prompt_tokens"]
+input_tokens_base = "usage.prompt_tokens"
+output_tokens = "usage.completion_tokens"
+cache_read = "usage.prompt_tokens_details.cached_tokens"
+cache_read_absent = "absent"
+stop_reason_field = "choices.0.finish_reason"
+stop_reason = { stop = "end_turn", tool_calls = "tool_use", length = "max_tokens", abort = "other" }
+
+[[provider]]
+name = "sglang"
+input_tokens = ["usage.prompt_tokens"]
+input_tokens_base = "usage.prompt_tokens"
+output_tokens = "usage.completion_tokens"
+cache_read = "usage.prompt_tokens_details.cached_tokens"
+cache_read_absent = "absent"
+stop_reason_field = "choices.0.finish_reason"
+stop_reason = { stop = "end_turn", tool_calls = "tool_use", length = "max_tokens", abort = "other" }
+
+[[provider]]
+name = "mockllm"
+input_tokens = ["usage.prompt_tokens"]
+input_tokens_base = "usage.prompt_tokens"
+output_tokens = "usage.completion_tokens"
+cache_read = "usage.prompt_tokens_details.cached_tokens"
+cache_read_absent = "zero"
+cache_write = "usage.prompt_tokens_details.cache_write_tokens"
+stop_reason_field = "choices.0.finish_reason"
+stop_reason = { stop = "end_turn", tool_calls = "tool_use", length = "max_tokens", content_filter = "content_filter" }

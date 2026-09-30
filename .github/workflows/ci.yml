@@ -1,0 +1,81 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 7 * * *" # nightly tiers (CON-12)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gates:
+    strategy:
+      fail-fast: false
+      matrix:
+        # CON-1: macOS arm64, Linux x86_64, Linux aarch64.
+        os: [macos-latest, ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # build scripts and tests never see the token
+      # CON-2: the toolchain is the one pinned in rust-toolchain.toml, never floating stable.
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2
+        with:
+          # Pinned: the version must not move with every bump of the action. No
+          # fallback: the only install path is the checksum-verified release.
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - run: tools/ci.sh
+
+  lab:
+    # CON-23: the only gates for lab crates are fmt and clippy on the crate itself.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # build scripts and tests never see the token
+      - run: rustup toolchain install
+      - name: fmt and clippy on every lab crate
+        run: |
+          set -euo pipefail
+          for manifest in lab/*/Cargo.toml; do
+            echo "::group::${manifest}"
+            cargo fmt --manifest-path "${manifest}" --check
+            cargo clippy --manifest-path "${manifest}" --all-targets -- -D warnings
+            echo "::endgroup::"
+          done
+
+  nightly:
+    # CON-12: every tier that can run unattended runs in full each night; live and
+    # netem join as they land (acn-accept is a workspace member, so it is included).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # build scripts and tests never see the token
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo test --workspace
+
+  netem:
+    # Linux-only ignored tier. Enabled by the repository variable NETEM_ENABLED once
+    # T40 adds the `netem` feature; kept here so the job name is stable.
+    if: github.event_name == 'schedule' && vars.NETEM_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # build scripts and tests never see the token
+      - run: rustup toolchain install
+      - run: sudo -E env "PATH=$PATH" cargo test --workspace --features netem -- --ignored

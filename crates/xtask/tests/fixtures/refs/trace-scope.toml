@@ -1,0 +1,4 @@
+# Fixture scope: section 1 of SPEC 900 is implemented.
+[[implemented]]
+spec = "900"
+sections = ["1"]

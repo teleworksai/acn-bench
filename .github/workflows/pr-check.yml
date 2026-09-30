@@ -1,0 +1,42 @@
+name: pr-check
+# CON-14 / CON-7 / LOOP-20: label rules and CODEOWNERS coverage (ADR-6). A separate
+# workflow so that adding or removing a label re-runs this job only, not the gate matrix.
+on:
+  pull_request:
+    # edited: retargeting the PR to another base must re-run the check.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false # build scripts and tests never see the token
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: cargo xtask pr-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        # The labels and the base are read from the API when the job runs, not from
+        # the event: re-running an old run replays its payload, and a label removed
+        # since then would still be in it (ADR-6, amendment 2). Values reach the
+        # shell through the environment and files only, never through `${{ }}`.
+        # A full ref name: a tag called origin/<branch> cannot shadow the base.
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPO}/pulls/${PR_NUMBER}" > "${RUNNER_TEMP}/pr.json"
+          base="$(jq -er '.base.ref' "${RUNNER_TEMP}/pr.json")"
+          labels="$(jq -ec '[.labels[].name]' "${RUNNER_TEMP}/pr.json")"
+          cargo xtask pr-check --base "refs/remotes/origin/${base}" --labels-json "${labels}"

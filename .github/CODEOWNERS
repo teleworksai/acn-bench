@@ -1,0 +1,26 @@
+# Enforcement points: changing these changes what the gates check or how they
+# run. `cargo xtask pr-check` requires every entry (ADR-6, amendment 2).
+/.github/workflows/              @teleworksai
+/.github/dependabot.yml          @teleworksai
+/.cargo/                         @teleworksai
+/Cargo.toml                      @teleworksai
+/Cargo.lock                      @teleworksai
+/clippy.toml                     @teleworksai
+/deny.toml                       @teleworksai
+/rust-toolchain.toml             @teleworksai
+/tools/ci.sh                     @teleworksai
+/crates/xtask/                   @teleworksai
+/lab/clippy.toml                 @teleworksai
+
+# CON-7 / CON-10 / LOOP-20: protected paths need a human merge. Keep these exact
+# entries last: GitHub applies the last matching pattern (ADR-6).
+/hypotheses/                     @teleworksai
+/scenarios/measured/             @teleworksai
+/crates/acn-hyp/                 @teleworksai
+/crates/acn-attrib/src/core/     @teleworksai
+/crates/acn-trace/src/schema/    @teleworksai
+/specs/                          @teleworksai
+/env-hash.json                   @teleworksai
+/trace-scope.toml                @teleworksai
+/docs/gates/                     @teleworksai
+/.github/CODEOWNERS              @teleworksai

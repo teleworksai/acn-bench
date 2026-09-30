@@ -1,0 +1,3 @@
+# CON-23: lab crates are exempt from the substrate's determinism bans (CON-5).
+# Clippy uses the nearest clippy.toml above a crate, so this file shields lab/
+# from the root configuration. Keep it free of disallowed-* entries.

@@ -1,0 +1,24 @@
+[package]
+name = "lab-turn-transport"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+blake3 = "1"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rcgen = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "sync", "io-util"] }
+
+# An empty [workspace] makes this crate its own workspace root, so cargo never
+# walks up to the substrate's manifest (ADR-7). Keep it.
+[workspace]

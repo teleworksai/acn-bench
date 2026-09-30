@@ -1,0 +1,47 @@
+# CON-5: time and randomness are injected; ambient sources are banned outside
+# acn_emu::{clock,rng}, which opt out locally with #[allow] (ADR-8).
+disallowed-methods = [
+  { path = "std::time::Instant::now", reason = "CON-5: use the injected Clock" },
+  { path = "std::time::SystemTime::now", reason = "CON-5: use the injected Clock" },
+  { path = "tokio::time::Instant::now", reason = "CON-5: use the injected Clock" },
+  { path = "chrono::Utc::now", reason = "CON-5: use the injected Clock" },
+  { path = "chrono::Local::now", reason = "CON-5: use the injected Clock" },
+  { path = "time::OffsetDateTime::now_utc", reason = "CON-5: use the injected Clock" },
+  { path = "std::thread::sleep", reason = "CON-3/CON-5: no blocking sleeps on the run path" },
+  { path = "rand::thread_rng", reason = "CON-5: use the injected ChaCha20Rng" },
+  { path = "rand::rng", reason = "CON-5: use the injected ChaCha20Rng", allow-invalid = true }, # a module under rand 0.8, a function from 0.9
+  { path = "rand::random", reason = "CON-5: use the injected ChaCha20Rng" },
+  { path = "fastrand::Rng::new", reason = "CON-5: use the injected ChaCha20Rng" },
+  { path = "fastrand::u32", reason = "CON-5: use the injected ChaCha20Rng" },
+  { path = "fastrand::u64", reason = "CON-5: use the injected ChaCha20Rng" },
+  { path = "fastrand::usize", reason = "CON-5: use the injected ChaCha20Rng" },
+  { path = "fastrand::f64", reason = "CON-5: use the injected ChaCha20Rng" },
+  { path = "fastrand::bool", reason = "CON-5: use the injected ChaCha20Rng" },
+  { path = "fastrand::shuffle", reason = "CON-5: use the injected ChaCha20Rng" },
+  { path = "getrandom::fill", reason = "CON-5: use the injected ChaCha20Rng", allow-invalid = true },
+  { path = "getrandom::getrandom", reason = "CON-5: use the injected ChaCha20Rng", allow-invalid = true },
+  { path = "std::time::SystemTime::elapsed", reason = "CON-5: reads the wall clock; use the injected Clock" },
+  { path = "std::time::Instant::elapsed", reason = "CON-5: reads the monotonic clock; use the injected Clock" },
+  { path = "getrandom::u32", reason = "CON-5: use the injected ChaCha20Rng", allow-invalid = true },
+  { path = "getrandom::u64", reason = "CON-5: use the injected ChaCha20Rng", allow-invalid = true },
+  { path = "ahash::RandomState::new", reason = "CON-5: per-process random hasher seeds break byte-identical output" },
+  { path = "uuid::Uuid::new_v4", reason = "CON-5: derive identifiers from the run seed (TRC-27)" },
+  { path = "std::collections::hash_map::RandomState::new", reason = "CON-5: per-process random hasher seeds break byte-identical output" },
+]
+# CON-5(c): unordered maps iterate in a per-process random order, the classic
+# source of bundles that differ byte-for-byte. Use BTreeMap/BTreeSet (ADR-8).
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "CON-5(c): iteration order is random; use BTreeMap" },
+  { path = "std::collections::HashSet", reason = "CON-5(c): iteration order is random; use BTreeSet" },
+  { path = "hashbrown::HashMap", reason = "CON-5(c): iteration order is random; use BTreeMap" },
+  { path = "hashbrown::HashSet", reason = "CON-5(c): iteration order is random; use BTreeSet" },
+  { path = "ahash::AHashMap", reason = "CON-5(c): iteration order is random; use BTreeMap" },
+  { path = "ahash::AHashSet", reason = "CON-5(c): iteration order is random; use BTreeSet" },
+  { path = "std::hash::RandomState", reason = "CON-5: a per-process random hasher seed, however it is constructed" },
+  { path = "rand::rngs::OsRng", reason = "CON-5: use the injected ChaCha20Rng" },
+  { path = "rand::rngs::ThreadRng", reason = "CON-5: use the injected ChaCha20Rng" },
+]
+# CON-19: the unwrap/expect/panic lints are denied in library targets; tests are exempt.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

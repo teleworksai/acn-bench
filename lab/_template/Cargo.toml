@@ -1,0 +1,11 @@
+[package]
+name = "lab-template"          # rename to lab-<slug>
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+
+# An empty [workspace] makes this crate its own workspace root, so cargo never
+# walks up to the substrate's manifest (ADR-7). Keep it.
+[workspace]

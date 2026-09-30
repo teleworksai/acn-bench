@@ -1,0 +1,22 @@
+# trace-scope.toml — which spec sections/IDs are implemented (CON-12, ADR-3).
+# `cargo xtask trace-check` requires every MUST listed here to be cited by a
+# `/// Cites:` test. Add IDs (or whole sections) in the PR that implements them.
+
+[[implemented]]
+spec = "000"
+ids = ["CON-2", "CON-6", "CON-7", "CON-8", "CON-9", "CON-12", "CON-19", "CON-20"]
+
+[[implemented]]
+spec = "010"
+ids = ["TRC-2", "TRC-20", "TRC-21"]
+
+# T02 lands as a series of PRs (ADR-11); each adds the IDs it completes. Cited ahead of
+# scope by T02a: TRC-3 and TRC-12 (value sets), TRC-25 (promoted columns exist in the
+# inventory; the writer is T02b), TRC-31..34, TRC-37 and TRC-38 (the view schema is
+# declared; the writer that is checked against it is T02c).
+# Not yet in scope although cited: CON-5 (only its clippy clause exists until
+# acn_emu::{clock,rng} land in T10–T12). Citing ahead of scope is allowed (ADR-3 §1).
+# CON-28 is cited by the env-hash tests for the part that exists (`env-hash.json`
+# records `engine_hash`); its refuse-to-start clauses arrive with the run path.
+# CON-14 is cited by the pr-check tests but stays out of scope: the label rule is
+# enforced, the "states the rationale and the IDs" clause is not machine-checkable.

@@ -1,0 +1,3 @@
+[poc]
+id = "p7"
+spec = ["specs/900-fixture.md"]

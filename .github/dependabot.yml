@@ -1,0 +1,9 @@
+# Keeps the SHA-pinned actions current; each bump is an ordinary reviewed PR.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci(deps)"

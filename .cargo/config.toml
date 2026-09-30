@@ -1,0 +1,3 @@
+# `cargo xtask <task>` (CON-8, CON-9). --quiet keeps cargo's own chatter off stdout.
+[alias]
+xtask = "run --quiet --package xtask --"

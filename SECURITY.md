@@ -1,0 +1,10 @@
+# Security
+
+This is pre-release research code. Only `main` is supported.
+
+- **Reporting.** Use GitHub's private vulnerability reporting for this repository ("Security" → "Report a vulnerability"). If that button is not shown, open an issue that says only that you need a security contact, with no details, and the maintainer will open a private channel. Do not describe a suspected vulnerability in a public issue.
+- **Secrets.** API keys live in `.env`, which is gitignored, and will be read only behind the `real-api` feature (it arrives with T04; nothing reads them today). Never commit a key, a provider response containing message content, or a packet capture with payload (CON-21, TRC-42). Use low-limit, project-scoped keys. Keys are never CI secrets for `pull_request` runs, because those runs execute the PR's code. If a key leaks, rotate it first and report afterwards.
+- **Logs, traces and bundles.** Code must never log a request's `Authorization` value or a key, and provider error bodies can echo both, so they are not logged verbatim. Bundles under `runs/` are reviewed for content before they are published; a run made with message content kept (TRC-42) is never published.
+- **Measured traces.** Files under `scenarios/measured/` must carry timing, size and link-state fields only, with a provenance file: no payload, no identifiers (CON-21). Nothing checks this mechanically yet; it is a checklist item for the author, and for the reviewer when there is one, on every PR that adds one.
+- **Dependencies.** `cargo deny check` runs on every PR for the workspace: advisories, licences, banned crates, and unknown registries or git sources. Lab crates are outside the workspace and are not covered: they may use any dependency, and their build scripts run with your user's rights, so do not build an unfamiliar lab crate on a machine whose `.env` holds real keys.
+- **Privileged tests.** The `netem` tier needs root. In CI it runs only on the schedule, from `main`, never on a pull request's code.

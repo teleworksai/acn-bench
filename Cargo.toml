@@ -1,0 +1,56 @@
+# Workspace manifest. Cargo.lock is committed (T01); bump dependency versions here in the PR that first uses them.
+[workspace]
+resolver = "3"
+members = [
+  "crates/acn-trace", "crates/acn-emu", "crates/acn-mockllm", "crates/acn-harness",
+  "crates/acn-gen", "crates/acn-replay", "crates/acn-ctl", "crates/acn-hyp",
+  "crates/acn-attrib", "crates/acn-cli", "crates/xtask",
+  "tests/accept",   # package `acn-accept`: one integration test per POC
+]
+# CON-23: lab crates are standalone (own Cargo.lock, own target/, any dependencies).
+exclude = ["lab"]
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.89"
+
+[workspace.dependencies]
+acn-trace = { path = "crates/acn-trace" }
+tokio = { version = "1", features = ["full", "test-util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+rand_chacha = "0.3"
+rand_core = "0.6"
+blake3 = "1"
+arrow = "55"
+parquet = "55"
+axum = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+clap = { version = "4", features = ["derive"] }
+plotters = "0.3"
+opentelemetry = "0.30"
+opentelemetry_sdk = "0.30"
+tracing-opentelemetry = "0.31"
+zstd = "0.13"
+proptest = "1"
+walkdir = "2"
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+tempfile = "3"
+yaml-rust2 = { version = "0.13", default-features = false }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+disallowed_methods = "deny"
+disallowed_types = "deny"

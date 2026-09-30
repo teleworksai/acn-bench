@@ -1,0 +1,5 @@
+[poc]
+id = "p5"
+
+[other]
+spec = "specs/997-not-the-poc-table.md"

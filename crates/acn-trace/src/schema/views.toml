@@ -1,0 +1,717 @@
+# views.toml — every column of every derived view (TRC-37). FROZEN SET (CON-7).
+# The view writer is checked against this file, so the prose of TRC-31..34 and TRC-38
+# and the files on disk cannot drift; TRC-36 and the quantity table of HYP-12 resolve
+# column names here. Columns are written in the order of this file. Durations are int64
+# nanoseconds: a `_ms` float attribute is converted once per span, by round-half-even of
+# value x 1e6, before any aggregation, and every aggregate is an integer sum, so no value
+# depends on summation order. A time that the spans carry as timestamps (ttft, durations)
+# is computed from the timestamps, not from the float. A sum over values that may be
+# absent is null when ANY term is absent: a partial total never passes for a complete one.
+# When `source`, up to any `;` note, is exactly an attribute name, the loader checks the column against the
+# inventory: nullable exactly when the attribute is optional, and a matching type.
+# A column is nullable exactly when the span data it comes from may be absent; an
+# absent value is null, never zero (SPEC 010 section 3).
+
+schema_version = 1
+
+[[view]]
+name = "session"
+file = "views/session.parquet"
+row_per = "acn.session"
+requirement = "TRC-31"
+
+[[view.column]]
+name = "run_id"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.run_id"
+
+[[view.column]]
+name = "session_id"
+type = "fixed_size_binary(8)"
+unit = ""
+nullable = false
+source = "span_id of the acn.session"
+
+[[view.column]]
+name = "hypothesis_id"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.hypothesis.id"
+
+[[view.column]]
+name = "hypothesis_status"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.hypothesis.status"
+
+[[view.column]]
+name = "backend"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.backend"
+
+[[view.column]]
+name = "mode"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.mode"
+
+[[view.column]]
+name = "scenario_hash"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.scenario.hash"
+
+[[view.column]]
+name = "workload_hash"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.workload.hash"
+
+[[view.column]]
+name = "seed"
+type = "int64"
+unit = ""
+nullable = false
+source = "acn.seed"
+
+[[view.column]]
+name = "replicate"
+type = "int64"
+unit = ""
+nullable = false
+source = "acn.replicate"
+
+[[view.column]]
+name = "role"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.role"
+
+[[view.column]]
+name = "turns"
+type = "int64"
+unit = ""
+nullable = false
+source = "count of acn.turn children"
+
+[[view.column]]
+name = "calls"
+type = "int64"
+unit = ""
+nullable = false
+source = "count of chat descendants"
+
+[[view.column]]
+name = "duration_ns"
+type = "int64"
+unit = "ns"
+nullable = false
+source = "end_ns - start_ns"
+
+[[view.column]]
+name = "input_tokens_total"
+type = "int64"
+unit = "tokens"
+nullable = true
+source = "sum of acn.call.input_tokens; null when any call of the session lacks it"
+
+[[view.column]]
+name = "cache_read_tokens_total"
+type = "int64"
+unit = "tokens"
+nullable = true
+source = "sum of acn.cache.read_tokens; null when any call of the session lacks it"
+
+[[view.column]]
+name = "calls_with_usage"
+type = "int64"
+unit = ""
+nullable = false
+source = "chat descendants that carry acn.call.input_tokens"
+
+[[view.column]]
+name = "wire_bytes_up_total"
+type = "int64"
+unit = "bytes"
+nullable = false
+source = "sum of acn.call.wire_bytes_up"
+
+[[view.column]]
+name = "wire_bytes_down_total"
+type = "int64"
+unit = "bytes"
+nullable = false
+source = "sum of acn.call.wire_bytes_down"
+
+[[view.column]]
+name = "outcome_counts"
+type = "map<utf8,int64>"
+unit = ""
+nullable = false
+source = "turns per acn.turn.outcome: one entry per value of the closed set, zeros included, keys in bytewise order, values non-null"
+
+[[view]]
+name = "turn"
+file = "views/turn.parquet"
+row_per = "acn.turn"
+requirement = "TRC-32"
+
+[[view.column]]
+name = "run_id"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.run_id of the session"
+
+[[view.column]]
+name = "session_id"
+type = "fixed_size_binary(8)"
+unit = ""
+nullable = false
+source = "span_id of the acn.session"
+
+[[view.column]]
+name = "turn_id"
+type = "fixed_size_binary(8)"
+unit = ""
+nullable = false
+source = "span_id of the acn.turn"
+
+[[view.column]]
+name = "turn_index"
+type = "int64"
+unit = ""
+nullable = false
+source = "acn.turn.index"
+
+[[view.column]]
+name = "think_time_before_ns"
+type = "int64"
+unit = "ns"
+nullable = true
+source = "start of this turn minus end of the previous turn of the session; null for the first"
+
+[[view.column]]
+name = "chain_length"
+type = "int64"
+unit = ""
+nullable = false
+source = "chat spans in series on the main chain"
+
+[[view.column]]
+name = "fanout_width"
+type = "int64"
+unit = ""
+nullable = false
+source = "largest acn.fanout.width in the turn; 0 without sub-agents"
+
+[[view.column]]
+name = "fanout_depth"
+type = "int64"
+unit = ""
+nullable = false
+source = "largest acn.fanout.depth in the turn; 0 without sub-agents"
+
+[[view.column]]
+name = "duration_ns"
+type = "int64"
+unit = "ns"
+nullable = false
+source = "end_ns - start_ns"
+
+[[view.column]]
+name = "first_useful_result_ns"
+type = "int64"
+unit = "ns"
+nullable = true
+source = "acn.turn.first_useful_result_ms"
+
+[[view.column]]
+name = "deadline_ns"
+type = "int64"
+unit = "ns"
+nullable = true
+source = "acn.turn.deadline_ms"
+
+[[view.column]]
+name = "outcome"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.turn.outcome"
+
+[[view.column]]
+name = "network_wait_ns"
+type = "int64"
+unit = "ns"
+nullable = false
+source = "link applied delay plus rate-limit time on the turn's critical path"
+
+[[view.column]]
+name = "tool_wait_ns"
+type = "int64"
+unit = "ns"
+nullable = false
+source = "execute_tool time on the critical path"
+
+[[view.column]]
+name = "model_wait_ns"
+type = "int64"
+unit = "ns"
+nullable = false
+source = "chat time on the critical path less network wait"
+
+[[view.column]]
+name = "queue_wait_ns"
+type = "int64"
+unit = "ns"
+nullable = true
+source = "sum of acn.server.queue_ms over the chats on the critical path (TRC-18); null when any of them lacks it"
+
+[[view.column]]
+name = "stalls"
+type = "int64"
+unit = ""
+nullable = false
+source = "acn.stream.stall events in the turn"
+
+[[view.column]]
+name = "retries"
+type = "int64"
+unit = ""
+nullable = false
+source = "sum of acn.call.retries"
+
+[[view.column]]
+name = "compaction"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.turn.compaction"
+
+[[view]]
+name = "call"
+file = "views/call.parquet"
+row_per = "chat"
+requirement = "TRC-33"
+
+[[view.column]]
+name = "run_id"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.run_id of the session"
+
+[[view.column]]
+name = "session_id"
+type = "fixed_size_binary(8)"
+unit = ""
+nullable = false
+source = "span_id of the acn.session"
+
+[[view.column]]
+name = "turn_index"
+type = "int64"
+unit = ""
+nullable = false
+source = "acn.turn.index of the enclosing turn"
+
+[[view.column]]
+name = "call_id"
+type = "fixed_size_binary(8)"
+unit = ""
+nullable = false
+source = "span_id of the chat"
+
+[[view.column]]
+name = "call_index"
+type = "int64"
+unit = ""
+nullable = false
+source = "acn.call.index"
+
+[[view.column]]
+name = "lineage_id"
+type = "fixed_size_binary(8)"
+unit = ""
+nullable = true
+source = "span_id of the enclosing invoke_agent; null on the main chain"
+
+[[view.column]]
+name = "provider"
+type = "utf8"
+unit = ""
+nullable = false
+source = "gen_ai.provider.name"
+
+[[view.column]]
+name = "model"
+type = "utf8"
+unit = ""
+nullable = false
+source = "gen_ai.request.model"
+
+[[view.column]]
+name = "input_tokens"
+type = "int64"
+unit = "tokens"
+nullable = true
+source = "acn.call.input_tokens"
+
+[[view.column]]
+name = "new_input_tokens"
+type = "int64"
+unit = "tokens"
+nullable = true
+source = "acn.call.new_input_tokens"
+
+[[view.column]]
+name = "new_input_tokens_method"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.call.new_input_tokens_method"
+
+[[view.column]]
+name = "output_tokens"
+type = "int64"
+unit = "tokens"
+nullable = true
+source = "acn.call.output_tokens"
+
+[[view.column]]
+name = "stop_reason"
+type = "utf8"
+unit = ""
+nullable = true
+source = "acn.call.stop_reason"
+
+[[view.column]]
+name = "duration_ns"
+type = "int64"
+unit = "ns"
+nullable = false
+source = "end_ns - start_ns"
+
+[[view.column]]
+name = "preceding_tool_count"
+type = "int64"
+unit = ""
+nullable = true
+source = "tools whose acn.tool.requesting_call is the previous chat of the lineage"
+
+[[view.column]]
+name = "preceding_tool_ns"
+type = "int64"
+unit = "ns"
+nullable = true
+source = "latest end minus earliest start of those tools"
+
+[[view.column]]
+name = "preceding_tool_class"
+type = "utf8"
+unit = ""
+nullable = true
+source = "class of the longest of those tools, ties broken by lowest span_id"
+
+[[view.column]]
+name = "cache_read_tokens"
+type = "int64"
+unit = "tokens"
+nullable = true
+source = "acn.cache.read_tokens"
+
+[[view.column]]
+name = "cache_write_tokens"
+type = "int64"
+unit = "tokens"
+nullable = true
+source = "acn.cache.write_tokens"
+
+[[view.column]]
+name = "cached_token_ratio"
+type = "float64"
+unit = ""
+nullable = true
+source = "cache_read_tokens / input_tokens; null when input_tokens is null or 0"
+
+[[view.column]]
+name = "ttft_ns"
+type = "int64"
+unit = "ns"
+nullable = true
+source = "time of acn.stream.first_token minus start_ns; for a call with acn.call.streamed = false, end_ns - start_ns (TRC-12); null when no token arrived"
+
+[[view.column]]
+name = "itl_p50_ns"
+type = "int64"
+unit = "ns"
+nullable = true
+source = "acn.call.itl_p50_ms"
+
+[[view.column]]
+name = "itl_p99_ns"
+type = "int64"
+unit = "ns"
+nullable = true
+source = "acn.call.itl_p99_ms"
+
+[[view.column]]
+name = "wire_bytes_up"
+type = "int64"
+unit = "bytes"
+nullable = false
+source = "acn.call.wire_bytes_up"
+
+[[view.column]]
+name = "wire_bytes_down"
+type = "int64"
+unit = "bytes"
+nullable = false
+source = "acn.call.wire_bytes_down"
+
+[[view.column]]
+name = "streamed"
+type = "bool"
+unit = ""
+nullable = false
+source = "acn.call.streamed"
+
+[[view.column]]
+name = "server_queue_ns"
+type = "int64"
+unit = "ns"
+nullable = true
+source = "acn.server.queue_ms"
+
+[[view.column]]
+name = "server_prefill_ns"
+type = "int64"
+unit = "ns"
+nullable = true
+source = "acn.server.prefill_ms"
+
+[[view.column]]
+name = "server_decode_ns"
+type = "int64"
+unit = "ns"
+nullable = true
+source = "acn.server.decode_ms"
+
+[[view.column]]
+name = "retries"
+type = "int64"
+unit = ""
+nullable = false
+source = "acn.call.retries"
+
+[[view.column]]
+name = "error_class"
+type = "utf8"
+unit = ""
+nullable = true
+source = "acn.call.error_class"
+
+[[view]]
+name = "link"
+file = "views/link.parquet"
+row_per = "acn.link"
+requirement = "TRC-34"
+
+[[view.column]]
+name = "run_id"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.run_id of the run"
+
+[[view.column]]
+name = "link_span_id"
+type = "fixed_size_binary(8)"
+unit = ""
+nullable = false
+source = "span_id of the acn.link"
+
+[[view.column]]
+name = "call_id"
+type = "fixed_size_binary(8)"
+unit = ""
+nullable = true
+source = "span_id of the chat, or of the remote execute_tool, whose traffic it carries; null when the flow map found none"
+
+[[view.column]]
+name = "link_id"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.link.id"
+
+[[view.column]]
+name = "link_model"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.link.model"
+
+[[view.column]]
+name = "direction"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.link.direction"
+
+[[view.column]]
+name = "bytes"
+type = "int64"
+unit = "bytes"
+nullable = false
+source = "acn.link.bytes"
+
+[[view.column]]
+name = "enqueue_ns"
+type = "int64"
+unit = "ns"
+nullable = false
+source = "acn.link.enqueue_ns"
+
+[[view.column]]
+name = "dequeue_ns"
+type = "int64"
+unit = "ns"
+nullable = false
+source = "acn.link.dequeue_ns"
+
+[[view.column]]
+name = "applied_delay_ns"
+type = "int64"
+unit = "ns"
+nullable = false
+source = "acn.link.applied_delay_ms"
+
+[[view.column]]
+name = "dropped"
+type = "bool"
+unit = ""
+nullable = false
+source = "acn.link.dropped"
+
+[[view.column]]
+name = "reordered"
+type = "bool"
+unit = ""
+nullable = false
+source = "acn.link.reordered"
+
+[[view.column]]
+name = "rate_limited_ns"
+type = "int64"
+unit = "ns"
+nullable = false
+source = "acn.link.rate_limited_ms"
+
+[[view.column]]
+name = "scenario_step"
+type = "utf8"
+unit = ""
+nullable = true
+source = "`step` of the latest acn.scenario.step at or before enqueue; null before the first"
+
+[[view.column]]
+name = "outage_id"
+type = "int64"
+unit = ""
+nullable = true
+source = "index of the acn.scenario.outage with start_ns <= enqueue_ns < end_ns, outages ordered by (start_ns, end_ns); the lowest index when several contain it"
+
+[[view]]
+name = "tool"
+file = "views/tool.parquet"
+row_per = "execute_tool"
+requirement = "TRC-38"
+
+[[view.column]]
+name = "run_id"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.run_id of the session"
+
+[[view.column]]
+name = "session_id"
+type = "fixed_size_binary(8)"
+unit = ""
+nullable = false
+source = "span_id of the acn.session"
+
+[[view.column]]
+name = "turn_index"
+type = "int64"
+unit = ""
+nullable = false
+source = "acn.turn.index of the enclosing turn"
+
+[[view.column]]
+name = "tool_span_id"
+type = "fixed_size_binary(8)"
+unit = ""
+nullable = false
+source = "span_id of the execute_tool"
+
+[[view.column]]
+name = "lineage_id"
+type = "fixed_size_binary(8)"
+unit = ""
+nullable = true
+source = "span_id of the enclosing invoke_agent; null on the main chain"
+
+[[view.column]]
+name = "requesting_call"
+type = "int64"
+unit = ""
+nullable = false
+source = "acn.tool.requesting_call; never inferred from timestamps"
+
+[[view.column]]
+name = "tool_name"
+type = "utf8"
+unit = ""
+nullable = false
+source = "gen_ai.tool.name"
+
+[[view.column]]
+name = "tool_class"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.tool.class"
+
+[[view.column]]
+name = "placement"
+type = "utf8"
+unit = ""
+nullable = false
+source = "acn.tool.placement"
+
+[[view.column]]
+name = "duration_ns"
+type = "int64"
+unit = "ns"
+nullable = false
+source = "end_ns - start_ns"
+
+[[view.column]]
+name = "result_bytes"
+type = "int64"
+unit = "bytes"
+nullable = false
+source = "acn.tool.result_bytes"

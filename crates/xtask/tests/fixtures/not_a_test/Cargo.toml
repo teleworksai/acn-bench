@@ -1,0 +1,4 @@
+# Fixture workspace (never built; trace-check reads its layout).
+[workspace]
+resolver = "3"
+members = ["crates/fix"]

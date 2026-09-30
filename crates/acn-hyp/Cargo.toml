@@ -1,0 +1,13 @@
+[package]
+name = "acn-hyp"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "hypothesis registry, verdicts and the loop runner (SPEC 080, 085; frozen set, CON-7)."
+
+[lints]
+workspace = true
+
+[dependencies]

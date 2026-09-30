@@ -1,0 +1,39 @@
+[licenses]
+allow = ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "MPL-2.0"]
+
+[advisories]
+yanked = "deny"
+
+[bans]
+multiple-versions = "warn"
+# CON-20: no robotics or dataflow framework may be a required dependency of the
+# substrate, directly or transitively. cargo-deny checks the default feature
+# set, so feature-gated optional adapters remain possible.
+deny = [
+  { crate = "dora-core", reason = "CON-20" },
+  { crate = "dora-node-api", reason = "CON-20" },
+  { crate = "dora-operator-api", reason = "CON-20" },
+  { crate = "dora-daemon", reason = "CON-20" },
+  { crate = "dora-runtime", reason = "CON-20" },
+  { crate = "rclrs", reason = "CON-20" },
+  { crate = "r2r", reason = "CON-20" },
+  { crate = "rosrust", reason = "CON-20" },
+  { crate = "ros2-client", reason = "CON-20" },
+  { crate = "roslibrust", reason = "CON-20" },
+  { crate = "safe_drive", reason = "CON-20" },
+  { crate = "dora-message", reason = "CON-20" },
+  { crate = "dora-coordinator", reason = "CON-20" },
+  { crate = "dora-cli", reason = "CON-20" },
+  { crate = "dora-ros2-bridge", reason = "CON-20" },
+  { crate = "dora-arrow-convert", reason = "CON-20" },
+  { crate = "aisle", reason = "CON-20" },
+  { crate = "genesis", reason = "CON-20" },
+  # CON-5: fastrand seeds itself from the environment and has too many entry
+  # points to list in clippy.toml, so no substrate crate may depend on it. It is
+  # reachable only through tempfile, a dev-dependency (ADR-8).
+  { crate = "fastrand", reason = "CON-5", wrappers = ["tempfile"] },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
