@@ -29,7 +29,7 @@ jobs:
       # CON-2: the toolchain is the one pinned in rust-toolchain.toml, never floating stable.
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - uses: taiki-e/install-action@dfae9bf3d6f6c6f20ef4ebb3486c01a51341ff12 # v2
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2
         with:
           # Pinned: the version must not move with every bump of the action. No
           # fallback: the only install path is the checksum-verified release.
