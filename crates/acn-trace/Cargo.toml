@@ -36,6 +36,7 @@ opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 
 [dev-dependencies]
+walkdir.workspace = true
 # The integration tests exercise the `io` feature whether or not the workspace enables it.
 acn-trace = { path = ".", features = ["io"] }
 parquet = { workspace = true }

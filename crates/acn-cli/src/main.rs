@@ -43,6 +43,9 @@ enum BundleCmd {
     Verify {
         /// The bundle directory, `runs/<run_id>/`.
         dir: PathBuf,
+        /// Also recompute the five views from the tables and compare them (TRC-35).
+        #[arg(long)]
+        views: bool,
     },
 }
 
@@ -59,13 +62,19 @@ fn version() -> Value {
     }
 }
 
-fn bundle_verify(dir: &std::path::Path) -> Value {
-    match acn_trace::bundle::verify(dir) {
+fn bundle_verify(dir: &std::path::Path, views: bool) -> Value {
+    let result = if views {
+        acn_trace::bundle::verify_views(dir)
+    } else {
+        acn_trace::bundle::verify(dir)
+    };
+    match result {
         Ok(v) => json!({
             "ok": true,
             "run_id": v.run_id.to_hex(),
             "bundle_digest": v.bundle_digest.to_hex(),
             "files": v.files,
+            "views_recomputed": views,
         }),
         Err(e) => {
             tracing::error!(dir = %dir.display(), "{e}");
@@ -110,8 +119,8 @@ fn run() -> Value {
     match cli.cmd {
         Cmd::Version => version(),
         Cmd::Bundle {
-            cmd: BundleCmd::Verify { dir },
-        } => bundle_verify(&dir),
+            cmd: BundleCmd::Verify { dir, views },
+        } => bundle_verify(&dir, views),
     }
 }
 

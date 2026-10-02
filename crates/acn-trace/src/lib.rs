@@ -18,6 +18,8 @@ pub mod fixture;
 #[cfg(feature = "io")]
 pub mod ids;
 #[cfg(feature = "io")]
+pub mod ingest;
+#[cfg(feature = "io")]
 pub mod model;
 #[cfg(feature = "io")]
 pub mod otel;

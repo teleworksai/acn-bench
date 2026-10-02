@@ -341,3 +341,41 @@ fn a_nan_attribute_is_refused_as_nan_not_as_disorder() {
     let err = parquet_io::batches(&inv, &t).unwrap_err().to_string();
     assert!(err.contains("NaN"), "{err}");
 }
+
+/// Cites: TRC-35, TRC-25
+#[test]
+fn read_trace_returns_exactly_what_write_trace_wrote() {
+    use acn_trace::model::{LinkRow, status};
+    let inv = schema::inventory().unwrap();
+    let mut t = trace();
+    // Every attribute member, a status with and without a message, a span link.
+    let s0 = t.spans[0].clone();
+    let chat = t.spans.iter_mut().find(|s| s.name == "chat").unwrap();
+    chat.attrs
+        .insert("x.blob".into(), AttrValue::Bytes(vec![0, 1, 255]));
+    chat.attrs.insert("x.flag".into(), AttrValue::Bool(true));
+    chat.status_code = status::ERROR;
+    chat.status_message = Some("upstream timeout".into());
+    t.links.push(LinkRow {
+        trace_id: s0.trace_id,
+        span_id: s0.span_id,
+        seq: 0,
+        linked_trace_id: [7; 16],
+        linked_span_id: [7; 8],
+        attrs: [("why".to_owned(), AttrValue::Float(0.5))].into(),
+    });
+    t.sort();
+    let dir = written(&t);
+    let back = parquet_io::read_trace(dir.path(), &inv).unwrap();
+    assert_eq!(back, t);
+}
+
+/// Cites: TRC-35, TRC-25
+#[test]
+fn read_trace_refuses_a_table_with_another_schema() {
+    let inv = schema::inventory().unwrap();
+    let dir = written(&trace());
+    // resources.parquet copied over spans.parquet: well-formed, wrong table.
+    std::fs::copy(dir.path().join(RESOURCES), dir.path().join(SPANS)).unwrap();
+    assert!(parquet_io::read_trace(dir.path(), &inv).is_err());
+}
