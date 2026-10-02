@@ -180,6 +180,22 @@ impl Coverage {
                     }
                 }
                 Kind::Derived => {
+                    // Every `view.column` the expression names must be listed,
+                    // so `columns` really is everything it reads.
+                    let expr = e.expression.as_deref().unwrap_or("");
+                    for token in
+                        expr.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
+                    {
+                        let token = token.trim_end_matches('.');
+                        let names_view = token
+                            .split_once('.')
+                            .is_some_and(|(v, _)| views.iter().any(|w| w.name == v));
+                        if names_view && !e.columns.iter().any(|c| c == token) {
+                            return invalid(format!(
+                                "{at}: the expression reads `{token}`, which `columns` does not list"
+                            ));
+                        }
+                    }
                     for c in &e.columns {
                         let Some((view, column)) = c.split_once('.') else {
                             return invalid(format!("{at}: `{c}` is not `view.column`"));

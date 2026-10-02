@@ -276,6 +276,37 @@ pub fn view_files() -> Result<Vec<String>> {
     Ok(schema::views()?.iter().map(|v| v.file.clone()).collect())
 }
 
+/// The four tables and five views of `trace`, encoded and checked against the
+/// inventory and `views.toml`, as (path relative to the bundle, bytes). Nothing is
+/// written: a refusal anywhere leaves no file behind (TRC-22).
+pub fn encode_tables_and_views(
+    inv: &schema::Inventory,
+    trace: &Trace,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    let tables = parquet_io::batches(inv, trace)?;
+    let views = ingest::views(inv, &schema::views()?, trace)?;
+    let mut out = Vec::new();
+    for (file, batch) in [SPANS, EVENTS, LINKS, RESOURCES].into_iter().zip(&tables) {
+        out.push((file.to_owned(), parquet_io::encode(batch)?));
+    }
+    for (view, batch) in &views {
+        out.push((view.file.clone(), parquet_io::encode(batch)?));
+    }
+    Ok(out)
+}
+
+/// Write encoded files under `dir`, each new: an existing file is never replaced.
+pub fn write_files(dir: &Path, files: &[(String, Vec<u8>)]) -> Result<()> {
+    for (rel, bytes) in files {
+        let path = dir.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(io(parent))?;
+        }
+        write_new(&path, bytes)?;
+    }
+    Ok(())
+}
+
 /// Every session of a bundle names the bundle's run (TRC-10).
 fn check_sessions(trace: &Trace, run_id: &str) -> Result<()> {
     for s in trace.spans.iter().filter(|s| s.name == "acn.session") {
@@ -526,17 +557,9 @@ impl Bundle {
         self.manifest.producers = producers;
 
         check_sessions(trace, &self.manifest.run_id)?;
-        // The views are computed before anything is written, so a trace they
-        // cannot be derived from leaves no tables behind either.
-        let views = ingest::views(&self.inv, &schema::views()?, trace)?;
-        parquet_io::write_trace(&self.dir, &self.inv, trace)?;
-        for (view, batch) in &views {
-            let path = self.dir.join(&view.file);
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(io(parent))?;
-            }
-            parquet_io::write_batch(&path, batch)?;
-        }
+        // Everything is encoded and checked before anything is written, so a
+        // trace the tables or the views refuse leaves nothing behind.
+        write_files(&self.dir, &encode_tables_and_views(&self.inv, trace)?)?;
         self.manifest.files = hash_files(&self.dir)?;
         self.manifest.validate()?;
         let bytes = self.manifest.to_bytes()?;

@@ -201,3 +201,74 @@ fn an_external_span_under_no_call_is_refused() {
     let err = ingest::align_clocks(&t).unwrap_err().to_string();
     assert!(err.contains("TRC-26"), "{err}");
 }
+
+/// Cites: TRC-26, TRC-15
+#[test]
+fn a_link_direction_outside_up_and_down_is_refused() {
+    let err = ingest::align_clocks(&trace(SKEW, vec![link(0x30, "uplink", 1000, 1100)]))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("not `up` or `down`"), "{err}");
+    // Downlink segments alone are not a reference: the call's bounds are.
+    let aligned = ingest::align_clocks(&trace(SKEW, vec![link(0x32, "down", 4600, 4800)])).unwrap();
+    assert_eq!(
+        get(&aligned, 0x20).attrs[CLOCK_OFFSET],
+        AttrValue::Int(SKEW)
+    );
+}
+
+/// Cites: TRC-26
+#[test]
+fn all_roots_of_one_producer_under_one_call_share_one_offset() {
+    // A retried request: two node spans under one call, on one machine clock.
+    // Their envelope [1500, 4500] is centred on the call, and both shift by SKEW,
+    // although each alone would centre differently.
+    let mut t = trace(SKEW, Vec::new());
+    for s in &mut t.spans {
+        if s.span_id == id(0x20) {
+            s.end_ns = 2500 + SKEW;
+        }
+    }
+    t.spans.push(span(
+        0x22,
+        Some(0x10),
+        "llm_request",
+        1,
+        (3000 + SKEW, 4500 + SKEW),
+        &[],
+    ));
+    t.sort();
+    let aligned = ingest::align_clocks(&t).unwrap();
+    for n in [0x20, 0x22] {
+        assert_eq!(
+            get(&aligned, n).attrs[CLOCK_OFFSET],
+            AttrValue::Int(SKEW),
+            "root {n:#x}"
+        );
+    }
+    assert_eq!(get(&aligned, 0x22).start_ns, 3000);
+}
+
+/// Cites: TRC-26
+#[test]
+fn an_external_span_under_a_local_span_that_is_not_a_call_is_refused() {
+    // external root → local span → external span: the inner one hangs under no call.
+    let mut t = trace(SKEW, Vec::new());
+    t.spans
+        .push(span(0x23, Some(0x20), "acn.marker", 0, (2000, 2100), &[]));
+    t.spans.push(span(
+        0x24,
+        Some(0x23),
+        "inner",
+        1,
+        (2000 + SKEW, 2050 + SKEW),
+        &[],
+    ));
+    t.sort();
+    assert!(
+        ingest::align_clocks(&t)
+            .unwrap_err()
+            .to_string()
+            .contains("TRC-26")
+    );
+}

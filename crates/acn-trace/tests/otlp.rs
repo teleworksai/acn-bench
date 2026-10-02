@@ -166,3 +166,131 @@ fn import_refuses_what_the_model_cannot_hold() {
         assert!(err.contains(needle), "expected `{needle}`, got: {err}");
     }
 }
+
+/// Cites: TRC-28
+#[test]
+fn a_document_shaped_like_an_sdks_imports_field_by_field() {
+    // Hand-written in the shape OTel SDKs and the collector emit: extra fields
+    // (flags, traceState, schemaUrl, scope.version, zero dropped counts), enum
+    // names, an int64 as a JSON number, a double as a string, and proto3's omitted
+    // defaults (a span with no name, kind, start or status; an event with no time).
+    let doc: Value = serde_json::from_str(include_str!("fixtures/otlp/sdk.json")).unwrap();
+    let t = otlp::from_json(&doc).unwrap();
+    assert_eq!(t.resources.len(), 1);
+    assert_eq!(t.resources[0].attrs["process.pid"], AttrValue::Int(4242));
+    let s = t.spans.iter().find(|s| s.name == "llm_request").unwrap();
+    assert_eq!(s.trace_id[..4], [0x5b, 0x8e, 0xff, 0xf7]);
+    assert_eq!(s.span_id, [0x05, 0x1f, 0x2e, 0x3d, 0x4c, 0x5b, 0x6a, 0x79]);
+    assert_eq!(
+        s.parent_span_id,
+        Some([0xee, 0xe1, 0x9b, 0x7e, 0xc3, 0xc1, 0xb1, 0x74])
+    );
+    assert_eq!(s.kind, 2, "SPAN_KIND_SERVER");
+    assert_eq!(
+        (s.start_ns, s.end_ns),
+        (1_544_712_660_000_000_000, 1_544_712_661_000_000_000)
+    );
+    assert_eq!(s.status_code, status::ERROR);
+    assert_eq!(s.status_message.as_deref(), Some("upstream"));
+    assert_eq!(
+        s.attrs["gen_ai.latency.time_in_queue"],
+        AttrValue::Float(0.25)
+    );
+    assert_eq!(s.attrs["gen_ai.usage.prompt_tokens"], AttrValue::Int(512));
+    assert_eq!(
+        s.attrs["x.blob"],
+        AttrValue::Bytes(vec![0xde, 0xad, 0xbe, 0xef])
+    );
+    assert_eq!(s.attrs["x.flag"], AttrValue::Bool(false));
+    let ev: Vec<_> = t.events.iter().filter(|e| e.span_id == s.span_id).collect();
+    assert_eq!(ev.len(), 2);
+    assert!(
+        ev.iter()
+            .any(|e| e.name == "zero-time event" && e.time_ns == 0 && e.seq == 1)
+    );
+    let bare = t
+        .spans
+        .iter()
+        .find(|s| s.span_id == [10, 11, 12, 13, 14, 15, 16, 17])
+        .unwrap();
+    assert_eq!(
+        (bare.name.as_str(), bare.kind, bare.start_ns, bare.end_ns),
+        ("", 0, 0, 5)
+    );
+    assert_eq!(bare.parent_span_id, None, "an empty parentSpanId is a root");
+    assert_eq!(
+        (bare.status_code, bare.status_message.as_deref()),
+        (0, None)
+    );
+}
+
+/// Cites: TRC-28
+#[test]
+fn enums_out_of_range_and_array_values_are_refused() {
+    let base = otlp::to_json(&trace()).unwrap();
+    for (field, value) in [
+        ("kind", json!(9)),
+        ("kind", json!(-1)),
+        ("kind", json!("SPAN_KIND_BOGUS")),
+    ] {
+        let mut d = base.clone();
+        span_path(&mut d)[field] = value.clone();
+        assert!(otlp::from_json(&d).is_err(), "{field} = {value}");
+    }
+    let mut d = base.clone();
+    span_path(&mut d)["status"] = json!({ "code": 7 });
+    assert!(otlp::from_json(&d).is_err(), "status code 7");
+    // GenAI conventions emit string arrays (gen_ai.response.finish_reasons); the
+    // profile stores scalars only, so they are refused, never flattened (ADR-15).
+    let mut d = base;
+    span_path(&mut d)["attributes"][0]["value"] =
+        json!({ "arrayValue": { "values": [{ "stringValue": "stop" }] } });
+    assert!(
+        otlp::from_json(&d)
+            .unwrap_err()
+            .to_string()
+            .contains("no member")
+    );
+}
+
+/// Cites: TRC-28
+#[test]
+fn chunked_and_empty_exports_round_trip() {
+    let t = trace();
+    for max in [1, 2, 3, 1000] {
+        let docs = otlp::to_json_chunks(&t, max).unwrap();
+        assert_eq!(docs.len(), t.spans.len().div_ceil(max).max(1), "max {max}");
+        for d in &docs {
+            let spans: usize = d["resourceSpans"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["scopeSpans"][0]["spans"].as_array().unwrap().len())
+                .sum();
+            assert!(spans <= max);
+        }
+        assert_eq!(otlp::from_json_many(&docs).unwrap(), t, "max {max}");
+        assert_eq!(
+            otlp::to_json_chunks(&t, max).unwrap(),
+            docs,
+            "deterministic"
+        );
+    }
+    let empty = otlp::to_json(&Trace::default()).unwrap();
+    assert_eq!(empty, json!({ "resourceSpans": [] }));
+    assert_eq!(otlp::from_json(&empty).unwrap(), Trace::default());
+}
+
+/// Cites: TRC-28
+#[test]
+fn export_refuses_rows_it_would_otherwise_drop() {
+    let mut t = trace();
+    t.spans[0].resource_id = 99;
+    assert!(otlp::to_json(&t).is_err(), "a span naming no resource");
+    let mut t = trace();
+    let mut orphan = t.events[0].clone();
+    orphan.span_id = [0xfe; 8];
+    t.events.push(orphan);
+    t.sort();
+    assert!(otlp::to_json(&t).is_err(), "an event of no span");
+}

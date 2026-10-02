@@ -24,7 +24,7 @@ How each field of the report's §3.5 methodology and each parameter of its Appen
 | `t.chain_length` | column | `turn.chain_length` |
 | `t.tool_exec_time_by_class` | derived | distribution of tool.duration_ns grouped by tool.tool_class (reads `tool.duration_ns`, `tool.tool_class`) |
 | `t.fanout_degree_depth` | derived | joint distribution of turn.fanout_width and turn.fanout_depth (reads `turn.fanout_width`, `turn.fanout_depth`) |
-| `t.compaction_vs_length` | derived | share of turns with turn.compaction != none, by the input_tokens of the turn's last main-chain call (reads `turn.compaction`, `turn.turn_index`, `call.input_tokens`, `call.turn_index`, `call.lineage_id`) |
+| `t.compaction_vs_length` | derived | share of turns with turn.compaction != none, by the call.input_tokens of the turn's last main-chain call: joined on turn.session_id = call.session_id and turn.turn_index = call.turn_index, the call with the highest call.call_index where call.lineage_id is null (reads `turn.compaction`, `turn.session_id`, `turn.turn_index`, `call.input_tokens`, `call.session_id`, `call.turn_index`, `call.call_index`, `call.lineage_id`) |
 | `c.input_length_by_call_index` | derived | distribution of call.input_tokens grouped by call.call_index (reads `call.input_tokens`, `call.call_index`) |
 | `c.new_tokens_per_call` | column | `call.new_input_tokens` |
 | `c.output_length_by_call_type` | derived | distribution of call.output_tokens grouped by call.stop_reason (tool_use: a tool call; end_turn: a final answer) (reads `call.output_tokens`, `call.stop_reason`) |

@@ -149,37 +149,7 @@ fn id32(i: usize) -> Result<i32, ConvertError> {
     i32::try_from(i).or_else(|_| invalid("too many resources for an Int32 resource_id"))
 }
 
-/// A total order on attribute sets, entry by entry in key order: by key, then by
-/// value type in union-member order, then by value (floats by `total_cmp`).
-pub(crate) fn attrs_order(a: &Attrs, b: &Attrs) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
-    fn rank(v: &AttrValue) -> u8 {
-        match v {
-            AttrValue::String(_) => 0,
-            AttrValue::Int(_) => 1,
-            AttrValue::Float(_) => 2,
-            AttrValue::Bool(_) => 3,
-            AttrValue::Bytes(_) => 4,
-        }
-    }
-    fn value_order(x: &AttrValue, y: &AttrValue) -> Ordering {
-        match (x, y) {
-            (AttrValue::String(p), AttrValue::String(q)) => p.cmp(q),
-            (AttrValue::Int(p), AttrValue::Int(q)) => p.cmp(q),
-            (AttrValue::Float(p), AttrValue::Float(q)) => p.total_cmp(q),
-            (AttrValue::Bool(p), AttrValue::Bool(q)) => p.cmp(q),
-            (AttrValue::Bytes(p), AttrValue::Bytes(q)) => p.cmp(q),
-            _ => rank(x).cmp(&rank(y)),
-        }
-    }
-    for ((ka, va), (kb, vb)) in a.iter().zip(b.iter()) {
-        let o = ka.cmp(kb).then_with(|| value_order(va, vb));
-        if o != Ordering::Equal {
-            return o;
-        }
-    }
-    a.len().cmp(&b.len())
-}
+pub(crate) use crate::model::attrs_order;
 
 impl SpanExporter for CollectorExporter {
     async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
@@ -224,7 +194,7 @@ fn value(key: &str, v: &Value) -> Result<AttrValue, ConvertError> {
             ));
         }
         // Negative zero is zero, as in the text form of CON-27(c).
-        Value::F64(f) => AttrValue::Float(if *f == 0.0 { 0.0 } else { *f }),
+        Value::F64(f) => AttrValue::float(*f),
         Value::String(s) => AttrValue::String(s.as_str().to_owned()),
         Value::Array(_) => {
             return invalid(format!(

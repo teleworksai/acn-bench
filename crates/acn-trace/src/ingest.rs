@@ -1245,20 +1245,25 @@ fn is_local(trace: &Trace, resource_id: i32) -> bool {
 /// TRC-26: put the spans of producers on other machines on the run's clock.
 ///
 /// An external span whose parent is a `chat` (it carries the call's `traceparent`)
-/// roots a subtree that ran on one foreign clock. Its offset is the one that
-/// centres the foreign interval on the call as the run saw it: the request's
-/// arrival and the response's departure, taken from the call's `acn.link` spans
-/// when the proxy recorded both directions (the last uplink dequeue and the last
-/// downlink enqueue), else the call's own start and end. Assuming equal delay
-/// each way, `offset = ((start − arrival) + (end − departure)) / 2`, rounded
-/// toward negative infinity. Every span of the subtree and its events are shifted
-/// by it, and each span records it as `acn.ingest.clock_offset_ns`. Spans that
-/// already carry it are left alone, so applying this twice changes nothing. An
-/// external span that hangs under no call is an error: nothing can align it.
+/// roots a subtree that ran on a foreign clock. All roots of one producer
+/// (resource) under one call share that producer's clock, so they share one
+/// offset (a retried request is two roots on one machine). The offset centres the
+/// producer's envelope under the call — the earliest root start to the latest
+/// root end — on the call as the run saw it: the request's arrival and the
+/// response's departure, taken from the call's `acn.link` spans when the proxy
+/// recorded both directions (the last uplink dequeue and the last downlink
+/// enqueue), else the call's own start and end. Assuming equal delay each way,
+/// `offset = ((start − arrival) + (end − departure)) / 2`, rounded toward negative
+/// infinity. Every external span of those subtrees, and its events, is shifted by
+/// it and records it as `acn.ingest.clock_offset_ns`. Spans that already carry it
+/// are left alone, so applying this twice changes nothing. An external span that
+/// hangs under no call, and a link whose direction is neither `up` nor `down`, are
+/// errors.
 pub fn align_clocks(trace: &Trace) -> Result<Trace> {
     let mut out = trace.clone();
     let ix = Index::new(trace)?;
-    let mut shift: BTreeMap<usize, i64> = BTreeMap::new();
+    // (call, resource) -> the external roots under that call from that producer.
+    let mut roots: BTreeMap<(usize, i32), Vec<usize>> = BTreeMap::new();
     for (i, s) in trace.spans.iter().enumerate() {
         if is_local(trace, s.resource_id) || s.attrs.contains_key(CLOCK_OFFSET) {
             continue;
@@ -1267,39 +1272,9 @@ pub fn align_clocks(trace: &Trace) -> Result<Trace> {
         let local_parent = parent.filter(|&p| is_local(trace, ix.span(p).resource_id));
         match (parent, local_parent) {
             // Inside an external subtree: shifted with its root.
-            (Some(_), None) => continue,
+            (Some(_), None) => {}
             (Some(p), Some(_)) if ix.span(p).name == "chat" => {
-                let call = ix.span(p);
-                let (mut arrival, mut departure) = (None::<i64>, None::<i64>);
-                for &l in ix.children(p) {
-                    let ls = ix.span(l);
-                    if ls.name != "acn.link" {
-                        continue;
-                    }
-                    match req_str(ls, "acn.link.direction")?.as_str() {
-                        "up" => {
-                            let d = req_int(ls, "acn.link.dequeue_ns")?;
-                            arrival = Some(arrival.map_or(d, |a| a.max(d)));
-                        }
-                        _ => {
-                            let e = req_int(ls, "acn.link.enqueue_ns")?;
-                            departure = Some(departure.map_or(e, |a| a.max(e)));
-                        }
-                    }
-                }
-                let (a, d) = match (arrival, departure) {
-                    (Some(a), Some(d)) => (a, d),
-                    _ => (call.start_ns, call.end_ns),
-                };
-                let twice = (i128::from(s.start_ns) - i128::from(a))
-                    + (i128::from(s.end_ns) - i128::from(d));
-                let offset = i64::try_from(twice.div_euclid(2))
-                    .or_else(|_| invalid("a clock offset does not fit Int64"))?;
-                for n in std::iter::once(i).chain(ix.descendants(i)) {
-                    if !is_local(trace, ix.span(n).resource_id) {
-                        shift.insert(n, offset);
-                    }
-                }
+                roots.entry((p, s.resource_id)).or_default().push(i);
             }
             _ => {
                 return invalid(format!(
@@ -1310,22 +1285,74 @@ pub fn align_clocks(trace: &Trace) -> Result<Trace> {
             }
         }
     }
+    let mut shift: BTreeMap<usize, i64> = BTreeMap::new();
+    for ((p, _), members) in &roots {
+        let call = ix.span(*p);
+        let (mut arrival, mut departure) = (None::<i64>, None::<i64>);
+        for &l in ix.children(*p) {
+            let ls = ix.span(l);
+            if ls.name != "acn.link" {
+                continue;
+            }
+            match req_str(ls, "acn.link.direction")?.as_str() {
+                "up" => {
+                    let d = req_int(ls, "acn.link.dequeue_ns")?;
+                    arrival = Some(arrival.map_or(d, |a| a.max(d)));
+                }
+                "down" => {
+                    let e = req_int(ls, "acn.link.enqueue_ns")?;
+                    departure = Some(departure.map_or(e, |a| a.max(e)));
+                }
+                other => {
+                    return invalid(format!(
+                        "link {} has direction `{other}`, not `up` or `down` (TRC-15)",
+                        sid(ls)
+                    ));
+                }
+            }
+        }
+        let (a, d) = match (arrival, departure) {
+            (Some(a), Some(d)) => (a, d),
+            _ => (call.start_ns, call.end_ns),
+        };
+        let start = members
+            .iter()
+            .map(|&m| ix.span(m).start_ns)
+            .min()
+            .unwrap_or(call.start_ns);
+        let end = members
+            .iter()
+            .map(|&m| ix.span(m).end_ns)
+            .max()
+            .unwrap_or(call.end_ns);
+        let twice = (i128::from(start) - i128::from(a)) + (i128::from(end) - i128::from(d));
+        let offset = i64::try_from(twice.div_euclid(2))
+            .or_else(|_| invalid("a clock offset does not fit Int64"))?;
+        for &m in members {
+            for n in std::iter::once(m).chain(ix.descendants(m)) {
+                if !is_local(trace, ix.span(n).resource_id) {
+                    shift.insert(n, offset);
+                }
+            }
+        }
+    }
     let sub = |t: i64, o: i64| {
         t.checked_sub(o)
             .ok_or_else(|| IngestError::Invalid("an aligned timestamp overflows".into()))
     };
+    let shifted: BTreeMap<([u8; 16], SpanId), i64> = shift
+        .iter()
+        .map(|(&n, &o)| ((trace.spans[n].trace_id, trace.spans[n].span_id), o))
+        .collect();
     for (&n, &offset) in &shift {
-        let key = (trace.spans[n].trace_id, trace.spans[n].span_id);
         let span = &mut out.spans[n];
         span.start_ns = sub(span.start_ns, offset)?;
         span.end_ns = sub(span.end_ns, offset)?;
         span.attrs
             .insert(CLOCK_OFFSET.into(), AttrValue::Int(offset));
-        for e in out
-            .events
-            .iter_mut()
-            .filter(|e| (e.trace_id, e.span_id) == key)
-        {
+    }
+    for e in &mut out.events {
+        if let Some(&offset) = shifted.get(&(e.trace_id, e.span_id)) {
             e.time_ns = sub(e.time_ns, offset)?;
         }
     }

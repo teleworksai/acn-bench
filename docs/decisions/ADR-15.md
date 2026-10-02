@@ -19,7 +19,7 @@ T02d is the last step of ADR-11. TRC-28 names the commands but not what an impor
   - `--otlp-json <file>` writes it, never replacing a file.
 
   The HTTP client is `reqwest` with rustls and the operating system's trust store (`rustls-tls-native-roots`). The bundled `webpki-roots` list is CDLA-Permissive-2.0, which the licence policy does not allow, and the system store is the better default for a CLI anyway.
-- **`acn bundle import --otlp-json <file> --out <dir>`** decodes, aligns foreign clocks and writes the four tables and five views into a new directory. That directory is not a run bundle: it has no manifest and no `run_id`, because the document carries no run identity. Adding external producers' spans to a live run is the run path's job (T04, T30). It calls `otlp::from_json` and `ingest::align_clocks` on the merged trace before `Bundle::finish`.
+- **`acn bundle import --otlp-json <file> --out <dir>`** decodes, aligns foreign clocks and writes the four tables and five views into a new directory. That directory is not a run bundle: it has no manifest and no `run_id`, because the document carries no run identity. The run path (T04, T30) will add external producers' spans to a live run with the same calls (`otlp::from_json`, `Trace::merge`, `ingest::align_clocks`) before `Bundle::finish`; nothing does that yet.
 - **Clock offsets (TRC-26).**
   - **Which spans.** A span whose resource lacks `acn.engine_hash` comes from a producer on another machine (TRC-19 makes every acn-bench producer record it). An external span parented to a `chat` roots a subtree on one foreign clock.
   - **Estimator.** Assume equal delay each way, as NTP does, and centre the foreign interval on the reference: `offset = ((start − arrival) + (end − departure)) / 2`, rounded toward negative infinity.
@@ -41,3 +41,25 @@ T02d is the last step of ADR-11. TRC-28 names the commands but not what an impor
 
 ## Consequences
 TRC-26, TRC-28 and TRC-36 enter scope, and with them SPEC 010 is implemented except TRC-1, TRC-18 (above), TRC-19's commit-identifier clause, TRC-40 to TRC-42 (side channels, T50 and later) and the value-set checks of TRC-3 and TRC-12. The T02 series of ADR-11 is complete.
+
+## Amendment (pre-landing review of PR 4)
+Three separate sessions reviewed this PR, one cross-review with an adversarial brief. Findings fixed here:
+- **Export cannot hang or mislead.**
+  - Every request has a connect and an overall deadline (`--timeout-secs`, default 30).
+  - Redirects are refused: a redirected POST becomes a body-less GET that a 200 would have reported as delivered.
+  - Anything but a 2xx is an error.
+  - The client is built with `Client::builder()…build()?`, so a trust-store failure is an error, not a panic.
+  - Credentials in the endpoint are stripped from the output.
+  - Proxy variables (`HTTP_PROXY` and so on) are honoured on purpose. Export is not a run (CON-29), and a collector behind a corporate proxy must stay reachable.
+- **Export is linear and chunked.** Events and links are grouped by span once (the first version scanned them per span: 7 s at 32k spans). `--max-spans` (default 2000) splits the POSTs, so no request outgrows a collector's body limit. The split is a function of the trace alone. `--otlp-json` writes one document, through a temporary file linked into place, so it never leaves a partial file and never replaces one. Export refuses a span naming no resource, and an event or link naming no span, instead of dropping them.
+- **Import reads proto3 JSON as writers emit it.** A field at its default is omitted, and import reads it as 0, `""` or enum 0, as protobuf JSON parsers do; a sim session starting at 0 loses its start time in a collector round trip. Enum names (`SPAN_KIND_SERVER`, `STATUS_CODE_ERROR`) are accepted, and `kind` and `status.code` are range-checked. A double may be a numeric string. A hand-written SDK-shaped fixture is decoded and checked field by field.
+- **Import writes all or nothing.** Tables and views are encoded and checked first (`bundle::encode_tables_and_views`, shared with `Bundle::finish`). They are written into a temporary sibling directory and renamed into place, so a failure leaves nothing and a retry is not refused.
+- **A node's own export can be merged.** `acn bundle import --otlp-json <node.json> --with <bundle> --out <dir>` verifies the bundle and merges its trace with the node's spans. `Trace::merge` renumbers resources with the same rule as the collector (`Trace::renumber_resources`). The merged trace is then aligned and written. Without `--with`, a node's export names parents it does not hold, and import refuses it.
+- **Clock alignment.**
+  - A link direction other than `up` or `down` is an error, not a downlink.
+  - All roots of one producer under one call share one offset: they share one machine clock (a retried request). The offset centres their envelope, the earliest root start to the latest root end.
+- **Report coverage.** A `derived` entry's expression may name only columns its `columns` list holds, and the loader checks it. `t.compaction_vs_length` now lists its join columns. `docs-inventory` itself is tested to fail on a missing or wrong mapping.
+
+Decided in review, recorded here:
+- **Arrays stay refused.** OTLP array attributes (such as GenAI's `gen_ai.response.finish_reasons`) are refused, not flattened; the profile stores scalars (TRC-25).
+- **Duplication left for later.** Hex encoding is still written in several modules, and alignment still lives in `ingest`. Consolidating them is left for a refactor that changes no behaviour.

@@ -91,7 +91,7 @@ fn an_unmapped_key_an_unknown_key_and_unknown_targets_fail() {
         (
             text.replacen(
                 "columns = [\"tool.duration_ns\"",
-                "columns = [\"tool.duration_ms\"",
+                "columns = [\"tool.duration_ms\", \"tool.duration_ns\"",
                 1,
             ),
             "does not define",
@@ -102,7 +102,7 @@ fn an_unmapped_key_an_unknown_key_and_unknown_targets_fail() {
                 "kind = \"column\"\nattribute",
                 1,
             ),
-            "must",
+            "must carry `view`",
         ),
         (
             format!(
@@ -110,9 +110,45 @@ fn an_unmapped_key_an_unknown_key_and_unknown_targets_fail() {
             ),
             "mapped twice",
         ),
+        (
+            text.replacen(
+                "columns = [\"tool.duration_ns\", \"tool.tool_class\"]",
+                "columns = [\"tool.duration_ns\"]",
+                1,
+            ),
+            "which `columns` does not list",
+        ),
+        (
+            text.replacen(
+                "columns = [\"tool.duration_ns\"",
+                "columns = [\"nodot\", \"tool.duration_ns\"",
+                1,
+            ),
+            "is not `view.column`",
+        ),
+        (
+            text.replacen("report_version = \"v1.2\"", "report_version = \"\"", 1),
+            "report_version",
+        ),
+        (
+            text.replacen("kind = \"column\"\nview", "kind = \"column\"\nviw", 1),
+            "unknown field",
+        ),
     ];
     for (bad, needle) in cases {
         let err = parse(&bad).unwrap_err().to_string();
         assert!(err.contains(needle), "expected `{needle}`, got: {err}");
     }
+}
+
+/// Cites: TRC-36
+#[test]
+fn a_spec_without_appendix_a_keys_is_an_error() {
+    assert!(
+        coverage::appendix_a_keys("# SPEC\n")
+            .unwrap_err()
+            .to_string()
+            .contains("no `## Appendix A`")
+    );
+    assert!(coverage::appendix_a_keys("## Appendix A\n\nnothing\n").is_err());
 }

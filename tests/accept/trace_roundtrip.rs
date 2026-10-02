@@ -79,5 +79,9 @@ fn export_to_otlp_json_and_reimport_yields_identical_views() {
             view.file
         );
     }
+    // Exported as several requests, as to a collector, it is still the bundle.
+    let chunks = otlp::to_json_chunks(&from_bundle, 2).unwrap();
+    assert!(chunks.len() > 1);
+    assert_eq!(otlp::from_json_many(&chunks).unwrap(), from_bundle);
     assert!(bundle::verify_views(&w.dir).is_ok());
 }

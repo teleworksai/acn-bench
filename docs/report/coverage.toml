@@ -122,8 +122,8 @@ columns = ["turn.fanout_width", "turn.fanout_depth"]
 [[key]]
 key = "t.compaction_vs_length"
 kind = "derived"
-expression = "share of turns with turn.compaction != none, by the input_tokens of the turn's last main-chain call"
-columns = ["turn.compaction", "turn.turn_index", "call.input_tokens", "call.turn_index", "call.lineage_id"]
+expression = "share of turns with turn.compaction != none, by the call.input_tokens of the turn's last main-chain call: joined on turn.session_id = call.session_id and turn.turn_index = call.turn_index, the call with the highest call.call_index where call.lineage_id is null"
+columns = ["turn.compaction", "turn.session_id", "turn.turn_index", "call.input_tokens", "call.session_id", "call.turn_index", "call.call_index", "call.lineage_id"]
 
 # ---- Appendix C: call level
 [[key]]

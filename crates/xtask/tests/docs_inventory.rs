@@ -294,3 +294,51 @@ fn built_names_odd_spellings_nested_test_modules_and_unlisted_options_are_caught
     let run = xtask_at(dir.path(), &["docs-inventory"]);
     assert!(!run.ok(), "{}", run.json);
 }
+
+/// Cites: TRC-36
+#[test]
+fn docs_inventory_fails_on_a_missing_or_wrong_coverage_mapping_and_renders_a_good_one() {
+    let dir = fixture_with_schema("pub fn nothing() {}\n");
+    let spec = "specs/010-trace-schema.md";
+    fs::copy(repo_root().join(spec), dir.path().join(spec)).expect("copy spec");
+    let mapping = dir.path().join("docs/report/coverage.toml");
+    // No mapping at all.
+    let run = xtask_at(dir.path(), &["docs-inventory"]);
+    assert!(!run.ok(), "{}", run.json);
+    assert!(
+        run.json.to_string().contains("coverage.toml is missing"),
+        "{}",
+        run.json
+    );
+    // A mapping with a key dropped, and one naming a column the views lack.
+    let good = fs::read_to_string(repo_root().join("docs/report/coverage.toml")).expect("mapping");
+    fs::create_dir_all(mapping.parent().expect("parent")).expect("mkdir");
+    for (bad, needle) in [
+        (
+            good.replacen("key = \"h.ttft\"", "key = \"h.ttft_typo\"", 1),
+            "not an Appendix A key",
+        ),
+        (
+            good.replacen("column = \"ttft_ns\"", "column = \"ttft_ms\"", 1),
+            "does not define",
+        ),
+    ] {
+        fs::write(&mapping, bad).expect("write");
+        let run = xtask_at(dir.path(), &["docs-inventory", "--check"]);
+        assert!(!run.ok(), "{}", run.json);
+        assert!(
+            run.json.to_string().contains(needle),
+            "{needle}: {}",
+            run.json
+        );
+    }
+    fs::write(&mapping, good).expect("write");
+    let run = xtask_at(dir.path(), &["docs-inventory"]);
+    assert!(run.ok(), "{}", run.json);
+    let page =
+        fs::read_to_string(dir.path().join("docs/generated/report-coverage.md")).expect("page");
+    assert!(
+        page.contains("| `h.ttft` | column | `call.ttft_ns` |"),
+        "{page}"
+    );
+}
