@@ -108,3 +108,132 @@ fn verify_views_recomputes_and_reports_it() {
     assert_eq!(json["views_recomputed"], true);
     assert_eq!(json["run_id"], run_id.to_hex().as_str());
 }
+
+/// A one-shot OTLP/HTTP collector on localhost: it answers `status` to the first
+/// request and hands back the body it received.
+fn stub_collector(status: &'static str) -> (String, std::thread::JoinHandle<String>) {
+    use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut length = 0usize;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                length = v.trim().parse().unwrap();
+            }
+        }
+        let mut body = vec![0u8; length];
+        reader.read_exact(&mut body).unwrap();
+        let mut out = stream;
+        write!(
+            out,
+            "HTTP/1.1 {status}\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"
+        )
+        .unwrap();
+        String::from_utf8(body).unwrap()
+    });
+    (format!("http://{addr}/v1/traces"), handle)
+}
+
+/// Cites: TRC-28, CON-8
+#[test]
+fn export_replays_a_bundle_to_an_otlp_collector_and_to_a_file() {
+    let runs = tempfile::tempdir().unwrap();
+    let (dir, run_id, _) = bundle(runs.path());
+    let (endpoint, server) = stub_collector("200 OK");
+    let (code, json) = acn(&[
+        "bundle",
+        "export",
+        dir.to_str().unwrap(),
+        "--otlp",
+        &endpoint,
+    ]);
+    assert_eq!(code, Some(0), "{json}");
+    assert_eq!(json["run_id"], run_id.to_hex().as_str());
+    let posted = server.join().unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&posted).unwrap();
+    assert!(doc["resourceSpans"].is_array());
+
+    let out = runs.path().join("export.json");
+    let (code, json) = acn(&[
+        "bundle",
+        "export",
+        dir.to_str().unwrap(),
+        "--otlp-json",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(code, Some(0), "{json}");
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        posted,
+        "one document, either way"
+    );
+    // A file is never replaced, and a failing collector is a JSON error.
+    let (code, _) = acn(&[
+        "bundle",
+        "export",
+        dir.to_str().unwrap(),
+        "--otlp-json",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(code, Some(1));
+    let (endpoint, server) = stub_collector("503 Service Unavailable");
+    let (code, json) = acn(&[
+        "bundle",
+        "export",
+        dir.to_str().unwrap(),
+        "--otlp",
+        &endpoint,
+    ]);
+    assert_eq!((code, &json["ok"]), (Some(1), &serde_json::json!(false)));
+    let _ = server.join();
+}
+
+/// Cites: TRC-28, TRC-26, CON-8
+#[test]
+fn import_writes_tables_and_views_from_otlp_json() {
+    let runs = tempfile::tempdir().unwrap();
+    let (dir, _, _) = bundle(runs.path());
+    let doc = runs.path().join("doc.json");
+    let (code, _) = acn(&[
+        "bundle",
+        "export",
+        dir.to_str().unwrap(),
+        "--otlp-json",
+        doc.to_str().unwrap(),
+    ]);
+    assert_eq!(code, Some(0));
+    let out = runs.path().join("imported");
+    let (code, json) = acn(&[
+        "bundle",
+        "import",
+        "--otlp-json",
+        doc.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(code, Some(0), "{json}");
+    for f in ["spans.parquet", "views/turn.parquet", "views/call.parquet"] {
+        assert_eq!(
+            std::fs::read(out.join(f)).unwrap(),
+            std::fs::read(dir.join(f)).unwrap(),
+            "{f} is identical to the bundle's"
+        );
+    }
+    let (code, _) = acn(&[
+        "bundle",
+        "import",
+        "--otlp-json",
+        doc.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(code, Some(1), "an existing directory is never written into");
+}

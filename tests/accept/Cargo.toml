@@ -19,8 +19,13 @@ workspace = true
 acn-trace = { workspace = true, features = ["io"] }
 
 [dev-dependencies]
+serde_json.workspace = true
 tempfile.workspace = true
 
 [[test]]
 name = "trace_determinism"
 path = "trace_determinism.rs"
+
+[[test]]
+name = "trace_roundtrip"
+path = "trace_roundtrip.rs"

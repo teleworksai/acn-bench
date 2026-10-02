@@ -47,6 +47,128 @@ enum BundleCmd {
         #[arg(long)]
         views: bool,
     },
+    /// Verify a bundle, then replay it as OTLP/JSON to a collector or a file
+    /// (TRC-28).
+    Export {
+        /// The bundle directory, `runs/<run_id>/`.
+        dir: PathBuf,
+        /// An OTLP/HTTP traces endpoint, e.g. `http://localhost:4318/v1/traces`.
+        #[arg(
+            long,
+            conflicts_with = "otlp_json",
+            required_unless_present = "otlp_json"
+        )]
+        otlp: Option<String>,
+        /// Write the OTLP/JSON document to this file instead (never replaced).
+        #[arg(long)]
+        otlp_json: Option<PathBuf>,
+    },
+    /// Ingest an OTLP/JSON document (TRC-28): align foreign clocks (TRC-26) and
+    /// write the four tables and the five views into a new directory. The result
+    /// is not a run bundle: it has no manifest and no run_id.
+    Import {
+        /// The OTLP/JSON `ExportTraceServiceRequest` to read.
+        #[arg(long)]
+        otlp_json: PathBuf,
+        /// The directory to create; it must not exist.
+        #[arg(long)]
+        out: PathBuf,
+    },
+}
+
+/// Read a bundle's tables back as OTLP/JSON, after verifying it (TRC-23).
+fn export_doc(dir: &std::path::Path) -> anyhow::Result<(String, String)> {
+    let v = acn_trace::bundle::verify(dir)?;
+    let inv = acn_trace::schema::inventory()?;
+    let trace = acn_trace::parquet_io::read_trace(dir, &inv)?;
+    let doc = acn_trace::otlp::to_json(&trace)?;
+    Ok((v.run_id.to_hex(), serde_json::to_string(&doc)?))
+}
+
+/// POST a document to an OTLP/HTTP endpoint and require a 2xx answer.
+fn post(endpoint: &str, body: String) -> anyhow::Result<u16> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(async {
+        let resp = reqwest::Client::new()
+            .post(endpoint)
+            .header("content-type", "application/json")
+            .body(body)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            anyhow::bail!("the collector answered {status}");
+        }
+        Ok(status.as_u16())
+    })
+}
+
+fn bundle_export(
+    dir: &std::path::Path,
+    otlp: Option<&str>,
+    otlp_json: Option<&std::path::Path>,
+) -> Value {
+    let result = (|| -> anyhow::Result<Value> {
+        let (run_id, body) = export_doc(dir)?;
+        let bytes = body.len();
+        match (otlp, otlp_json) {
+            (Some(endpoint), None) => {
+                let status = post(endpoint, body)?;
+                Ok(
+                    json!({ "ok": true, "run_id": run_id, "endpoint": endpoint, "status": status, "bytes": bytes }),
+                )
+            }
+            (None, Some(path)) => {
+                use std::io::Write as _;
+                let mut f = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(path)?;
+                f.write_all(body.as_bytes())?;
+                Ok(
+                    json!({ "ok": true, "run_id": run_id, "file": path.display().to_string(), "bytes": bytes }),
+                )
+            }
+            _ => anyhow::bail!("give exactly one of --otlp and --otlp-json"),
+        }
+    })();
+    result.unwrap_or_else(|e| {
+        tracing::error!(dir = %dir.display(), "{e:#}");
+        json!({ "ok": false, "error": format!("{e:#}") })
+    })
+}
+
+fn bundle_import(file: &std::path::Path, out: &std::path::Path) -> Value {
+    let result = (|| -> anyhow::Result<Value> {
+        let doc: Value = serde_json::from_slice(&std::fs::read(file)?)?;
+        let trace = acn_trace::otlp::from_json(&doc)?;
+        let trace = acn_trace::ingest::align_clocks(&trace)?;
+        let inv = acn_trace::schema::inventory()?;
+        let views = acn_trace::ingest::views(&inv, &acn_trace::schema::views()?, &trace)?;
+        std::fs::create_dir(out)?;
+        acn_trace::parquet_io::write_trace(out, &inv, &trace)?;
+        for (view, batch) in &views {
+            let path = out.join(&view.file);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            acn_trace::parquet_io::write_batch(&path, batch)?;
+        }
+        Ok(json!({
+            "ok": true,
+            "out": out.display().to_string(),
+            "spans": trace.spans.len(),
+            "events": trace.events.len(),
+            "links": trace.links.len(),
+            "resources": trace.resources.len(),
+        }))
+    })();
+    result.unwrap_or_else(|e| {
+        tracing::error!(file = %file.display(), "{e:#}");
+        json!({ "ok": false, "error": format!("{e:#}") })
+    })
 }
 
 fn version() -> Value {
@@ -121,6 +243,17 @@ fn run() -> Value {
         Cmd::Bundle {
             cmd: BundleCmd::Verify { dir, views },
         } => bundle_verify(&dir, views),
+        Cmd::Bundle {
+            cmd:
+                BundleCmd::Export {
+                    dir,
+                    otlp,
+                    otlp_json,
+                },
+        } => bundle_export(&dir, otlp.as_deref(), otlp_json.as_deref()),
+        Cmd::Bundle {
+            cmd: BundleCmd::Import { otlp_json, out },
+        } => bundle_import(&otlp_json, &out),
     }
 }
 

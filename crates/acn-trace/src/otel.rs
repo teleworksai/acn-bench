@@ -151,7 +151,7 @@ fn id32(i: usize) -> Result<i32, ConvertError> {
 
 /// A total order on attribute sets, entry by entry in key order: by key, then by
 /// value type in union-member order, then by value (floats by `total_cmp`).
-fn attrs_order(a: &Attrs, b: &Attrs) -> std::cmp::Ordering {
+pub(crate) fn attrs_order(a: &Attrs, b: &Attrs) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     fn rank(v: &AttrValue) -> u8 {
         match v {
