@@ -668,3 +668,32 @@ fn every_session_names_the_bundles_run() {
     let t = session(&Digest::of(b"another run").to_hex(), 402);
     assert!(b.finish(&t).is_err());
 }
+
+/// Cites: TRC-35, TRC-25
+#[test]
+fn verify_views_catches_a_promoted_column_that_disagrees_with_attrs() {
+    use arrow_array::{ArrayRef, Int64Array, RecordBatch};
+    let runs = tempfile::tempdir().unwrap();
+    let w = write(runs.path(), 500);
+    // Rewrite spans.parquet with acn_call_retries changed in the promoted column
+    // only: the views read `attrs`, so they still recompute identically.
+    let inv = acn_trace::schema::inventory().unwrap();
+    let t = acn_trace::parquet_io::read_trace(&w.dir, &inv).unwrap();
+    let [spans, ..] = acn_trace::parquet_io::batches(&inv, &t).unwrap();
+    let idx = spans.schema().index_of("acn_call_retries").unwrap();
+    let mut cols: Vec<ArrayRef> = spans.columns().to_vec();
+    let forged: Int64Array = (0..spans.num_rows())
+        .map(|r| (!cols[idx].is_null(r)).then_some(99))
+        .collect();
+    cols[idx] = std::sync::Arc::new(forged);
+    let forged = RecordBatch::try_new(spans.schema(), cols).unwrap();
+    let path = w.dir.join("spans.parquet");
+    std::fs::write(&path, acn_trace::parquet_io::encode(&forged).unwrap()).unwrap();
+    let h = acn_trace::identity::file_hash(&path).unwrap().to_hex();
+    forge(&w.dir, |m| {
+        m.files.insert("spans.parquet".into(), h.clone());
+    });
+    assert!(bundle::verify(&w.dir).is_ok(), "the hashes agree");
+    let err = bundle::verify_views(&w.dir).unwrap_err().to_string();
+    assert!(err.contains("spans.parquet"), "{err}");
+}

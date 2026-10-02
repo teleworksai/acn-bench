@@ -85,7 +85,6 @@ pub fn session(run: &FixtureRun) -> Result<Trace, FixtureError> {
     let session_cx = Context::new().with_span(session);
 
     let mut t = 1_000_000u64;
-    let mut call_index = 0i64;
     for turn_index in 0..2i64 {
         let turn = tracer
             .span_builder("acn.turn")
@@ -100,6 +99,8 @@ pub fn session(run: &FixtureRun) -> Result<Trace, FixtureError> {
         let turn_cx = session_cx.with_span(turn);
         let calls = if turn_index == 0 { 2 } else { 1 };
         for c in 0..calls {
+            // TRC-12: the index counts the chats of one lineage within one turn.
+            let call_index: i64 = c;
             let start = t + 10_000;
             let mut chat = tracer
                 .span_builder("chat")
@@ -153,7 +154,6 @@ pub fn session(run: &FixtureRun) -> Result<Trace, FixtureError> {
                 tool.end_with_timestamp(at(t + 5_000_000));
                 t += 5_000_000;
             }
-            call_index += 1;
         }
         turn_cx.span().end_with_timestamp(at(t + 1_000));
         t += 2_000_000_000; // think time

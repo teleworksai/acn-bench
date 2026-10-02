@@ -270,15 +270,18 @@ fn golden() -> Trace {
         chat(
             0x30,
             0x20,
-            (3200, 4400),
+            (3200, 3800),
             0,
             false,
             Some((200, 0)),
             (10, 10),
             0,
-            &[("acn.call.ttft_ms", f(1.2))],
+            &[("acn.call.ttft_ms", f(0.6))],
         ),
         link(0x52, 0x30, 3300, 0.0003, 0.0),
+        tool(0x22, 0x20, (3850, 4000), "file", "local", 0),
+        // Not streamed and no token arrived: no ttft.
+        chat(0x32, 0x20, (4050, 4400), 1, false, None, (10, 10), 0, &[]),
         chat(0x31, 0x21, (3200, 3900), 0, true, None, (10, 10), 0, &[]),
         link(0x53, 0x31, 3250, 0.001, 0.0),
         chat(
@@ -292,19 +295,22 @@ fn golden() -> Trace {
             0,
             &[],
         ),
+        // The first call of turn 1 is call 0 again (TRC-12).
         chat(
             0x14,
             3,
             (6100, 8000),
-            3,
+            0,
             true,
             Some((2000, 1800)),
             (1, 1),
             2,
             &[("acn.server.queue_ms", f(0.02))],
         ),
-        tool(0x15, 3, (8100, 8600), "http", "remote", 3),
+        tool(0x15, 3, (8100, 8600), "http", "remote", 0),
         link(0x54, 0x15, 8150, 0.0004, 0.0001),
+        tool(0x16, 3, (8200, 8700), "file", "local", 0),
+        chat(0x17, 3, (8700, 8900), 1, true, None, (1, 1), 0, &[]),
         span(
             SC_TRACE,
             0x40,
@@ -446,18 +452,29 @@ fn every_view_has_exactly_the_columns_of_views_toml() {
 fn the_session_view_totals_and_refuses_partial_sums() {
     let v = &views()["session"];
     assert_eq!(v.num_rows(), 1);
+    assert_eq!(strs(v, "run_id"), [Some("run".into())]);
+    assert_eq!(ids(v, "session_id"), [Some(1)]);
+    assert_eq!(strs(v, "hypothesis_id"), [Some("none".into())]);
+    assert_eq!(strs(v, "hypothesis_status"), [Some("candidate".into())]);
+    assert_eq!(strs(v, "backend"), [Some("mockllm".into())]);
+    assert_eq!(strs(v, "mode"), [Some("sim".into())]);
+    assert_eq!(strs(v, "scenario_hash"), [Some("sh".into())]);
+    assert_eq!(strs(v, "workload_hash"), [Some("wh".into())]);
+    assert_eq!(ints(v, "seed"), [Some(7)]);
+    assert_eq!(ints(v, "replicate"), [Some(0)]);
+    assert_eq!(strs(v, "role"), [Some("treatment".into())]);
     assert_eq!(ints(v, "turns"), [Some(2)]);
-    assert_eq!(ints(v, "calls"), [Some(6)]);
+    assert_eq!(ints(v, "calls"), [Some(8)]);
     assert_eq!(ints(v, "duration_ns"), [Some(10_000)]);
     assert_eq!(
         ints(v, "input_tokens_total"),
         [None],
-        "C1 and CB0 returned no usage"
+        "C1, CB0, CA1 and C4 returned no usage"
     );
     assert_eq!(ints(v, "cache_read_tokens_total"), [None]);
     assert_eq!(ints(v, "calls_with_usage"), [Some(4)]);
-    assert_eq!(ints(v, "wire_bytes_up_total"), [Some(4122)]);
-    assert_eq!(ints(v, "wire_bytes_down_total"), [Some(622)]);
+    assert_eq!(ints(v, "wire_bytes_up_total"), [Some(4133)]);
+    assert_eq!(ints(v, "wire_bytes_down_total"), [Some(633)]);
     let m = v.column_by_name("outcome_counts").unwrap().as_map();
     let keys = m.keys().as_string::<i32>();
     let vals = m.values().as_primitive::<Int64Type>();
@@ -480,26 +497,34 @@ fn the_session_view_totals_and_refuses_partial_sums() {
 #[test]
 fn the_turn_view_walks_the_critical_path() {
     let v = &views()["turn"];
+    assert_eq!(strs(v, "run_id"), [Some("run".into()), Some("run".into())]);
+    assert_eq!(ids(v, "session_id"), [Some(1), Some(1)]);
+    assert_eq!(ids(v, "turn_id"), [Some(2), Some(3)]);
     assert_eq!(ints(v, "turn_index"), [Some(0), Some(1)]);
     assert_eq!(
         ints(v, "chain_length"),
-        [Some(3), Some(1)],
-        "C0, C1, C2 in series; C3"
+        [Some(3), Some(2)],
+        "C0, C1, C2; C3, C4"
     );
     assert_eq!(ints(v, "fanout_width"), [Some(2), Some(0)]);
     assert_eq!(ints(v, "fanout_depth"), [Some(1), Some(0)]);
     assert_eq!(ints(v, "think_time_before_ns"), [None, Some(1000)]);
     assert_eq!(ints(v, "duration_ns"), [Some(4900), Some(3000)]);
     // C0's links (100 + 50 + 200) and CA0's (300); CB0's 1000 is off the path.
-    // Turn 1: the remote tool's link (400 + 100).
-    assert_eq!(ints(v, "network_wait_ns"), [Some(650), Some(500)]);
-    assert_eq!(ints(v, "tool_wait_ns"), [Some(500), Some(500)]);
-    // Chat time on the path (1000 + 1100 + 1200 + 300) less the chats' link wait.
-    assert_eq!(ints(v, "model_wait_ns"), [Some(2950), Some(1900)]);
+    // Turn 1: X1's remote link is off the path, because X2 ends later.
+    assert_eq!(ints(v, "network_wait_ns"), [Some(650), Some(0)]);
+    assert_eq!(
+        ints(v, "tool_wait_ns"),
+        [Some(650), Some(500)],
+        "X0 + XA; X2"
+    );
+    // Chat time on the path (1000 + 1100 + 600 + 350 + 300; 1900 + 200) less the
+    // chats' link wait.
+    assert_eq!(ints(v, "model_wait_ns"), [Some(2700), Some(2100)]);
     assert_eq!(
         ints(v, "queue_wait_ns"),
-        [None, Some(20_000)],
-        "C1 has no queue time"
+        [None, None],
+        "null when any chat on the path lacks it"
     );
     assert_eq!(ints(v, "stalls"), [Some(1), Some(0)]);
     assert_eq!(ints(v, "retries"), [Some(1), Some(2)]);
@@ -519,43 +544,76 @@ fn the_turn_view_walks_the_critical_path() {
 #[test]
 fn the_call_view_finds_preceding_tools_by_cause_not_by_time() {
     let v = &views()["call"];
+    // Rows in span start order: C0, C1, CA0 and CB0 (both at 3200, by id), CA1,
+    // C2, C3, C4.
     assert_eq!(
         ids(v, "call_id"),
-        [
-            Some(0x10),
-            Some(0x12),
-            Some(0x30),
-            Some(0x31),
-            Some(0x13),
-            Some(0x14)
-        ]
+        [0x10, 0x12, 0x30, 0x31, 0x32, 0x13, 0x14, 0x17].map(Some)
     );
-    assert_eq!(
-        ints(v, "turn_index"),
-        [Some(0), Some(0), Some(0), Some(0), Some(0), Some(1)]
-    );
+    assert_eq!(ints(v, "call_index"), [0, 1, 0, 0, 1, 2, 0, 1].map(Some));
+    assert_eq!(ints(v, "turn_index"), [0, 0, 0, 0, 0, 0, 1, 1].map(Some));
     assert_eq!(
         ids(v, "lineage_id"),
-        [None, None, Some(0x20), Some(0x21), None, None]
+        [
+            None,
+            None,
+            Some(0x20),
+            Some(0x21),
+            Some(0x20),
+            None,
+            None,
+            None
+        ]
     );
-    // Only C1 consumed a tool: X0 was requested by call 0 of the main lineage.
-    // C3's predecessor (call 2) is in another turn, so its set is empty.
+    // By cause and by lineage: X0 and XA both answer call 0, but C1 consumed only
+    // the main chain's X0 and CA1 only A's XA. C4 consumed the parallel X1 and X2:
+    // latest end minus earliest start, and the class of the longest, ties broken
+    // by the lowest span id (X1, http).
     assert_eq!(
         ints(v, "preceding_tool_count"),
-        [None, Some(1), None, None, None, None]
+        [None, Some(1), None, None, Some(1), None, None, Some(2)]
     );
     assert_eq!(
         ints(v, "preceding_tool_ns"),
-        [None, Some(500), None, None, None, None]
+        [
+            None,
+            Some(500),
+            None,
+            None,
+            Some(150),
+            None,
+            None,
+            Some(600)
+        ]
     );
     assert_eq!(
         strs(v, "preceding_tool_class"),
-        [None, Some("file".into()), None, None, None, None]
+        [
+            None,
+            Some("file"),
+            None,
+            None,
+            Some("file"),
+            None,
+            None,
+            Some("http")
+        ]
+        .map(|x| x.map(str::to_owned))
     );
-    // Streamed: first token minus start; not streamed: the whole call; none: null.
+    // Streamed: first token minus start; not streamed: the whole call when a token
+    // arrived; no token: null.
     assert_eq!(
         ints(v, "ttft_ns"),
-        [Some(100), Some(1100), Some(1200), None, Some(50), Some(100)]
+        [
+            Some(100),
+            Some(1100),
+            Some(600),
+            None,
+            None,
+            Some(50),
+            Some(100),
+            None
+        ]
     );
     let ratio = v
         .column_by_name("cached_token_ratio")
@@ -571,19 +629,83 @@ fn the_call_view_finds_preceding_tools_by_cause_not_by_time() {
             None,
             Some(0.0),
             None,
+            None,
             Some(1200.0 / 1400.0),
-            Some(0.9)
+            Some(0.9),
+            None
         ]
     );
     assert_eq!(
         ints(v, "server_queue_ns"),
-        [Some(10_000), None, None, None, None, Some(20_000)],
+        [
+            Some(10_000),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(20_000),
+            None
+        ],
         "a _ms float becomes integer nanoseconds once, round-half-even"
     );
     assert_eq!(
+        ints(v, "input_tokens"),
+        [
+            Some(1000),
+            None,
+            Some(200),
+            None,
+            None,
+            Some(1400),
+            Some(2000),
+            None
+        ]
+    );
+    assert_eq!(
+        ints(v, "new_input_tokens"),
+        [
+            Some(200),
+            None,
+            Some(200),
+            None,
+            None,
+            Some(200),
+            Some(200),
+            None
+        ]
+    );
+    assert_eq!(
+        ints(v, "output_tokens"),
+        [
+            Some(50),
+            None,
+            Some(50),
+            None,
+            None,
+            Some(50),
+            Some(50),
+            None
+        ]
+    );
+    assert_eq!(
+        ints(v, "duration_ns"),
+        [1000, 1100, 600, 700, 350, 300, 1900, 200].map(Some)
+    );
+    assert_eq!(
+        ints(v, "wire_bytes_up"),
+        [4000, 100, 10, 10, 10, 1, 1, 1].map(Some)
+    );
+    assert_eq!(ints(v, "retries"), [1, 0, 0, 0, 0, 0, 2, 0].map(Some));
+    assert_eq!(
         strs(v, "provider"),
-        vec![Some("mockllm".to_owned()); 6],
+        vec![Some("mockllm".to_owned()); 8],
         "gen_ai.* read at ingest only"
+    );
+    assert_eq!(strs(v, "model"), vec![Some("m".to_owned()); 8]);
+    assert_eq!(
+        strs(v, "new_input_tokens_method"),
+        vec![Some("tokens".to_owned()); 8]
     );
 }
 
@@ -593,12 +715,9 @@ fn the_link_view_places_each_segment_in_its_step_and_outage() {
     let v = &views()["link"];
     assert_eq!(
         ids(v, "link_span_id"),
-        [Some(0x50), Some(0x51), Some(0x53), Some(0x52), Some(0x54)]
+        [0x50, 0x51, 0x53, 0x52, 0x54].map(Some)
     );
-    assert_eq!(
-        ids(v, "call_id"),
-        [Some(0x10), Some(0x10), Some(0x31), Some(0x30), Some(0x15)]
-    );
+    assert_eq!(ids(v, "call_id"), [0x10, 0x10, 0x31, 0x30, 0x15].map(Some));
     assert_eq!(
         strs(v, "scenario_step"),
         ["s0", "s0", "s1", "s1", "s1"].map(|x| Some(x.to_owned()))
@@ -609,32 +728,111 @@ fn the_link_view_places_each_segment_in_its_step_and_outage() {
     );
     assert_eq!(
         ints(v, "applied_delay_ns"),
-        [Some(100), Some(200), Some(1000), Some(300), Some(400)]
+        [100, 200, 1000, 300, 400].map(Some)
+    );
+    assert_eq!(ints(v, "rate_limited_ns"), [50, 0, 0, 0, 100].map(Some));
+    assert_eq!(
+        ints(v, "enqueue_ns"),
+        [250, 900, 3250, 3300, 8150].map(Some)
     );
     assert_eq!(
-        ints(v, "rate_limited_ns"),
-        [Some(50), Some(0), Some(0), Some(0), Some(100)]
+        ints(v, "dequeue_ns"),
+        [350, 1000, 3350, 3400, 8250].map(Some)
     );
+    assert_eq!(ints(v, "bytes"), [Some(1500); 5]);
+    assert_eq!(strs(v, "link_id"), vec![Some("uplink".to_owned()); 5]);
+    assert_eq!(strs(v, "link_model"), vec![Some("ge".to_owned()); 5]);
+    assert_eq!(strs(v, "direction"), vec![Some("up".to_owned()); 5]);
     assert_eq!(strs(v, "run_id"), vec![Some("run".to_owned()); 5]);
+}
+
+/// Cites: TRC-34
+#[test]
+fn step_and_outage_boundaries_follow_their_stated_rules() {
+    let mut t = golden();
+    let at = |t: &mut Trace, n: u8, enqueue: i64| {
+        let l = t.spans.iter_mut().find(|s| s.span_id == id(n)).unwrap();
+        l.attrs.insert("acn.link.enqueue_ns".into(), i(enqueue));
+    };
+    // A step takes effect at its own time; an outage ends before its end_ns.
+    at(&mut t, 0x50, 2000);
+    at(&mut t, 0x51, 3500);
+    // A third outage overlapping the first: [3000, 3600) sorts first, and a
+    // segment inside both gets the lowest index.
+    t.events.push(event(
+        SC_TRACE,
+        0x40,
+        4,
+        3000,
+        "acn.scenario.outage",
+        &[
+            ("start_ns", i(3000)),
+            ("end_ns", i(3600)),
+            ("cause", s("scheduled")),
+        ],
+    ));
+    // Two steps at one instant: the one emitted later takes effect.
+    t.events.push(event(
+        SC_TRACE,
+        0x40,
+        5,
+        2000,
+        "acn.scenario.step",
+        &[("step", s("a-late")), ("params", s("{}"))],
+    ));
+    t.sort();
+    let inv = schema::inventory().unwrap();
+    let all = ingest::views(&inv, &schema::views().unwrap(), &t).unwrap();
+    let v = &all.iter().find(|(v, _)| v.name == "link").unwrap().1;
+    // Rows keep their span start order; only the enqueue times moved.
+    assert_eq!(
+        ids(v, "link_span_id"),
+        [0x50, 0x51, 0x53, 0x52, 0x54].map(Some)
+    );
+    assert_eq!(
+        ints(v, "enqueue_ns"),
+        [2000, 3500, 3250, 3300, 8150].map(Some)
+    );
+    assert_eq!(
+        strs(v, "scenario_step"),
+        ["a-late", "a-late", "a-late", "a-late", "a-late"].map(|x| Some(x.to_owned()))
+    );
+    // Outages sorted: [3000,3600)=0, [3200,3500)=1, [8000,9000)=2. 3500 is past the
+    // end of outage 1 but inside outage 0; 3250 and 3300 are inside both.
+    assert_eq!(
+        ints(v, "outage_id"),
+        [None, Some(0), Some(0), Some(0), Some(2)]
+    );
 }
 
 /// Cites: TRC-38
 #[test]
 fn the_tool_view_takes_the_requesting_call_from_the_span() {
     let v = &views()["tool"];
-    assert_eq!(ids(v, "tool_span_id"), [Some(0x11), Some(0x15)]);
-    assert_eq!(ints(v, "requesting_call"), [Some(0), Some(3)]);
-    assert_eq!(ints(v, "turn_index"), [Some(0), Some(1)]);
+    assert_eq!(ids(v, "tool_span_id"), [0x11, 0x22, 0x15, 0x16].map(Some));
+    assert_eq!(ints(v, "requesting_call"), [Some(0); 4]);
+    assert_eq!(ints(v, "turn_index"), [0, 0, 1, 1].map(Some));
     assert_eq!(
         strs(v, "tool_class"),
-        [Some("file".into()), Some("http".into())]
+        ["file", "file", "http", "file"].map(|x| Some(x.to_owned()))
     );
     assert_eq!(
         strs(v, "placement"),
-        [Some("local".into()), Some("remote".into())]
+        ["local", "local", "remote", "local"].map(|x| Some(x.to_owned()))
     );
-    assert_eq!(ints(v, "duration_ns"), [Some(500), Some(500)]);
-    assert_eq!(ids(v, "lineage_id"), [None, None]);
+    assert_eq!(ints(v, "duration_ns"), [500, 150, 500, 500].map(Some));
+    assert_eq!(
+        ids(v, "lineage_id"),
+        [None, Some(0x20), None, None],
+        "XA runs in sub-agent A"
+    );
+    assert_eq!(
+        strs(v, "tool_name"),
+        ["read_file", "read_file", "fetch", "read_file"].map(|x| Some(x.to_owned()))
+    );
+    assert_eq!(ints(v, "result_bytes"), [Some(2048); 4]);
+    assert_eq!(strs(v, "run_id"), vec![Some("run".to_owned()); 4]);
+    assert_eq!(ids(v, "session_id"), [Some(1); 4]);
 }
 
 /// Cites: TRC-30
@@ -727,4 +925,253 @@ fn only_the_ingester_reads_convention_attributes() {
         }
     }
     assert!(offenders.is_empty(), "{offenders:?}");
+}
+
+/// The golden session and turn 0 with `children` as the turn's only work.
+fn mini(children: Vec<SpanRow>) -> Trace {
+    let g = golden();
+    let mut spans: Vec<SpanRow> = g
+        .spans
+        .into_iter()
+        .filter(|s| s.span_id == id(1) || s.span_id == id(2))
+        .collect();
+    spans.extend(children);
+    let mut t = Trace {
+        spans,
+        events: Vec::new(),
+        links: Vec::new(),
+        resources: g.resources,
+    };
+    t.sort();
+    t
+}
+
+fn turn_of(t: &Trace) -> RecordBatch {
+    let inv = schema::inventory().unwrap();
+    ingest::views(&inv, &schema::views().unwrap(), t)
+        .unwrap()
+        .into_iter()
+        .find(|(v, _)| v.name == "turn")
+        .unwrap()
+        .1
+}
+
+/// Cites: TRC-32
+#[test]
+fn a_zero_length_span_keeps_its_predecessors_on_the_path_whatever_its_id() {
+    // C3 [6100,7000] → zero-length tool Z [7000,7000] → C4 [7000,8000]. Z ties with
+    // C3 at 7000; whichever id Z draws, C3 stays on the path.
+    for z in [0x04, 0x7f] {
+        let t = mini(vec![
+            chat(0x40, 2, (6100, 7000), 0, true, None, (1, 1), 0, &[]),
+            tool(z, 2, (7000, 7000), "file", "local", 0),
+            chat(0x41, 2, (7000, 8000), 1, true, None, (1, 1), 0, &[]),
+        ]);
+        let v = turn_of(&t);
+        assert_eq!(ints(&v, "chain_length"), [Some(2)], "Z id {z:#x}");
+        assert_eq!(ints(&v, "model_wait_ns"), [Some(1900)], "Z id {z:#x}");
+    }
+}
+
+/// Cites: TRC-32
+#[test]
+fn an_end_time_tie_goes_to_the_longer_span_not_the_lower_id() {
+    // Chat P [0,1000] and tool Q [500,1000] end together before R. P started first,
+    // so the turn waited on P: the tool is off the path whichever id is lower.
+    for (p, q) in [(0x40, 0x41), (0x41, 0x40)] {
+        let t = mini(vec![
+            chat(p, 2, (100, 1000), 0, true, None, (1, 1), 0, &[]),
+            tool(q, 2, (500, 1000), "file", "local", 0),
+            chat(0x42, 2, (1000, 1200), 1, true, None, (1, 1), 0, &[]),
+        ]);
+        let v = turn_of(&t);
+        assert_eq!(ints(&v, "tool_wait_ns"), [Some(0)], "P {p:#x}, Q {q:#x}");
+        assert_eq!(ints(&v, "chain_length"), [Some(2)]);
+        assert_eq!(ints(&v, "model_wait_ns"), [Some(1100)]);
+    }
+}
+
+/// Cites: TRC-30
+#[test]
+fn views_do_not_depend_on_input_order() {
+    let inv = schema::inventory().unwrap();
+    let vs = schema::views().unwrap();
+    let encode = |t: &Trace| -> Vec<Vec<u8>> {
+        ingest::views(&inv, &vs, t)
+            .unwrap()
+            .iter()
+            .map(|(_, b)| acn_trace::parquet_io::encode(b).unwrap())
+            .collect()
+    };
+    let mut shuffled = golden();
+    shuffled.spans.reverse();
+    shuffled.events.reverse();
+    shuffled.spans.rotate_left(7);
+    shuffled.sort();
+    assert_eq!(encode(&golden()), encode(&shuffled));
+    // An empty run has empty views, not an error.
+    for (_, b) in ingest::views(&inv, &vs, &Trace::default()).unwrap() {
+        assert_eq!(b.num_rows(), 0);
+    }
+}
+
+/// Cites: TRC-30, TRC-32, TRC-33, TRC-34
+#[test]
+fn the_ingester_refuses_traces_that_would_give_wrong_numbers() {
+    let inv = schema::inventory().unwrap();
+    let vs = schema::views().unwrap();
+    type Edit = Box<dyn Fn(&mut Trace)>;
+    let set = |n: u8, k: &'static str, v: AttrValue| -> Edit {
+        Box::new(move |t: &mut Trace| {
+            t.spans
+                .iter_mut()
+                .find(|s| s.span_id == id(n))
+                .unwrap()
+                .attrs
+                .insert(k.into(), v.clone());
+        })
+    };
+    let cases: Vec<(&str, Edit)> = vec![
+        ("share an acn.turn.index", set(3, "acn.turn.index", i(0))),
+        (
+            "not in the closed set",
+            set(2, "acn.turn.outcome", s("great")),
+        ),
+        ("disagree on acn.run_id", {
+            Box::new(|t: &mut Trace| {
+                let mut other = t.spans.iter().find(|s| s.span_id == id(1)).unwrap().clone();
+                other.trace_id = [9; 16];
+                other.attrs.insert("acn.run_id".into(), s("other"));
+                t.spans.push(other);
+            })
+        }),
+        ("acn.call.index 5", set(0x12, "acn.call.index", i(5))),
+        (
+            "requesting call 7",
+            set(0x11, "acn.tool.requesting_call", i(7)),
+        ),
+        ("not an int", set(0x10, "acn.call.retries", s("one"))),
+        ("negative", set(0x50, "acn.link.applied_delay_ms", f(-0.1))),
+        ("child of `execute_tool`", {
+            Box::new(|t: &mut Trace| {
+                t.spans
+                    .iter_mut()
+                    .find(|s| s.span_id == id(0x54))
+                    .unwrap()
+                    .parent_span_id = Some(id(0x16));
+            })
+        }),
+        ("ends before it starts", {
+            Box::new(|t: &mut Trace| {
+                t.spans
+                    .iter_mut()
+                    .find(|s| s.span_id == id(0x11))
+                    .unwrap()
+                    .end_ns = 1000;
+            })
+        }),
+        ("cycle", {
+            Box::new(|t: &mut Trace| {
+                t.spans
+                    .iter_mut()
+                    .find(|s| s.span_id == id(2))
+                    .unwrap()
+                    .parent_span_id = Some(id(0x10));
+            })
+        }),
+        ("not on a `chat`", {
+            Box::new(|t: &mut Trace| {
+                t.events.push(event(
+                    T,
+                    2,
+                    0,
+                    150,
+                    "acn.stream.stall",
+                    &[("gap_ms", f(0.3)), ("tokens_before", i(1))],
+                ));
+            })
+        }),
+        ("belongs to no span", {
+            Box::new(|t: &mut Trace| {
+                t.events
+                    .push(event(T, 0x7e, 0, 150, "acn.stream.first_token", &[]));
+            })
+        }),
+        ("before its call started", {
+            Box::new(|t: &mut Trace| {
+                t.events
+                    .iter_mut()
+                    .find(|e| e.span_id == id(0x10) && e.name == "acn.stream.first_token")
+                    .unwrap()
+                    .time_ns = 150;
+            })
+        }),
+        ("exactly one acn.scenario", {
+            Box::new(|t: &mut Trace| {
+                t.spans.retain(|s| s.name != "acn.scenario");
+                t.events.retain(|e| e.trace_id != SC_TRACE);
+                t.links.clear();
+            })
+        }),
+        ("ends (3000) before it starts", {
+            Box::new(|t: &mut Trace| {
+                t.events.push(event(
+                    SC_TRACE,
+                    0x40,
+                    9,
+                    3000,
+                    "acn.scenario.outage",
+                    &[
+                        ("start_ns", i(3500)),
+                        ("end_ns", i(3000)),
+                        ("cause", s("trace")),
+                    ],
+                ));
+            })
+        }),
+        ("lacks `step`", {
+            Box::new(|t: &mut Trace| {
+                t.events.push(event(
+                    SC_TRACE,
+                    0x40,
+                    9,
+                    10,
+                    "acn.scenario.step",
+                    &[("params", s("{}"))],
+                ));
+            })
+        }),
+    ];
+    for (needle, edit) in cases {
+        let mut t = golden();
+        edit(&mut t);
+        t.sort();
+        let err = ingest::views(&inv, &vs, &t).unwrap_err().to_string();
+        assert!(err.contains(needle), "expected `{needle}`, got: {err}");
+    }
+}
+
+/// Cites: TRC-30
+#[test]
+fn nesting_deeper_than_the_bound_is_an_error_not_a_stack_overflow() {
+    let mut children = Vec::new();
+    // MAX_DEPTH sub-agents deep, built on distinct ids (two bytes of id space).
+    let depth = ingest::MAX_DEPTH + 2;
+    for k in 0..depth {
+        let mut a = agent(0, (3100, 4500));
+        let n = u16::try_from(k + 0x100).unwrap().to_be_bytes();
+        a.span_id = [n[0], n[1], 0xaa, 0, 0, 0, 0, 0];
+        a.parent_span_id = Some(if k == 0 {
+            id(2)
+        } else {
+            children.last().map(|c: &SpanRow| c.span_id).unwrap()
+        });
+        children.push(a);
+    }
+    let t = mini(children);
+    let inv = schema::inventory().unwrap();
+    let err = ingest::views(&inv, &schema::views().unwrap(), &t)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("deeper than"), "{err}");
 }

@@ -4,7 +4,7 @@
 //! reads views or promoted `acn.*` columns.
 //!
 //! Deterministic by construction: rows follow the stored order of their spans,
-//! `_ms` attributes become nanoseconds once per span by round-half-even, every
+//! `_ms` attributes become nanoseconds by round-half-even wherever they are read, every
 //! aggregate is an integer sum, and no reduction is parallel. The writer is checked
 //! against `views.toml` (TRC-37): every declared column must be produced, with its
 //! type and nullability, and nothing else. The readings the spec leaves open — the
@@ -43,7 +43,7 @@ type SpanId = [u8; 8];
 
 /// One cell of a view row, before it is typed against `views.toml`.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Cell {
+enum Cell {
     Utf8(Option<String>),
     Int(Option<i64>),
     Float(Option<f64>),
@@ -55,7 +55,11 @@ pub enum Cell {
 type Row = BTreeMap<&'static str, Cell>;
 
 /// A `_ms` float as integer nanoseconds: round-half-even of `v × 1e6` (ADR-12).
+/// A negative duration is refused: every `_ms` attribute is a time span or a delay.
 pub fn ms_to_ns(v: f64) -> Result<i64> {
+    if v < 0.0 {
+        return invalid(format!("{v} ms is negative; a duration never is"));
+    }
     let x = (v * 1e6).round_ties_even();
     // i64::MAX as f64 rounds up to 2^63, so the bound is exclusive.
     #[allow(clippy::cast_precision_loss)]
@@ -67,9 +71,44 @@ pub fn ms_to_ns(v: f64) -> Result<i64> {
     Ok(x as i64)
 }
 
+/// The deepest span tree the ingester accepts. Real nesting is a handful of
+/// levels (session, turn, sub-agents); the bound keeps a corrupt or crafted
+/// bundle from exhausting the stack in the critical-path walk (ADR-14).
+pub const MAX_DEPTH: usize = 256;
+
+/// The work spans a critical path is made of (ADR-14).
+fn is_work(name: &str) -> bool {
+    matches!(name, "chat" | "execute_tool" | "invoke_agent")
+}
+
+/// The span each event may sit on (TRC-12, TRC-15).
+fn event_owner(event: &str) -> Option<&'static str> {
+    match event {
+        "acn.stream.first_token" | "acn.stream.last_token" | "acn.stream.stall" => Some("chat"),
+        "acn.scenario.step" | "acn.scenario.outage" => Some("acn.scenario"),
+        _ => None,
+    }
+}
+
+/// The tie order of work spans on the critical path: chats first.
+fn work_rank(name: &str) -> u8 {
+    match name {
+        "chat" => 0,
+        "execute_tool" => 1,
+        _ => 2,
+    }
+}
+
+fn count(n: usize) -> Result<i64> {
+    i64::try_from(n).or_else(|_| invalid("a count does not fit Int64"))
+}
+
+fn sid(s: &SpanRow) -> String {
+    s.span_id.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Indexed access to a trace's spans and their tree.
 struct Index<'a> {
-    spans: &'a [SpanRow],
     by_id: BTreeMap<([u8; 16], SpanId), usize>,
     children: BTreeMap<usize, Vec<usize>>,
     events: BTreeMap<([u8; 16], SpanId), Vec<usize>>,
@@ -77,31 +116,91 @@ struct Index<'a> {
 }
 
 impl<'a> Index<'a> {
+    /// Index a trace, refusing what would make a view silently wrong or hang:
+    /// a duplicate id, a missing parent, a span that ends before it starts, a
+    /// parent cycle, nesting deeper than [`MAX_DEPTH`], and an event that belongs
+    /// to no span or to a span of the wrong kind.
     fn new(trace: &'a Trace) -> Result<Self> {
+        let spans = &trace.spans;
         let mut by_id = BTreeMap::new();
-        for (i, s) in trace.spans.iter().enumerate() {
+        for (i, s) in spans.iter().enumerate() {
+            if s.end_ns < s.start_ns {
+                return invalid(format!("`{}` {} ends before it starts", s.name, sid(s)));
+            }
             if by_id.insert((s.trace_id, s.span_id), i).is_some() {
-                return invalid("a span id appears twice");
+                return invalid(format!("span id {} appears twice", sid(s)));
             }
         }
+        let mut parent = vec![None; spans.len()];
         let mut children: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        for (i, s) in trace.spans.iter().enumerate() {
+        for (i, s) in spans.iter().enumerate() {
             if let Some(p) = s.parent_span_id {
                 let Some(&pi) = by_id.get(&(s.trace_id, p)) else {
                     return invalid(format!(
-                        "span `{}` names a parent the trace does not hold",
-                        s.name
+                        "`{}` {} names a parent the trace does not hold",
+                        s.name,
+                        sid(s)
                     ));
                 };
+                parent[i] = Some(pi);
                 children.entry(pi).or_default().push(i);
+            }
+        }
+        // Depth of every span, iteratively: a cycle or an over-deep tree is an
+        // error, never a hang or a stack overflow.
+        let mut depth: Vec<Option<usize>> = vec![None; spans.len()];
+        for (start, first) in spans.iter().enumerate() {
+            let mut path = Vec::new();
+            let mut cur = Some(start);
+            let base = loop {
+                match cur {
+                    None => break 0,
+                    Some(n) if depth[n].is_some() => break depth[n].unwrap_or(0) + 1,
+                    Some(n) => {
+                        if path.len() > MAX_DEPTH || path.contains(&n) {
+                            return invalid(format!(
+                                "the parents of `{}` {} form a cycle or nest deeper than {MAX_DEPTH}",
+                                first.name,
+                                sid(first)
+                            ));
+                        }
+                        path.push(n);
+                        cur = parent[n];
+                    }
+                }
+            };
+            for (k, &n) in path.iter().rev().enumerate() {
+                if base + k > MAX_DEPTH {
+                    return invalid(format!(
+                        "`{}` {} nests deeper than {MAX_DEPTH} spans",
+                        spans[n].name,
+                        sid(&spans[n])
+                    ));
+                }
+                depth[n] = Some(base + k);
             }
         }
         let mut events: BTreeMap<_, Vec<usize>> = BTreeMap::new();
         for (i, e) in trace.events.iter().enumerate() {
+            let Some(&owner) = by_id.get(&(e.trace_id, e.span_id)) else {
+                return invalid(format!(
+                    "event `{}` belongs to no span of the trace",
+                    e.name
+                ));
+            };
+            if let Some(kind) = event_owner(&e.name)
+                && spans[owner].name != kind
+            {
+                return invalid(format!(
+                    "event `{}` sits on `{}` {}, not on a `{kind}`",
+                    e.name,
+                    spans[owner].name,
+                    sid(&spans[owner])
+                ));
+            }
             events.entry((e.trace_id, e.span_id)).or_default().push(i);
         }
         Ok(Self {
-            spans: &trace.spans,
             by_id,
             children,
             events,
@@ -110,7 +209,7 @@ impl<'a> Index<'a> {
     }
 
     fn span(&self, i: usize) -> &'a SpanRow {
-        &self.spans[i]
+        &self.trace.spans[i]
     }
 
     fn parent(&self, i: usize) -> Option<usize> {
@@ -176,8 +275,8 @@ impl<'a> Index<'a> {
     }
 
     fn named(&self, name: &str) -> Vec<usize> {
-        (0..self.spans.len())
-            .filter(|&i| self.spans[i].name == name)
+        (0..self.trace.spans.len())
+            .filter(|&i| self.trace.spans[i].name == name)
             .collect()
     }
 }
@@ -280,41 +379,41 @@ fn critical_path(ix: &Index<'_>, container: usize) -> Vec<usize> {
         .children(container)
         .iter()
         .copied()
-        .filter(|&c| {
-            matches!(
-                ix.span(c).name.as_str(),
-                "chat" | "execute_tool" | "invoke_agent"
-            )
-        })
+        .filter(|&c| is_work(&ix.span(c).name))
         .collect();
-    let latest = |bound: Option<i64>| {
+    let latest = |bound: Option<i64>, taken: &BTreeSet<usize>| {
         work.iter()
             .copied()
+            .filter(|c| !taken.contains(c))
             .filter(|&c| bound.is_none_or(|b| ix.span(c).end_ns <= b))
             .max_by(|&a, &b| {
+                // Latest end wins. On a tie, the span that started earlier (the
+                // longer wait), then a chat over a tool over a sub-agent; the
+                // span id, which is random, decides only between spans that are
+                // identical in time and kind (ADR-14).
                 let (sa, sb) = (ix.span(a), ix.span(b));
-                sa.end_ns.cmp(&sb.end_ns).then(sb.span_id.cmp(&sa.span_id))
+                sa.end_ns
+                    .cmp(&sb.end_ns)
+                    .then(sb.start_ns.cmp(&sa.start_ns))
+                    .then(work_rank(&sb.name).cmp(&work_rank(&sa.name)))
+                    .then(sb.span_id.cmp(&sa.span_id))
             })
     };
+    // A span already on the path is never a candidate again: a zero-length span
+    // ends at its own start and would otherwise be its own predecessor, cutting
+    // off the spans before it.
     let mut chain = Vec::new();
-    let mut cur = latest(None);
+    let mut taken = BTreeSet::new();
+    let mut cur = latest(None, &taken);
     while let Some(c) = cur {
         chain.push(c);
-        cur = latest(Some(ix.span(c).start_ns));
-        // A zero-length span would be its own predecessor; it is visited once.
-        if cur.is_some_and(|n| chain.contains(&n)) {
-            break;
-        }
+        taken.insert(c);
+        cur = latest(Some(ix.span(c).start_ns), &taken);
     }
     chain.reverse();
     let mut leaves = Vec::new();
     for c in chain {
-        let nested = ix.children(c).iter().any(|&g| {
-            matches!(
-                ix.span(g).name.as_str(),
-                "chat" | "execute_tool" | "invoke_agent"
-            )
-        });
+        let nested = ix.children(c).iter().any(|&g| is_work(&ix.span(g).name));
         if nested {
             leaves.extend(critical_path(ix, c));
         } else if ix.span(c).name != "invoke_agent" {
@@ -351,10 +450,13 @@ fn run_id(ix: &Index<'_>) -> Result<Option<String>> {
 }
 
 fn session_rows(ix: &Index<'_>, inv: &Inventory) -> Result<Vec<Row>> {
-    let outcomes: Vec<String> = inv
+    let Some(outcomes) = inv
         .attribute("acn.turn.outcome")
         .map(|a| a.values.clone())
-        .unwrap_or_default();
+        .filter(|v| !v.is_empty())
+    else {
+        return invalid("the inventory declares no value set for acn.turn.outcome (TRC-31)");
+    };
     let mut rows = Vec::new();
     for i in ix.named("acn.session") {
         let s = ix.span(i);
@@ -388,7 +490,6 @@ fn session_rows(ix: &Index<'_>, inv: &Inventory) -> Result<Vec<Row>> {
                 with_usage += 1;
             }
         }
-        let count = |n: usize| i64::try_from(n).map_err(|_| IngestError::Invalid("count".into()));
         rows.push(Row::from([
             ("run_id", Cell::Utf8(Some(req_str(s, "acn.run_id")?))),
             ("session_id", Cell::Id(Some(s.span_id))),
@@ -501,7 +602,7 @@ fn turn_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
                     "chat" => {
                         retries = add(retries, req_int(ds, "acn.call.retries")?)?;
                         let n = ix.events_of(d, "acn.stream.stall").len();
-                        stalls = add(stalls, i64::try_from(n).unwrap_or(i64::MAX))?;
+                        stalls = add(stalls, count(n)?)?;
                     }
                     _ => {}
                 }
@@ -558,39 +659,97 @@ fn turn_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
     Ok(rows)
 }
 
-/// Where a call or tool sits: its session, turn index and lineage.
-fn place(ix: &Index<'_>, i: usize) -> Result<(String, SpanId, i64, Option<usize>)> {
+/// Where a call or tool sits.
+struct Place {
+    run_id: String,
+    session: SpanId,
+    turn: usize,
+    turn_index: i64,
+    lineage: Option<usize>,
+}
+
+fn place(ix: &Index<'_>, i: usize) -> Result<Place> {
     let s = ix.span(i);
     let Some(turn) = ix.ancestor(i, "acn.turn") else {
-        return invalid(format!("`{}` {:02x?} is in no turn", s.name, s.span_id));
+        return invalid(format!("`{}` {} is in no turn", s.name, sid(s)));
     };
     let Some(sess) = ix.ancestor(turn, "acn.session") else {
-        return invalid(format!("the turn of `{}` is in no session", s.name));
+        return invalid(format!(
+            "the turn of `{}` {} is in no session",
+            s.name,
+            sid(s)
+        ));
     };
-    Ok((
-        req_str(ix.span(sess), "acn.run_id")?,
-        ix.span(sess).span_id,
-        req_int(ix.span(turn), "acn.turn.index")?,
-        ix.lineage(i),
-    ))
+    Ok(Place {
+        run_id: req_str(ix.span(sess), "acn.run_id")?,
+        session: ix.span(sess).span_id,
+        turn,
+        turn_index: req_int(ix.span(turn), "acn.turn.index")?,
+        lineage: ix.lineage(i),
+    })
+}
+
+/// TRC-12: within a turn and lineage, `acn.call.index` counts the chats from 0 in
+/// start order (ties by span id), and every tool's `acn.tool.requesting_call`
+/// names one of them. A view keyed on those numbers is wrong otherwise.
+fn check_call_indices(ix: &Index<'_>) -> Result<()> {
+    // (turn, lineage) -> (start, span id, call index) of each chat.
+    type Calls = Vec<(i64, SpanId, i64)>;
+    let mut chats: BTreeMap<(usize, Option<usize>), Calls> = BTreeMap::new();
+    for c in ix.named("chat") {
+        let p = place(ix, c)?;
+        let s = ix.span(c);
+        chats.entry((p.turn, p.lineage)).or_default().push((
+            s.start_ns,
+            s.span_id,
+            req_int(s, "acn.call.index")?,
+        ));
+    }
+    for v in chats.values_mut() {
+        v.sort_unstable();
+        for (expected, (_, id, index)) in v.iter().enumerate() {
+            if *index != count(expected)? {
+                return invalid(format!(
+                    "chat {} has acn.call.index {index}, but it is call {expected} of its turn and lineage in start order (TRC-12)",
+                    id.iter().map(|b| format!("{b:02x}")).collect::<String>()
+                ));
+            }
+        }
+    }
+    for t in ix.named("execute_tool") {
+        let p = place(ix, t)?;
+        let s = ix.span(t);
+        let req = req_int(s, "acn.tool.requesting_call")?;
+        let n = chats.get(&(p.turn, p.lineage)).map_or(0, Vec::len);
+        if req < 0 || req >= count(n)? {
+            return invalid(format!(
+                "tool {} names requesting call {req}, which its turn and lineage do not hold (TRC-13)",
+                sid(s)
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn call_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
     // Tools by (turn span, lineage, requesting call), for the preceding-tool columns.
     let mut tools: BTreeMap<(usize, Option<usize>, i64), Vec<usize>> = BTreeMap::new();
     for t in ix.named("execute_tool") {
-        let Some(turn) = ix.ancestor(t, "acn.turn") else {
-            return invalid("an execute_tool is in no turn");
-        };
+        let p = place(ix, t)?;
         let req = req_int(ix.span(t), "acn.tool.requesting_call")?;
-        tools.entry((turn, ix.lineage(t), req)).or_default().push(t);
+        tools.entry((p.turn, p.lineage, req)).or_default().push(t);
     }
     let mut rows = Vec::new();
     for c in ix.named("chat") {
         let s = ix.span(c);
-        let (run, session, turn_index, lineage) = place(ix, c)?;
+        let Place {
+            run_id: run,
+            session,
+            turn,
+            turn_index,
+            lineage,
+        } = place(ix, c)?;
         let index = req_int(s, "acn.call.index")?;
-        let turn = ix.ancestor(c, "acn.turn").unwrap_or(c);
         let set: &[usize] = if index > 0 {
             tools
                 .get(&(turn, lineage, index - 1))
@@ -602,8 +761,13 @@ fn call_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
             if set.is_empty() {
                 (None, None, None)
             } else {
-                let start = set.iter().map(|&t| ix.span(t).start_ns).min().unwrap_or(0);
-                let end = set.iter().map(|&t| ix.span(t).end_ns).max().unwrap_or(0);
+                let first = ix.span(set[0]);
+                let start = set
+                    .iter()
+                    .fold(first.start_ns, |m, &t| m.min(ix.span(t).start_ns));
+                let end = set
+                    .iter()
+                    .fold(first.end_ns, |m, &t| m.max(ix.span(t).end_ns));
                 let mut longest = set[0];
                 for &t in set {
                     let (a, b) = (ix.span(t), ix.span(longest));
@@ -613,7 +777,7 @@ fn call_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
                     }
                 }
                 (
-                    Some(i64::try_from(set.len()).unwrap_or(i64::MAX)),
+                    Some(count(set.len())?),
                     Some(end.checked_sub(start).ok_or_else(|| {
                         IngestError::Invalid("preceding-tool span overflows".into())
                     })?),
@@ -628,19 +792,22 @@ fn call_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
             _ => None,
         };
         let streamed = req_bool(s, "acn.call.streamed")?;
-        let ttft = if streamed {
-            match ix.events_of(c, "acn.stream.first_token").first() {
-                Some(e) if e.time_ns < s.start_ns => {
-                    return invalid("a first token before its call started");
+        let ttft =
+            if streamed {
+                match ix.events_of(c, "acn.stream.first_token").first() {
+                    Some(e) if e.time_ns < s.start_ns => {
+                        return invalid("a first token before its call started");
+                    }
+                    Some(e) => Some(e.time_ns.checked_sub(s.start_ns).ok_or_else(|| {
+                        IngestError::Invalid("time to first token overflows".into())
+                    })?),
+                    None => None,
                 }
-                Some(e) => Some(e.time_ns - s.start_ns),
-                None => None,
-            }
-        } else if get(s, "acn.call.ttft_ms").is_some() {
-            Some(dur(s)?)
-        } else {
-            None
-        };
+            } else if get(s, "acn.call.ttft_ms").is_some() {
+                Some(dur(s)?)
+            } else {
+                None
+            };
         rows.push(Row::from([
             ("run_id", Cell::Utf8(Some(run))),
             ("session_id", Cell::Id(Some(session))),
@@ -726,26 +893,32 @@ fn link_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
         return invalid("link spans without a session: the run id is unknown (TRC-35)");
     };
     let scenarios = ix.named("acn.scenario");
-    if scenarios.len() > 1 {
-        return invalid("a run has one acn.scenario span (TRC-16)");
+    let [sc] = scenarios.as_slice() else {
+        return invalid(format!(
+            "a run with link spans has exactly one acn.scenario span, not {} (TRC-16)",
+            scenarios.len()
+        ));
+    };
+    // Steps in the order they took effect: by time, then by the order the scenario
+    // emitted them (`seq`), never by name.
+    let mut steps: Vec<(i64, u32, String)> = Vec::new();
+    for e in ix.events_of(*sc, "acn.scenario.step") {
+        let Some(AttrValue::String(step)) = e.attrs.get("step") else {
+            return invalid("an acn.scenario.step event lacks `step`");
+        };
+        steps.push((e.time_ns, e.seq, step.clone()));
     }
-    let mut steps: Vec<(i64, String)> = Vec::new();
     let mut outages: Vec<(i64, i64)> = Vec::new();
-    if let Some(&sc) = scenarios.first() {
-        for e in ix.events_of(sc, "acn.scenario.step") {
-            let Some(AttrValue::String(step)) = e.attrs.get("step") else {
-                return invalid("an acn.scenario.step event lacks `step`");
-            };
-            steps.push((e.time_ns, step.clone()));
+    for e in ix.events_of(*sc, "acn.scenario.outage") {
+        let (Some(AttrValue::Int(a)), Some(AttrValue::Int(b))) =
+            (e.attrs.get("start_ns"), e.attrs.get("end_ns"))
+        else {
+            return invalid("an acn.scenario.outage event lacks start_ns or end_ns");
+        };
+        if b < a {
+            return invalid(format!("an outage ends ({b}) before it starts ({a})"));
         }
-        for e in ix.events_of(sc, "acn.scenario.outage") {
-            let (Some(AttrValue::Int(a)), Some(AttrValue::Int(b))) =
-                (e.attrs.get("start_ns"), e.attrs.get("end_ns"))
-            else {
-                return invalid("an acn.scenario.outage event lacks start_ns or end_ns");
-            };
-            outages.push((*a, *b));
-        }
+        outages.push((*a, *b));
     }
     steps.sort();
     outages.sort_unstable();
@@ -773,12 +946,15 @@ fn link_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
         let step = steps
             .iter()
             .rev()
-            .find(|(t, _)| *t <= enqueue)
-            .map(|(_, st)| st.clone());
-        let outage = outages
+            .find(|(t, _, _)| *t <= enqueue)
+            .map(|(_, _, st)| st.clone());
+        let outage = match outages
             .iter()
             .position(|(a, b)| *a <= enqueue && enqueue < *b)
-            .map(|i| i64::try_from(i).unwrap_or(i64::MAX));
+        {
+            Some(i) => Some(count(i)?),
+            None => None,
+        };
         rows.push(Row::from([
             ("run_id", Cell::Utf8(Some(run.clone()))),
             ("link_span_id", Cell::Id(Some(s.span_id))),
@@ -825,7 +1001,13 @@ fn tool_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
     let mut rows = Vec::new();
     for t in ix.named("execute_tool") {
         let s = ix.span(t);
-        let (run, session, turn_index, lineage) = place(ix, t)?;
+        let Place {
+            run_id: run,
+            session,
+            turn_index,
+            lineage,
+            ..
+        } = place(ix, t)?;
         rows.push(Row::from([
             ("run_id", Cell::Utf8(Some(run))),
             ("session_id", Cell::Id(Some(session))),
@@ -1030,6 +1212,7 @@ pub fn views(inv: &Inventory, views: &Views, trace: &Trace) -> Result<Vec<(View,
         return invalid("the trace is not in stored order (TRC-25)");
     }
     let ix = Index::new(trace)?;
+    check_call_indices(&ix)?;
     let mut out = Vec::new();
     for view in views.iter() {
         let rows = match view.name.as_str() {

@@ -241,9 +241,10 @@ impl Manifest {
         if self.producers.is_empty() || self.producers.windows(2).any(|w| w[0] >= w[1]) {
             return invalid("producers must be a non-empty sorted list without duplicates");
         }
+        let views = view_files()?;
         for (path, hash) in &self.files {
             Digest::from_hex(hash)?;
-            if !layout_allows(path) {
+            if !layout_allows(path, &views) {
                 return invalid(format!(
                     "`{path}` cannot be listed: a bundle holds the four tables, views/<view>.parquet and sidecar/ files, and nothing else (TRC-22)"
                 ));
@@ -269,10 +270,11 @@ impl Manifest {
     }
 }
 
-/// The derived views every bundle holds (TRC-22, TRC-31..34, TRC-38).
-pub const VIEWS: &[&str] = &["session", "turn", "call", "link", "tool"];
-/// Their directory.
-pub const VIEWS_DIR: &str = "views";
+/// The files of the derived views every bundle holds (TRC-22), as `views.toml`
+/// names them: the one list the writer, the layout check and `verify` all read.
+pub fn view_files() -> Result<Vec<String>> {
+    Ok(schema::views()?.iter().map(|v| v.file.clone()).collect())
+}
 
 /// Every session of a bundle names the bundle's run (TRC-10).
 fn check_sessions(trace: &Trace, run_id: &str) -> Result<()> {
@@ -292,18 +294,12 @@ fn check_sessions(trace: &Trace, run_id: &str) -> Result<()> {
 /// Whether a listed path belongs to the layout of TRC-22: one of the four tables,
 /// a known view, or a file under `sidecar/`. The manifest itself and `logs/` are
 /// never listed, and a verdict lives outside the bundle (HYP-20).
-fn layout_allows(path: &str) -> bool {
+fn layout_allows(path: &str, views: &[String]) -> bool {
     if !clean_rel(path) {
         return false;
     }
-    if [SPANS, EVENTS, LINKS, RESOURCES].contains(&path) {
+    if [SPANS, EVENTS, LINKS, RESOURCES].contains(&path) || views.iter().any(|v| v == path) {
         return true;
-    }
-    if let Some(view) = path
-        .strip_prefix("views/")
-        .and_then(|v| v.strip_suffix(".parquet"))
-    {
-        return VIEWS.contains(&view);
     }
     path.strip_prefix("sidecar/")
         .is_some_and(|rest| !rest.is_empty())
@@ -534,10 +530,12 @@ impl Bundle {
         // cannot be derived from leaves no tables behind either.
         let views = ingest::views(&self.inv, &schema::views()?, trace)?;
         parquet_io::write_trace(&self.dir, &self.inv, trace)?;
-        let views_dir = self.dir.join(VIEWS_DIR);
-        std::fs::create_dir(&views_dir).map_err(io(&views_dir))?;
         for (view, batch) in &views {
-            parquet_io::write_batch(&self.dir.join(&view.file), batch)?;
+            let path = self.dir.join(&view.file);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(io(parent))?;
+            }
+            parquet_io::write_batch(&path, batch)?;
         }
         self.manifest.files = hash_files(&self.dir)?;
         self.manifest.validate()?;
@@ -626,7 +624,7 @@ pub fn verify(dir: &Path) -> Result<Verified> {
     for table in [SPANS, EVENTS, LINKS, RESOURCES]
         .into_iter()
         .map(str::to_owned)
-        .chain(VIEWS.iter().map(|v| format!("{VIEWS_DIR}/{v}.parquet")))
+        .chain(view_files()?)
     {
         if !manifest.files.contains_key(&table) {
             return invalid(format!("{table} is not listed (TRC-22)"));
@@ -670,12 +668,24 @@ pub fn verify(dir: &Path) -> Result<Verified> {
 }
 
 /// `acn bundle verify --views` (TRC-35): everything [`verify`] checks, then read the
-/// four tables back, recompute the five views from them alone, and require each
-/// view file to be byte-identical to the recomputation.
+/// four tables back and require them to be exactly what the writer makes of what
+/// was read (so the promoted columns agree with `attrs`, which the views do not
+/// read), recompute the five views from them alone, and require each view file to
+/// be byte-identical to the recomputation.
 pub fn verify_views(dir: &Path) -> Result<Verified> {
     let verified = verify(dir)?;
     let inv = schema::inventory()?;
     let trace = parquet_io::read_trace(dir, &inv)?;
+    let tables = parquet_io::batches(&inv, &trace)?;
+    for (file, batch) in [SPANS, EVENTS, LINKS, RESOURCES].into_iter().zip(&tables) {
+        let path = dir.join(file);
+        let on_disk = std::fs::read(&path).map_err(io(&path))?;
+        if parquet_io::encode(batch)? != on_disk {
+            return invalid(format!(
+                "{file} is not the canonical encoding of its own rows: a promoted column disagrees with `attrs`, or the file was not written by this writer (TRC-25, TRC-35)"
+            ));
+        }
+    }
     check_sessions(&trace, &verified.run_id.to_hex())?;
     for (view, batch) in ingest::views(&inv, &schema::views()?, &trace)? {
         let path = dir.join(&view.file);

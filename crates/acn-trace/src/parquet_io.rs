@@ -482,17 +482,15 @@ pub fn batches(inv: &Inventory, trace: &Trace) -> Result<[RecordBatch; 4]> {
 
 /// Write one batch to a new file; an existing file is never replaced.
 pub fn write_batch(path: &Path, batch: &RecordBatch) -> Result<()> {
-    let file: File = OpenOptions::new()
+    use std::io::Write as _;
+    // One encoder decides the bytes on disk and the bytes `verify_views` compares.
+    let bytes = encode(batch)?;
+    let mut file: File = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
-        .map_err(|source| WriteError::Io {
-            path: path.display().to_string(),
-            source,
-        })?;
-    let mut w = ArrowWriter::try_new(file, batch.schema(), Some(writer_properties()?))?;
-    w.write(batch)?;
-    w.close()?;
+        .map_err(io_err(path))?;
+    file.write_all(&bytes).map_err(io_err(path))?;
     Ok(())
 }
 
