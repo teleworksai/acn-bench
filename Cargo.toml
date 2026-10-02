@@ -36,12 +36,13 @@ arrow-schema = "60"
 arrow-buffer = "60"
 parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }
 axum = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json", "stream"] }
 clap = { version = "4", features = ["derive"] }
 plotters = "0.3"
 opentelemetry = { version = "0.33", default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace"] }
 zstd = "0.13"
+base64 = "0.23"
 proptest = "1"
 walkdir = "2"
 syn = { version = "2", features = ["full", "visit"] }

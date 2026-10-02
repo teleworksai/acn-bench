@@ -17,6 +17,13 @@ pub enum AttrValue {
 }
 
 impl AttrValue {
+    /// A float attribute. Negative zero is stored as zero, as in the text form of
+    /// CON-27(c); the caller has refused NaN and infinities.
+    #[must_use]
+    pub fn float(f: f64) -> Self {
+        Self::Float(if f == 0.0 { 0.0 } else { f })
+    }
+
     /// The schema type of this value.
     #[must_use]
     pub fn ty(&self) -> crate::schema::ValueType {
@@ -153,5 +160,114 @@ impl Trace {
                 .resources
                 .windows(2)
                 .all(|w| w[0].resource_id < w[1].resource_id)
+    }
+}
+
+/// A total order on attribute sets, entry by entry in key order: by key, then by
+/// value type in union-member order, then by value (floats by `total_cmp`).
+pub(crate) fn attrs_order(a: &Attrs, b: &Attrs) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    fn rank(v: &AttrValue) -> u8 {
+        match v {
+            AttrValue::String(_) => 0,
+            AttrValue::Int(_) => 1,
+            AttrValue::Float(_) => 2,
+            AttrValue::Bool(_) => 3,
+            AttrValue::Bytes(_) => 4,
+        }
+    }
+    fn value_order(x: &AttrValue, y: &AttrValue) -> Ordering {
+        match (x, y) {
+            (AttrValue::String(p), AttrValue::String(q)) => p.cmp(q),
+            (AttrValue::Int(p), AttrValue::Int(q)) => p.cmp(q),
+            (AttrValue::Float(p), AttrValue::Float(q)) => p.total_cmp(q),
+            (AttrValue::Bool(p), AttrValue::Bool(q)) => p.cmp(q),
+            (AttrValue::Bytes(p), AttrValue::Bytes(q)) => p.cmp(q),
+            _ => rank(x).cmp(&rank(y)),
+        }
+    }
+    for ((ka, va), (kb, vb)) in a.iter().zip(b.iter()) {
+        let o = ka.cmp(kb).then_with(|| value_order(va, vb));
+        if o != Ordering::Equal {
+            return o;
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
+impl Trace {
+    /// Deduplicate the resources and number them in the order of their sorted
+    /// attributes, remapping every span: the one numbering rule the collector,
+    /// OTLP import and merging share, so it never depends on input order. A span
+    /// naming a resource the trace does not hold is an error.
+    pub fn renumber_resources(&mut self) -> Result<(), String> {
+        let mut distinct: Vec<Attrs> = Vec::new();
+        for r in &self.resources {
+            if !distinct.iter().any(|d| attrs_order(d, &r.attrs).is_eq()) {
+                distinct.push(r.attrs.clone());
+            }
+        }
+        distinct.sort_by(attrs_order);
+        let new_id = |attrs: &Attrs| -> Result<i32, String> {
+            let i = distinct
+                .iter()
+                .position(|d| attrs_order(d, attrs).is_eq())
+                .ok_or("internal: a resource was not numbered")?;
+            i32::try_from(i).map_err(|_| "too many resources for an Int32 resource_id".to_owned())
+        };
+        let mut remap = std::collections::BTreeMap::new();
+        for r in &self.resources {
+            remap.insert(r.resource_id, new_id(&r.attrs)?);
+        }
+        for s in &mut self.spans {
+            s.resource_id = *remap.get(&s.resource_id).ok_or_else(|| {
+                format!(
+                    "span `{}` names resource {} that the trace does not hold",
+                    s.name, s.resource_id
+                )
+            })?;
+        }
+        self.resources = distinct
+            .into_iter()
+            .enumerate()
+            .map(|(i, attrs)| {
+                Ok(ResourceRow {
+                    resource_id: i32::try_from(i).map_err(|_| "too many resources".to_owned())?,
+                    attrs,
+                })
+            })
+            .collect::<Result<_, String>>()?;
+        self.sort();
+        Ok(())
+    }
+
+    /// Two traces as one: `other`'s resources are renumbered together with this
+    /// trace's (TRC-28: a node's own OTLP dump merged with the run it answered).
+    pub fn merge(mut self, mut other: Trace) -> Result<Trace, String> {
+        let offset = self
+            .resources
+            .iter()
+            .map(|r| r.resource_id)
+            .max()
+            .map_or(Some(0), |m| m.checked_add(1))
+            .ok_or("too many resources")?;
+        for r in &mut other.resources {
+            r.resource_id = r
+                .resource_id
+                .checked_add(offset)
+                .ok_or("too many resources")?;
+        }
+        for s in &mut other.spans {
+            s.resource_id = s
+                .resource_id
+                .checked_add(offset)
+                .ok_or("too many resources")?;
+        }
+        self.spans.append(&mut other.spans);
+        self.events.append(&mut other.events);
+        self.links.append(&mut other.links);
+        self.resources.append(&mut other.resources);
+        self.renumber_resources()?;
+        Ok(self)
     }
 }

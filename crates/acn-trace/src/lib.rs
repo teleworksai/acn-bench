@@ -6,6 +6,7 @@
 //! id generator and the bundle.
 #![forbid(unsafe_code)]
 
+pub mod coverage;
 pub mod env;
 pub mod identity;
 pub mod normalise;
@@ -23,5 +24,7 @@ pub mod ingest;
 pub mod model;
 #[cfg(feature = "io")]
 pub mod otel;
+#[cfg(feature = "io")]
+pub mod otlp;
 #[cfg(feature = "io")]
 pub mod parquet_io;

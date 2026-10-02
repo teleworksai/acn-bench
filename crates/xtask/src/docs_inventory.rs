@@ -185,6 +185,33 @@ fn lab_notes_md(root: &Path) -> Result<String> {
     Ok(s)
 }
 
+/// TRC-36: the report-coverage page, when the root holds SPEC 010. The mapping is
+/// then required, and an unmapped key, an unknown key, or a column or attribute
+/// the schema does not define fails the task.
+fn report_coverage_md(root: &Path) -> Result<Option<String>> {
+    use acn_trace::coverage::{self, Coverage};
+    let spec = root.join(coverage::SPEC_FILE);
+    if !spec.is_file() {
+        return Ok(None);
+    }
+    let keys =
+        coverage::appendix_a_keys(&read(&spec)?).map_err(|e| Error::Invalid(e.to_string()))?;
+    let mapping = root.join(coverage::COVERAGE_FILE);
+    if !mapping.is_file() {
+        return Err(Error::Invalid(format!(
+            "{} is missing: every Appendix A key of {} needs an entry (TRC-36)",
+            coverage::COVERAGE_FILE,
+            coverage::SPEC_FILE
+        )));
+    }
+    let schema_err = |e: acn_trace::schema::SchemaError| Error::Invalid(e.to_string());
+    let inv = acn_trace::schema::inventory().map_err(schema_err)?;
+    let views = acn_trace::schema::views().map_err(schema_err)?;
+    let cov = Coverage::parse(&read(&mapping)?, &keys, &views, &inv)
+        .map_err(|e| Error::Invalid(e.to_string()))?;
+    Ok(Some(format!("{HEADER}{}", cov.page())))
+}
+
 /// Generate every file, keyed by path relative to the root.
 pub fn generate(root: &Path) -> Result<BTreeMap<String, String>> {
     let model = Model::load(root)?;
@@ -200,6 +227,9 @@ pub fn generate(root: &Path) -> Result<BTreeMap<String, String>> {
             format!("{GENERATED_DIR}/acn-attributes.md"),
             format!("{HEADER}{}", crate::attributes::page(&inv)),
         );
+    }
+    if let Some(page) = report_coverage_md(root)? {
+        files.insert(format!("{GENERATED_DIR}/report-coverage.md"), page);
     }
     Ok(files)
 }

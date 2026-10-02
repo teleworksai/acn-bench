@@ -18,3 +18,4 @@
 | [ADR-12](../decisions/ADR-12.md) | T02a: the schema module as data, and the readings it fixes | accepted (T02a, Class C) | TRC-2, TRC-3, TRC-12, TRC-14, TRC-20, TRC-21, TRC-25, TRC-31 to TRC-34, TRC-37, TRC-38, CON-29 |
 | [ADR-13](../decisions/ADR-13.md) | T02b: run identity, the bundle, and the readings it fixes | accepted (T02b, Class C: it adds the Parquet writer settings to the frozen schema module) | CON-5, CON-26 to CON-31, TRC-1, TRC-19, TRC-22 to TRC-27 |
 | [ADR-14](../decisions/ADR-14.md) | T02c: the ingester, the critical path and the views | accepted (T02c, Class B) | TRC-10, TRC-22, TRC-30 to TRC-35, TRC-37, TRC-38 |
+| [ADR-15](../decisions/ADR-15.md) | T02d: OTLP export and import, report coverage, clock offsets | accepted (T02d, Class B) | TRC-18, TRC-26, TRC-28, TRC-36 |
