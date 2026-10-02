@@ -193,18 +193,31 @@ fn a_changed_missing_or_unlisted_file_fails_verification() {
 fn verification_recomputes_the_run_id_and_the_build_hash() {
     let runs = tempfile::tempdir().unwrap();
     let w = write(runs.path(), 4);
+    // Each edit keeps the manifest otherwise consistent, so that only the identity
+    // recomputation can catch it.
     type Edit = Box<dyn Fn(&mut Manifest)>;
-    let cases: Vec<(&str, Edit)> = vec![
+    let identity_cases: Vec<(&str, Edit)> = vec![
         ("seed", Box::new(|m| m.seed = "5".into())),
         (
             "scenario",
-            Box::new(|m| m.scenario_hash = Digest::of(b"other").to_hex()),
+            Box::new(|m| m.scenario_hash = Digest::of(b"o").to_hex()),
+        ),
+        (
+            "workload",
+            Box::new(|m| m.workload_hash = Digest::of(b"o").to_hex()),
         ),
         (
             "engine",
-            Box::new(|m| m.engine_hash = Digest::of(b"other").to_hex()),
+            Box::new(|m| m.engine_hash = Digest::of(b"o").to_hex()),
         ),
-        ("mode", Box::new(|m| m.mode = "netem".into())),
+        (
+            "mode",
+            Box::new(|m| {
+                m.mode = "live".into();
+                m.execution_order = Some(vec!["treatment/0".into()]);
+                m.started_at = Some("2026-10-02T00:00:00Z".into());
+            }),
+        ),
         (
             "a parameter",
             Box::new(|m| {
@@ -212,32 +225,36 @@ fn verification_recomputes_the_run_id_and_the_build_hash() {
             }),
         ),
         (
-            "the backend",
+            "the hypothesis",
             Box::new(|m| {
-                m.backend = "anthropic".into();
-                m.endpoint_host = Some("api.example".into());
+                m.hypothesis.id = "p9".into();
+                m.hypothesis.hash = Digest::of(b"p9.toml").to_hex();
             }),
         ),
         (
-            "a build component",
-            Box::new(|m| m.build.profile = "release".into()),
-        ),
-        ("a non-canonical seed", Box::new(|m| m.seed = "04".into())),
-        (
             "a status claim",
-            Box::new(|m| m.hypothesis.status = "frozen".into()),
+            Box::new(|m| {
+                m.hypothesis.id = "p9".into();
+                m.hypothesis.hash = Digest::of(b"p9.toml").to_hex();
+                m.hypothesis.status = "frozen".into();
+                m.params.insert("hyp_status".into(), "frozen".into());
+            }),
         ),
     ];
     let (original, _) = manifest(&w.dir);
-    for (what, edit) in cases {
+    for (what, edit) in identity_cases {
         forge(&w.dir, edit);
-        let err = bundle::verify(&w.dir).unwrap_err();
-        assert!(
-            matches!(err, BundleError::Invalid(_) | BundleError::Identity(_)),
-            "{what}: {err}"
-        );
+        let err = bundle::verify(&w.dir).unwrap_err().to_string();
+        assert!(err.contains("run_id"), "{what}: {err}");
         std::fs::write(w.dir.join(bundle::MANIFEST), &original).unwrap();
     }
+    forge(&w.dir, |m| m.build.profile = "release".into());
+    let err = bundle::verify(&w.dir).unwrap_err().to_string();
+    assert!(err.contains("build_hash"), "{err}");
+    std::fs::write(w.dir.join(bundle::MANIFEST), &original).unwrap();
+    forge(&w.dir, |m| m.seed = "04".into());
+    assert!(bundle::verify(&w.dir).is_err(), "a non-canonical seed");
+    std::fs::write(w.dir.join(bundle::MANIFEST), &original).unwrap();
     // A bundle moved under another name does not verify either.
     let moved = runs.path().join(Digest::of(b"x").to_hex());
     std::fs::rename(&w.dir, &moved).unwrap();
@@ -340,7 +357,9 @@ fn a_bundle_needs_a_preflight_for_its_own_hypothesis() {
     assert!(matches!(err, BundleError::Refused(_)), "{err}");
     let err = Bundle::create(
         runs.path(),
-        &preflight(RunHypothesis::Status(HypStatus::Candidate)),
+        &preflight(RunHypothesis::Candidate {
+            hash: Digest::of(b"p4.toml"),
+        }),
         &build(),
         s,
     )
@@ -349,6 +368,44 @@ fn a_bundle_needs_a_preflight_for_its_own_hypothesis() {
         matches!(err, BundleError::Refused(_)),
         "a candidate check for a frozen run"
     );
+
+    // A candidate preflight binds the hash: another file cannot ride on it.
+    let mut s = spec(16);
+    s.hypothesis = HypothesisRef {
+        id: "p17".into(),
+        hash: Digest::of(b"edited"),
+    };
+    let err = Bundle::create(
+        runs.path(),
+        &preflight(RunHypothesis::Candidate {
+            hash: Digest::of(b"checked"),
+        }),
+        &build(),
+        s.clone(),
+    )
+    .unwrap_err();
+    assert!(matches!(err, BundleError::Refused(_)), "{err}");
+    s.hypothesis.hash = Digest::of(b"checked");
+    assert!(
+        Bundle::create(
+            runs.path(),
+            &preflight(RunHypothesis::Candidate {
+                hash: Digest::of(b"checked")
+            }),
+            &build(),
+            s,
+        )
+        .is_ok()
+    );
+    // A `none` spec under a candidate preflight is not what was checked either.
+    let err = Bundle::create(
+        runs.path(),
+        &preflight(RunHypothesis::Candidate { hash: Digest::ZERO }),
+        &build(),
+        spec(17),
+    )
+    .unwrap_err();
+    assert!(matches!(err, BundleError::Refused(_)), "{err}");
 
     // `none` is 32 zero bytes with status candidate, and nothing else is.
     let mut s = spec(14);
@@ -367,4 +424,184 @@ fn a_symlink_in_a_bundle_fails_verification() {
         assert!(bundle::verify(&w.dir).is_err());
     }
     let _: PathBuf = w.dir;
+}
+
+/// Rewrite the manifest after `edit` with a recomputed `run_id`, and move the
+/// bundle to the matching directory: a forger who knows the encoding.
+fn reidentify(dir: &Path, edit: impl FnOnce(&mut Manifest)) -> PathBuf {
+    use acn_trace::identity::{self, RunIdentity};
+    let (_, mut m) = manifest(dir);
+    edit(&mut m);
+    m.run_id = RunIdentity {
+        seed: m.seed.parse().unwrap(),
+        scenario_hash: Digest::from_hex(&m.scenario_hash).unwrap(),
+        workload_hash: Digest::from_hex(&m.workload_hash).unwrap(),
+        hypothesis_hash: Digest::from_hex(&m.hypothesis.hash).unwrap(),
+        engine_hash: Digest::from_hex(&m.engine_hash).unwrap(),
+        mode: Mode::parse(&m.mode).unwrap(),
+        params_hash: identity::params_hash(&m.params).unwrap(),
+    }
+    .run_id()
+    .unwrap()
+    .to_hex();
+    std::fs::write(dir.join(bundle::MANIFEST), m.to_bytes().unwrap()).unwrap();
+    let to = dir.parent().unwrap().join(&m.run_id);
+    std::fs::rename(dir, &to).unwrap();
+    to
+}
+
+/// Cites: CON-29, TRC-23
+#[test]
+fn a_reidentified_bundle_with_non_canonical_parameters_fails_verification() {
+    type Edit = Box<dyn FnOnce(&mut Manifest)>;
+    let cases: Vec<(&str, Edit)> = vec![
+        (
+            "an option at its default",
+            Box::new(|m| {
+                m.params
+                    .insert("opt.stall_threshold_ms".into(), "250.0".into());
+            }),
+        ),
+        (
+            "an option not in its text form",
+            Box::new(|m| {
+                m.params
+                    .insert("opt.stall_threshold_ms".into(), "5e2".into());
+            }),
+        ),
+        (
+            "an unknown key",
+            Box::new(|m| {
+                m.params.insert("zzz".into(), "1".into());
+            }),
+        ),
+        (
+            "an unknown arm",
+            Box::new(|m| {
+                m.params
+                    .insert("arms".into(), "control,researcher,treatment".into());
+            }),
+        ),
+        (
+            "unsorted arms",
+            Box::new(|m| {
+                m.params.insert("arms".into(), "treatment,control".into());
+            }),
+        ),
+        (
+            "a malformed parameter name",
+            Box::new(|m| {
+                m.params.insert("vary.Bad Name".into(), "5".into());
+            }),
+        ),
+    ];
+    for (i, (what, edit)) in cases.into_iter().enumerate() {
+        let runs = tempfile::tempdir().unwrap();
+        let w = write(runs.path(), 100 + u64::try_from(i).unwrap());
+        let moved = reidentify(&w.dir, edit);
+        assert!(bundle::verify(&moved).is_err(), "{what}");
+    }
+    // The control: a canonical edit, re-identified, verifies under its new run_id.
+    let runs = tempfile::tempdir().unwrap();
+    let w = write(runs.path(), 120);
+    let moved = reidentify(&w.dir, |m| {
+        m.params
+            .insert("opt.stall_threshold_ms".into(), "500.0".into());
+    });
+    assert!(bundle::verify(&moved).is_ok());
+}
+
+/// Cites: TRC-22, TRC-23
+#[test]
+fn only_the_layout_of_trc_22_may_be_listed() {
+    for (path, allowed) in [
+        ("verdict.json", false),
+        ("views/anything.bin", false),
+        ("views/turn.parquet", true),
+        ("sidecar/provider/raw.json", true),
+        ("../escape", false),
+        ("logs/x", false),
+        ("manifest.json", false),
+    ] {
+        let runs = tempfile::tempdir().unwrap();
+        let w = write(runs.path(), 200);
+        let file = w.dir.join(path);
+        let inside = file.starts_with(&w.dir) && !path.contains("..");
+        if inside && path != "manifest.json" {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, b"x").unwrap();
+        }
+        forge(&w.dir, |m| {
+            m.files.insert(path.into(), Digest::of(b"x").to_hex());
+        });
+        assert_eq!(bundle::verify(&w.dir).is_ok(), allowed, "{path}");
+    }
+}
+
+/// Cites: TRC-19, TRC-23
+#[test]
+fn verification_rechecks_the_resources_against_the_manifest() {
+    let inv = acn_trace::schema::inventory().unwrap();
+    type TraceEdit = Box<dyn Fn(&mut Trace)>;
+    let edits: Vec<TraceEdit> = vec![
+        Box::new(|t| {
+            t.resources[0].attrs.insert(
+                "acn.engine_hash".into(),
+                AttrValue::String(Digest::of(b"other").to_hex()),
+            );
+        }),
+        Box::new(|t| {
+            t.resources[0].attrs.remove("service.name");
+        }),
+        Box::new(|t| {
+            t.resources[0]
+                .attrs
+                .insert("service.name".into(), AttrValue::String("acn-gen".into()));
+        }),
+    ];
+    for edit in edits {
+        let runs = tempfile::tempdir().unwrap();
+        let w = write(runs.path(), 300);
+        let mut t = session(w.run_id.to_hex().as_str(), 300);
+        edit(&mut t);
+        let res = w.dir.join("resources.parquet");
+        std::fs::remove_file(&res).unwrap();
+        let [_, _, _, resources] = acn_trace::parquet_io::batches(&inv, &t).unwrap();
+        acn_trace::parquet_io::write_batch(&res, &resources).unwrap();
+        // The forger updates the listed hash too; only the content check is left.
+        let h = acn_trace::identity::file_hash(&res).unwrap().to_hex();
+        forge(&w.dir, |m| {
+            m.files.insert("resources.parquet".into(), h.clone());
+        });
+        assert!(bundle::verify(&w.dir).is_err());
+    }
+}
+
+/// Cites: CON-30, TRC-22
+#[test]
+fn run_seeds_must_fit_the_int64_seed_attribute() {
+    let runs = tempfile::tempdir().unwrap();
+    let pf = preflight(RunHypothesis::None);
+    let top = i64::MAX.cast_unsigned();
+    let b = Bundle::create(runs.path(), &pf, &build(), spec(top)).unwrap();
+    let t = session(b.run_id(), top);
+    let w = b.finish(&t).unwrap();
+    assert_eq!(manifest(&w.dir).1.seed, "9223372036854775807");
+    assert!(bundle::verify(&w.dir).is_ok());
+    for seed in [top + 1, u64::MAX] {
+        assert!(Bundle::create(runs.path(), &pf, &build(), spec(seed)).is_err());
+    }
+    assert!(
+        fixture::session(&FixtureRun {
+            run_id: "r".into(),
+            seed: u64::MAX,
+            replicate: 0,
+            engine_hash: Digest::of(ENGINE),
+            build_hash: Digest::of(b"b"),
+        })
+        .is_err(),
+        "never clamped"
+    );
+    forge(&w.dir, |m| m.seed = u64::MAX.to_string());
+    assert!(bundle::verify(&w.dir).is_err());
 }

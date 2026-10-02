@@ -272,9 +272,17 @@ fn i64s(rows: impl Iterator<Item = i64>) -> ArrayRef {
 }
 
 /// Check every attribute of `attrs` against the inventory: an `acn.*` name must be
-/// listed, and a listed name must carry its declared type.
+/// listed, a listed name must carry its declared type, and no float is NaN or
+/// infinite (ADR-13).
 fn check_attrs(inv: &Inventory, owner: &str, attrs: &Attrs) -> Result<()> {
     for (k, v) in attrs {
+        if let AttrValue::Float(f) = v
+            && !f.is_finite()
+        {
+            return invalid(format!(
+                "{owner}: attribute `{k}` is {f}; NaN and infinities are not stored (ADR-13)"
+            ));
+        }
         match inv.attribute(k) {
             Some(a) if a.ty != v.ty() => {
                 return invalid(format!(
@@ -296,12 +304,14 @@ fn check_attrs(inv: &Inventory, owner: &str, attrs: &Attrs) -> Result<()> {
 }
 
 /// The record batches of a trace, checked against the inventory. The trace must
-/// already be in stored order ([`Trace::sort`]) and its span ids unique.
+/// already be in stored order ([`Trace::sort`]) with each key once; every event
+/// and link must belong to a span of the trace and every span to one of its
+/// resources.
 pub fn batches(inv: &Inventory, trace: &Trace) -> Result<[RecordBatch; 4]> {
-    let mut sorted = trace.clone();
-    sorted.sort();
-    if sorted != *trace {
-        return invalid("the trace is not in stored order; call Trace::sort (TRC-25)");
+    if !trace.is_sorted() {
+        return invalid(
+            "the trace is not in stored order, or a key appears twice; call Trace::sort (TRC-25)",
+        );
     }
     let mut seen = std::collections::BTreeSet::new();
     for s in &trace.spans {
@@ -321,7 +331,19 @@ pub fn batches(inv: &Inventory, trace: &Trace) -> Result<[RecordBatch; 4]> {
         }
     }
     for e in &trace.events {
+        if !seen.contains(&(e.trace_id, e.span_id)) {
+            return invalid(format!(
+                "event `{}` belongs to no span of the trace",
+                e.name
+            ));
+        }
         check_attrs(inv, &format!("event `{}`", e.name), &e.attrs)?;
+    }
+    for l in &trace.links {
+        if !seen.contains(&(l.trace_id, l.span_id)) {
+            return invalid("a link belongs to no span of the trace");
+        }
+        check_attrs(inv, "link", &l.attrs)?;
     }
     for r in &trace.resources {
         check_attrs(inv, "resource", &r.attrs)?;
@@ -482,4 +504,71 @@ pub fn write_trace(dir: &Path, inv: &Inventory, trace: &Trace) -> Result<()> {
     write_batch(&dir.join(LINKS), &links)?;
     write_batch(&dir.join(RESOURCES), &resources)?;
     Ok(())
+}
+
+/// Read `resources.parquet` back (TRC-19 checks in `bundle::verify`). A file whose
+/// schema is not exactly [`resources_schema`] is refused.
+pub fn read_resources(path: &Path) -> Result<Vec<crate::model::ResourceRow>> {
+    use arrow_array::Array as _;
+    use arrow_array::cast::AsArray as _;
+    use arrow_array::types::{Float64Type, Int32Type, Int64Type};
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+    let file = File::open(path).map_err(|source| WriteError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let reader = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
+    let mut rows = Vec::new();
+    for batch in reader {
+        let batch = batch?;
+        if batch.schema().fields() != resources_schema().fields() {
+            return invalid(format!(
+                "{}: not the resources schema (TRC-25)",
+                path.display()
+            ));
+        }
+        let ids = batch.column(0).as_primitive::<Int32Type>();
+        let map = batch.column(1).as_map();
+        let keys = map.keys().as_string::<i32>();
+        let values = map.values().as_struct();
+        let (s, i, f, b, y) = (
+            values.column(0).as_string::<i32>(),
+            values.column(1).as_primitive::<Int64Type>(),
+            values.column(2).as_primitive::<Float64Type>(),
+            values.column(3).as_boolean(),
+            values.column(4).as_binary::<i32>(),
+        );
+        for row in 0..batch.num_rows() {
+            let mut attrs = Attrs::new();
+            let offsets = map.value_offsets();
+            let (lo, hi) = (offsets[row], offsets[row + 1]);
+            let (Ok(lo), Ok(hi)) = (usize::try_from(lo), usize::try_from(hi)) else {
+                return invalid("negative map offset");
+            };
+            for e in lo..hi {
+                let set = [
+                    s.is_valid(e),
+                    i.is_valid(e),
+                    f.is_valid(e),
+                    b.is_valid(e),
+                    y.is_valid(e),
+                ];
+                let value = match set {
+                    [true, false, false, false, false] => AttrValue::String(s.value(e).to_owned()),
+                    [false, true, false, false, false] => AttrValue::Int(i.value(e)),
+                    [false, false, true, false, false] => AttrValue::Float(f.value(e)),
+                    [false, false, false, true, false] => AttrValue::Bool(b.value(e)),
+                    [false, false, false, false, true] => AttrValue::Bytes(y.value(e).to_vec()),
+                    _ => return invalid("an attribute value must set exactly one member (TRC-25)"),
+                };
+                attrs.insert(keys.value(e).to_owned(), value);
+            }
+            rows.push(crate::model::ResourceRow {
+                resource_id: ids.value(row),
+                attrs,
+            });
+        }
+    }
+    Ok(rows)
 }

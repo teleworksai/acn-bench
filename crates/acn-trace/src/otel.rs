@@ -5,7 +5,11 @@
 //! Timestamps are the run's clock (TRC-26): a producer sets every start, end and
 //! event time explicitly, as `UNIX_EPOCH` plus the clock's offset, so that `sim`
 //! times start at 0. Anything the SDK would drop or coerce is an error here: a
-//! dropped attribute, event or link, an array value, an attribute set twice.
+//! dropped attribute, event or link, an array value, a NaN or infinity, an
+//! attribute set twice, and spans an exporter could not accept. Two losses the
+//! collector cannot see are the producer's to prevent: a span the sampler drops
+//! (producers keep the default always-on sampler) and a span ended after its
+//! provider shut down.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -57,6 +61,19 @@ pub fn producer_resource(
 struct Inner {
     /// Each exported span with the resource of the exporter that received it.
     spans: Vec<(SpanData, Arc<Attrs>)>,
+    /// What an exporter could not accept. The SDK only logs an export error and
+    /// drops the spans, so the collector keeps the record and [`Collector::trace`]
+    /// refuses to return a trace that is missing them.
+    failures: Vec<String>,
+}
+
+fn lock(inner: &Mutex<Inner>) -> std::sync::MutexGuard<'_, Inner> {
+    // A poisoned lock means a producer panicked while holding it; the data is a
+    // plain list and still consistent, and the run is failing anyway.
+    match inner.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
 }
 
 /// Gathers spans from any number of exporters, one per tracer provider.
@@ -90,15 +107,21 @@ impl Collector {
 
     /// Everything collected so far, in the model's stored order. Resources are
     /// deduplicated and numbered in the order of their sorted attributes, so the
-    /// numbering does not depend on which provider exported first.
+    /// numbering does not depend on which provider exported first. An error if any
+    /// exporter rejected a resource or dropped spans: a trace with a producer
+    /// missing must never become a bundle.
     pub fn trace(&self) -> Result<Trace, ConvertError> {
-        let inner = match self.inner.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let inner = lock(&self.inner);
+        if !inner.failures.is_empty() {
+            return invalid(format!(
+                "spans were lost on export: {}",
+                inner.failures.join("; ")
+            ));
+        }
+        let same = |a: &Attrs, b: &Attrs| attrs_order(a, b) == std::cmp::Ordering::Equal;
         let mut distinct: Vec<Arc<Attrs>> = Vec::new();
         for (_, r) in &inner.spans {
-            if !distinct.iter().any(|d| d == r) {
+            if !distinct.iter().any(|d| same(d, r)) {
                 distinct.push(Arc::clone(r));
             }
         }
@@ -111,7 +134,10 @@ impl Collector {
             });
         }
         for (span, r) in &inner.spans {
-            let resource_id = id32(distinct.iter().position(|d| d == r).unwrap_or(0))?;
+            let Some(i) = distinct.iter().position(|d| same(d, r)) else {
+                return invalid("internal: a span's resource was not collected");
+            };
+            let resource_id = id32(i)?;
             convert(span, resource_id, &mut trace)?;
         }
         trace.sort();
@@ -157,24 +183,34 @@ fn attrs_order(a: &Attrs, b: &Attrs) -> std::cmp::Ordering {
 
 impl SpanExporter for CollectorExporter {
     async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
-        let resource = self
-            .resource
-            .as_ref()
-            .map_err(|e| OTelSdkError::InternalFailure(e.clone()))?;
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|e| OTelSdkError::InternalFailure(format!("collector lock poisoned: {e}")))?;
-        for span in batch {
-            inner.spans.push((span, Arc::clone(resource)));
+        let mut inner = lock(&self.inner);
+        match &self.resource {
+            Ok(resource) => {
+                for span in batch {
+                    inner.spans.push((span, Arc::clone(resource)));
+                }
+                Ok(())
+            }
+            Err(e) => {
+                let message = format!(
+                    "{} span(s) dropped: their resource was rejected ({e})",
+                    batch.len()
+                );
+                inner.failures.push(message.clone());
+                Err(OTelSdkError::InternalFailure(message))
+            }
         }
-        Ok(())
     }
 
     fn set_resource(&mut self, resource: &Resource) {
         self.resource = attrs_of(resource.iter().map(|(k, v)| (k.as_str(), v)))
             .map(Arc::new)
             .map_err(|e| e.to_string());
+        if let Err(e) = &self.resource {
+            lock(&self.inner)
+                .failures
+                .push(format!("a producer's resource was rejected: {e}"));
+        }
     }
 }
 
@@ -182,7 +218,13 @@ fn value(key: &str, v: &Value) -> Result<AttrValue, ConvertError> {
     Ok(match v {
         Value::Bool(b) => AttrValue::Bool(*b),
         Value::I64(i) => AttrValue::Int(*i),
-        Value::F64(f) => AttrValue::Float(*f),
+        Value::F64(f) if !f.is_finite() => {
+            return invalid(format!(
+                "attribute `{key}` is {f}; NaN and infinities are not stored (ADR-13)"
+            ));
+        }
+        // Negative zero is zero, as in the text form of CON-27(c).
+        Value::F64(f) => AttrValue::Float(if *f == 0.0 { 0.0 } else { *f }),
         Value::String(s) => AttrValue::String(s.as_str().to_owned()),
         Value::Array(_) => {
             return invalid(format!(

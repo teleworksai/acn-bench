@@ -19,7 +19,7 @@ const SEED: u64 = 20_261_002;
 const REPLICATES: u32 = 3;
 
 /// One sim run of the fixture scenario into `runs`.
-fn run(runs: &Path, logs: &str) -> bundle::Written {
+fn run(runs: &Path, logs: &str, seed: u64) -> bundle::Written {
     let build = BuildParts {
         cargo_lock: Digest::of(b"lock"),
         rust_toolchain: Digest::of(b"toolchain"),
@@ -40,7 +40,7 @@ fn run(runs: &Path, logs: &str) -> bundle::Written {
         &pf,
         &build,
         RunSpec {
-            seed: SEED,
+            seed,
             mode: Mode::Sim,
             scenario_hash: Digest::of(b"fixture scenario"),
             workload_hash: Digest::of(b"fixture workload"),
@@ -64,7 +64,7 @@ fn run(runs: &Path, logs: &str) -> bundle::Written {
     for i in 0..REPLICATES {
         let t = fixture::session(&FixtureRun {
             run_id: b.run_id().into(),
-            seed: SEED,
+            seed,
             replicate: i,
             engine_hash: engine,
             build_hash: Digest::from_hex(&build.build_hash).unwrap(),
@@ -110,8 +110,8 @@ fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
 fn two_sim_runs_with_the_same_inputs_are_byte_identical() {
     let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     // Different log contents: logs/ is the one place allowed to differ.
-    let wa = run(a.path(), "first run's stderr");
-    let wb = run(b.path(), "second run's stderr, longer");
+    let wa = run(a.path(), "first run's stderr", SEED);
+    let wb = run(b.path(), "second run's stderr, longer", SEED);
     assert_eq!(wa.run_id, wb.run_id);
     assert_eq!(wa.bundle_digest, wb.bundle_digest);
     eprintln!("bundle_digest {}", wa.bundle_digest);
@@ -127,25 +127,15 @@ fn two_sim_runs_with_the_same_inputs_are_byte_identical() {
 
 /// Cites: TRC-24
 #[test]
-fn a_different_seed_changes_the_identity_and_the_ids() {
-    let a = tempfile::tempdir().unwrap();
-    let w = run(a.path(), "");
-    let t0 = fixture::session(&FixtureRun {
-        run_id: "x".into(),
-        seed: SEED,
-        replicate: 0,
-        engine_hash: Digest::of(b"engine"),
-        build_hash: Digest::of(b"b"),
-    })
-    .unwrap();
-    let t1 = fixture::session(&FixtureRun {
-        run_id: "x".into(),
-        seed: SEED + 1,
-        replicate: 0,
-        engine_hash: Digest::of(b"engine"),
-        build_hash: Digest::of(b"b"),
-    })
-    .unwrap();
-    assert_ne!(t0.spans[0].trace_id, t1.spans[0].trace_id);
-    assert!(bundle::verify(&w.dir).is_ok());
+fn a_different_seed_changes_the_identity_and_the_bytes() {
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let wa = run(a.path(), "", SEED);
+    let wb = run(b.path(), "", SEED + 1);
+    assert_ne!(wa.run_id, wb.run_id);
+    assert_ne!(wa.bundle_digest, wb.bundle_digest);
+    assert_ne!(
+        std::fs::read(wa.dir.join("spans.parquet")).unwrap(),
+        std::fs::read(wb.dir.join("spans.parquet")).unwrap(),
+        "the seeded ids differ"
+    );
 }

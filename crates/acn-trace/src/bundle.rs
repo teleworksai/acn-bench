@@ -185,6 +185,7 @@ impl Manifest {
         if seed.to_string() != self.seed {
             return invalid(format!("seed `{}` is not in decimal text form", self.seed));
         }
+        check_seed(seed)?;
         let mode = Mode::parse(&self.mode)?;
         let status = HypStatus::parse(&self.hypothesis.status)?;
         let hypothesis_hash = Digest::from_hex(&self.hypothesis.hash)?;
@@ -209,9 +210,8 @@ impl Manifest {
                 ));
             }
         }
-        if !self.params.contains_key("arms") {
-            return invalid("params.arms is missing (CON-29)");
-        }
+        let inv = schema::inventory()?;
+        identity::check_pairs(&self.params, &identity::options(&inv))?;
         let mock = self.backend == MOCK_BACKEND;
         match (&self.endpoint_host, mock, mode) {
             (Some(_), true, Mode::Sim) => {
@@ -240,9 +240,9 @@ impl Manifest {
         }
         for (path, hash) in &self.files {
             Digest::from_hex(hash)?;
-            if !clean_rel(path) || path == MANIFEST || path.starts_with("logs/") {
+            if !layout_allows(path) {
                 return invalid(format!(
-                    "`{path}` cannot be listed: a listed file is a clean relative path outside logs/ (TRC-23)"
+                    "`{path}` cannot be listed: a bundle holds the four tables, views/<view>.parquet and sidecar/ files, and nothing else (TRC-22)"
                 ));
             }
         }
@@ -264,6 +264,80 @@ impl Manifest {
         }
         Ok(id)
     }
+}
+
+/// The derived views a bundle may hold (TRC-22, TRC-31..34, TRC-38).
+pub const VIEWS: &[&str] = &["session", "turn", "call", "link", "tool"];
+
+/// Whether a listed path belongs to the layout of TRC-22: one of the four tables,
+/// a known view, or a file under `sidecar/`. The manifest itself and `logs/` are
+/// never listed, and a verdict lives outside the bundle (HYP-20).
+fn layout_allows(path: &str) -> bool {
+    if !clean_rel(path) {
+        return false;
+    }
+    if [SPANS, EVENTS, LINKS, RESOURCES].contains(&path) {
+        return true;
+    }
+    if let Some(view) = path
+        .strip_prefix("views/")
+        .and_then(|v| v.strip_suffix(".parquet"))
+    {
+        return VIEWS.contains(&view);
+    }
+    path.strip_prefix("sidecar/")
+        .is_some_and(|rest| !rest.is_empty())
+}
+
+/// A run seed must fit the signed 64-bit `acn.seed` attribute (TRC-10, CON-30),
+/// although CON-27 writes it as an unsigned 64-bit integer; a larger seed is
+/// refused rather than recorded wrongly (ADR-13).
+pub fn check_seed(seed: u64) -> Result<()> {
+    if i64::try_from(seed).is_err() {
+        return invalid(format!(
+            "seed {seed} does not fit the Int64 `acn.seed` attribute; run seeds are below 2^63 (ADR-13)"
+        ));
+    }
+    Ok(())
+}
+
+/// The producers named by `resources`, sorted, after checking that each carries
+/// the attributes of TRC-19 with the run's `engine_hash` and `build_hash`.
+fn producers_of(
+    resources: &[crate::model::ResourceRow],
+    engine_hash: &str,
+    build_hash: &str,
+) -> Result<Vec<String>> {
+    let mut producers = Vec::new();
+    for r in resources {
+        let s = |k: &str| match r.attrs.get(k) {
+            Some(AttrValue::String(v)) if !v.is_empty() => Some(v.as_str()),
+            _ => None,
+        };
+        let (Some(name), Some(_), Some(engine), Some(build)) = (
+            s("service.name"),
+            s("service.version"),
+            s("acn.engine_hash"),
+            s("acn.build_hash"),
+        ) else {
+            return invalid(format!(
+                "resource {} lacks service.name, service.version, acn.engine_hash or acn.build_hash (TRC-19)",
+                r.resource_id
+            ));
+        };
+        if engine != engine_hash || build != build_hash {
+            return invalid(format!(
+                "resource `{name}` was produced under another engine or build than the run's (TRC-19)"
+            ));
+        }
+        producers.push(name.to_owned());
+    }
+    producers.sort();
+    producers.dedup();
+    if producers.is_empty() {
+        return invalid("a bundle has at least one producer");
+    }
+    Ok(producers)
 }
 
 /// A relative path with `/` separators and no empty, `.` or `..` component.
@@ -335,8 +409,10 @@ impl Bundle {
     ) -> Result<Self> {
         let checked = match preflight.hypothesis() {
             RunHypothesis::None => spec.hypothesis.id == NO_HYPOTHESIS,
-            RunHypothesis::Status(s) => {
-                spec.hypothesis.id != NO_HYPOTHESIS && s == spec.params.hyp_status
+            h => {
+                spec.hypothesis.id != NO_HYPOTHESIS
+                    && h.status() == Some(spec.params.hyp_status)
+                    && h.hash() == spec.hypothesis.hash
             }
         };
         if !checked {
@@ -344,6 +420,7 @@ impl Bundle {
                 "the run's hypothesis is not the one its preflight checked (CON-28)".into(),
             ));
         }
+        check_seed(spec.seed)?;
         let inv = schema::inventory()?;
         let params = spec.params.pairs(&identity::options(&inv))?;
         let run_id = RunIdentity {
@@ -425,35 +502,11 @@ impl Bundle {
     /// Write the tables, then the manifest, last (TRC-23). Every resource must carry
     /// the attributes of TRC-19, with the run's `engine_hash` and `build_hash`.
     pub fn finish(mut self, trace: &Trace) -> Result<Written> {
-        let mut producers = Vec::new();
-        for r in &trace.resources {
-            let s = |k: &str| match r.attrs.get(k) {
-                Some(AttrValue::String(v)) if !v.is_empty() => Some(v.as_str()),
-                _ => None,
-            };
-            let (Some(name), Some(_), Some(engine), Some(build)) = (
-                s("service.name"),
-                s("service.version"),
-                s("acn.engine_hash"),
-                s("acn.build_hash"),
-            ) else {
-                return invalid(format!(
-                    "resource {} lacks service.name, service.version, acn.engine_hash or acn.build_hash (TRC-19)",
-                    r.resource_id
-                ));
-            };
-            if engine != self.manifest.engine_hash || build != self.manifest.build.build_hash {
-                return invalid(format!(
-                    "resource `{name}` was produced under another engine or build than the run's (TRC-19)"
-                ));
-            }
-            producers.push(name.to_owned());
-        }
-        producers.sort();
-        producers.dedup();
-        if producers.is_empty() {
-            return invalid("a bundle has at least one producer");
-        }
+        let producers = producers_of(
+            &trace.resources,
+            &self.manifest.engine_hash,
+            &self.manifest.build.build_hash,
+        )?;
         self.manifest.producers = producers;
 
         parquet_io::write_trace(&self.dir, &self.inv, trace)?;
@@ -559,6 +612,21 @@ pub fn verify(dir: &Path) -> Result<Verified> {
     if let Some(extra) = actual.keys().find(|p| !manifest.files.contains_key(*p)) {
         return invalid(format!(
             "{extra} is neither listed nor under logs/ (TRC-23)"
+        ));
+    }
+    // The hashes bind the files to the manifest; the resources must also say what
+    // the manifest says, so that a replaced table cannot carry another engine,
+    // build or producer list (TRC-19).
+    let resources = parquet_io::read_resources(&dir.join(RESOURCES))?;
+    let producers = producers_of(
+        &resources,
+        &manifest.engine_hash,
+        &manifest.build.build_hash,
+    )?;
+    if producers != manifest.producers {
+        return invalid(format!(
+            "the manifest names producers {:?}, the resources {producers:?} (TRC-19)",
+            manifest.producers
         ));
     }
     Ok(Verified {

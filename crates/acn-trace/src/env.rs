@@ -41,6 +41,8 @@ pub enum EnvError {
     Walk(#[from] walkdir::Error),
     #[error("{0}")]
     Invalid(String),
+    #[error(transparent)]
+    Identity(#[from] crate::identity::IdentityError),
     /// CON-28: the run must not start.
     #[error("refusing to start: {0}")]
     Refused(String),
@@ -115,7 +117,7 @@ pub fn tree_hash(files: &[FileHash]) -> Result<Digest> {
     }
     // The records are written raw: this is the one preimage in which a digest is
     // hex rather than raw bytes (CON-27(b)).
-    let p = Preimage::new("acn-bench/tree/v1").map_err(|e| EnvError::Invalid(e.to_string()))?;
+    let p = Preimage::new("acn-bench/tree/v1")?;
     let mut bytes = p.bytes().to_vec();
     bytes.extend_from_slice(&records(files));
     Ok(Digest::of(&bytes))
@@ -139,9 +141,7 @@ pub fn rel_path(root: &Path, path: &Path) -> Result<String> {
 }
 
 fn hash_hex(path: &Path) -> Result<String> {
-    crate::identity::file_hash(path)
-        .map(|d| d.to_hex())
-        .map_err(|e| EnvError::Invalid(e.to_string()))
+    Ok(crate::identity::file_hash(path)?.to_hex())
 }
 
 /// Walk `dir` with the rules of ADR-4: every entry is a regular file that is hashed,
@@ -211,7 +211,7 @@ fn real_dir(root: &Path, base: &str, what: &str) -> Result<PathBuf> {
 pub fn compute(root: &Path) -> Result<EnvRecord> {
     if !root.is_dir() {
         return Err(EnvError::Invalid(format!(
-            "--root {} is not a directory",
+            "workspace root {} is not a directory",
             root.display()
         )));
     }
@@ -270,25 +270,52 @@ pub fn read_record(root: &Path) -> Result<Option<EnvRecord>> {
 }
 
 /// The workspace root of CON-28: the nearest ancestor of `start` (itself included)
-/// that holds `env-hash.json`.
-#[must_use]
-pub fn find_root(start: &Path) -> Option<PathBuf> {
-    start
+/// that holds `env-hash.json`. `start` is made absolute first: the ancestors of a
+/// relative path such as `.` stop before the root they are inside.
+pub fn find_root(start: &Path) -> Result<Option<PathBuf>> {
+    let start = std::fs::canonicalize(start).map_err(io(start))?;
+    Ok(start
         .ancestors()
         .find(|dir| dir.join(RECORD_FILE).is_file())
-        .map(Path::to_path_buf)
+        .map(Path::to_path_buf))
 }
 
 /// The hypothesis a run is about to use, as the preflight needs to know it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunHypothesis {
     /// No hypothesis (fixtures, lab runs, researcher sessions; CON-27(a)).
     None,
-    Status(HypStatus),
+    /// A candidate (CON-17), named by the BLAKE3 of its file.
+    Candidate { hash: Digest },
+    /// A frozen hypothesis: the file, which must lie under the root's
+    /// `hypotheses/` and be recorded in `env-hash.json` with this hash (HYP-3).
+    Frozen { path: PathBuf, hash: Digest },
+}
+
+impl RunHypothesis {
+    /// The status the bundle records, `None` for no hypothesis.
+    #[must_use]
+    pub fn status(&self) -> Option<HypStatus> {
+        match self {
+            Self::None => None,
+            Self::Candidate { .. } => Some(HypStatus::Candidate),
+            Self::Frozen { .. } => Some(HypStatus::Frozen),
+        }
+    }
+
+    /// The `hypothesis_hash` of CON-29; 32 zero bytes for none.
+    #[must_use]
+    pub fn hash(&self) -> Digest {
+        match self {
+            Self::None => Digest::ZERO,
+            Self::Candidate { hash } | Self::Frozen { hash, .. } => *hash,
+        }
+    }
 }
 
 /// Proof that a run passed the CON-28 checks. The bundle writer takes one, so a run
-/// cannot write a bundle without having made them.
+/// cannot write a bundle without having made them. It records a moment: a run
+/// takes it immediately before it starts.
 #[derive(Debug, Clone)]
 pub struct Preflight {
     root: Option<PathBuf>,
@@ -311,28 +338,65 @@ impl Preflight {
 
     /// The hypothesis the check was made for.
     #[must_use]
-    pub fn hypothesis(&self) -> RunHypothesis {
-        self.hypothesis
+    pub fn hypothesis(&self) -> &RunHypothesis {
+        &self.hypothesis
     }
+}
+
+/// HYP-3: a frozen hypothesis is a file under `<root>/hypotheses/` that the record
+/// lists with the claimed hash, and whose bytes still have it.
+fn check_frozen(root: &Path, record: &EnvRecord, path: &Path, hash: &Digest) -> Result<()> {
+    let refuse = |why: String| Err(EnvError::Refused(format!("{why} (HYP-3, CON-28)")));
+    let abs = std::fs::canonicalize(path).map_err(io(path))?;
+    let rel = match abs.strip_prefix(root) {
+        Ok(_) => rel_path(root, &abs)?,
+        Err(_) => {
+            return refuse(format!(
+                "{} is not under the root {}",
+                path.display(),
+                root.display()
+            ));
+        }
+    };
+    if !rel.starts_with("hypotheses/") {
+        return refuse(format!(
+            "{rel} is not under hypotheses/, so it is not frozen"
+        ));
+    }
+    let Some(entry) = record.files.iter().find(|f| f.path == rel) else {
+        return refuse(format!(
+            "{rel} is not recorded in {RECORD_FILE}, so it is not frozen"
+        ));
+    };
+    if entry.blake3 != hash.to_hex() {
+        return refuse(format!(
+            "{rel} is recorded with another hash than the run claims"
+        ));
+    }
+    if crate::identity::file_hash(&abs)? != *hash {
+        return refuse(format!("{rel} no longer has its recorded hash"));
+    }
+    Ok(())
 }
 
 /// CON-28: find the root from `start`; when one is found, recompute both hashes and
 /// refuse if either differs from the record, or if `engine_hash` differs from the
 /// value `embedded` in the binary at compile time. When none is found, refuse unless
-/// the hypothesis is `none` or a candidate; `engine_hash` is then `embedded`.
+/// the hypothesis is `none` or a candidate; `engine_hash` is then `embedded`. A
+/// frozen hypothesis must be the recorded file (HYP-3).
 pub fn preflight(start: &Path, embedded: Digest, hypothesis: RunHypothesis) -> Result<Preflight> {
-    let Some(root) = find_root(start) else {
-        return match hypothesis {
-            RunHypothesis::Status(HypStatus::Frozen) => Err(EnvError::Refused(format!(
+    let Some(root) = find_root(start)? else {
+        if let RunHypothesis::Frozen { .. } = hypothesis {
+            return Err(EnvError::Refused(format!(
                 "no {RECORD_FILE} above {}: a run with a frozen hypothesis needs a workspace root or a kit (CON-28)",
                 start.display()
-            ))),
-            _ => Ok(Preflight {
-                root: None,
-                engine_hash: embedded,
-                hypothesis,
-            }),
-        };
+            )));
+        }
+        return Ok(Preflight {
+            root: None,
+            engine_hash: embedded,
+            hypothesis,
+        });
     };
     let Some(record) = read_record(&root)? else {
         return Err(EnvError::Refused(format!(
@@ -355,13 +419,15 @@ pub fn preflight(start: &Path, embedded: Digest, hypothesis: RunHypothesis) -> R
             computed.engine_hash, record.engine_hash
         )));
     }
-    let engine_hash =
-        Digest::from_hex(&computed.engine_hash).map_err(|e| EnvError::Invalid(e.to_string()))?;
+    let engine_hash = Digest::from_hex(&computed.engine_hash)?;
     if engine_hash != embedded {
         return Err(EnvError::Refused(format!(
             "this binary was built from frozen code with engine_hash {embedded}, but the checkout at {} has {engine_hash}; rebuild (CON-28, CON-31)",
             root.display()
         )));
+    }
+    if let RunHypothesis::Frozen { path, hash } = &hypothesis {
+        check_frozen(&root, &record, path, hash)?;
     }
     Ok(Preflight {
         root: Some(root),

@@ -330,3 +330,29 @@ fn modes_and_statuses_have_one_spelling() {
         assert_eq!(HypStatus::parse(s.as_str()).unwrap(), s);
     }
 }
+
+/// Cites: CON-31, CON-27
+#[test]
+fn build_hash_matches_its_known_answer() {
+    // Computed outside this crate from the CON-31 preimage; the rustflags carry the
+    // 0x1f separator of CARGO_ENCODED_RUSTFLAGS and the features are non-empty.
+    let parts = acn_trace::identity::BuildParts {
+        cargo_lock: Digest::of(b"l"),
+        rust_toolchain: Digest::of(b"t"),
+        cargo_config: Digest::of(b"c"),
+        source_hash: Digest::of(b"s"),
+        target: "x86_64-unknown-linux-gnu",
+        profile: "release",
+        features: "a,b",
+        rustflags: "-C\u{1f}opt-level=3",
+    };
+    assert_eq!(
+        parts.build_hash().unwrap().to_hex(),
+        "2c483389c9934360f5c36be1b2d8e17b64cce756cbb3fd9f794ac73c5955aa81"
+    );
+    let info = parts.info().unwrap();
+    assert_eq!(info.check().unwrap().to_hex(), info.build_hash);
+    let mut forged = info.clone();
+    forged.rustflags = String::new();
+    assert!(forged.check().is_err(), "a component that moved");
+}

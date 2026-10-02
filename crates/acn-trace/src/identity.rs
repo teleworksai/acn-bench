@@ -180,7 +180,8 @@ pub enum Value {
 
 impl Value {
     /// The text form of CON-27(c): a decimal integer; a float as `ryu` writes it
-    /// (the form `serde_json` emits), negative zero as `0.0`, NaN and infinities
+    /// (not serde_json's form, which differs for some values; ADR-13), negative
+    /// zero as `0.0`, NaN and infinities
     /// rejected; `true`/`false`; a string as itself.
     pub fn to_text(&self) -> Result<String> {
         match self {
@@ -352,7 +353,92 @@ impl RunParams {
                 pairs.insert(name.clone(), text);
             }
         }
+        check_pairs(&pairs, options)?;
         Ok(pairs)
+    }
+}
+
+/// Check that `pairs` is a parameter set [`RunParams::pairs`] could have produced:
+/// the five fixed keys, `vary.<name>` with a parameter name, and `opt.<name>` only
+/// for a listed option whose value is in its type's text form and differs from its
+/// default; `arms` sorted, without duplicates, each a known arm; `replicates` a
+/// positive decimal. A bundle whose parameters fail this would give one experiment
+/// a second `run_id` (CON-29).
+pub fn check_pairs(pairs: &BTreeMap<String, String>, options: &[OptionDecl<'_>]) -> Result<()> {
+    for key in ["arms", "backend", "hyp_status", "model", "replicates"] {
+        match pairs.get(key) {
+            Some(v) if !v.is_empty() => {}
+            _ => {
+                return invalid(format!(
+                    "run parameter `{key}` is missing or empty (CON-29)"
+                ));
+            }
+        }
+    }
+    for (key, value) in pairs {
+        match key.as_str() {
+            "backend" | "model" => {}
+            "hyp_status" => {
+                HypStatus::parse(value)?;
+            }
+            "arms" => {
+                let arms: Vec<&str> = value.split(',').collect();
+                if arms.windows(2).any(|w| w[0] >= w[1]) || arms.iter().any(|a| !ARMS.contains(a)) {
+                    return invalid(format!(
+                        "arms `{value}` must be distinct arms of {ARMS:?}, sorted and comma-joined (CON-29)"
+                    ));
+                }
+            }
+            "replicates" => {
+                if value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .map(|n| n.to_string())
+                    .as_deref()
+                    != Some(value.as_str())
+                {
+                    return invalid(format!(
+                        "replicates `{value}` is not a positive decimal (CON-29)"
+                    ));
+                }
+            }
+            k if k.starts_with("vary.") => {
+                if !is_param_name(&k["vary.".len()..]) {
+                    return invalid(format!("`{k}` does not name a parameter (CON-29)"));
+                }
+            }
+            k => {
+                let Some(decl) = options.iter().find(|o| o.name == k) else {
+                    return invalid(format!("`{k}` is not a run parameter (CON-29)"));
+                };
+                if !is_text_form(decl.ty, value) {
+                    return invalid(format!(
+                        "`{k}` = `{value}` is not in the text form of its type (CON-27(c))"
+                    ));
+                }
+                if value == decl.default {
+                    return invalid(format!(
+                        "`{k}` is at its default and must be left out (CON-29)"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether `text` is the CON-27(c) text form of a value of type `ty`.
+fn is_text_form(ty: crate::schema::ValueType, text: &str) -> bool {
+    use crate::schema::ValueType as T;
+    match ty {
+        T::Bool => text == "true" || text == "false",
+        T::Int => text.parse::<i64>().is_ok_and(|v| v.to_string() == text),
+        T::Float => text
+            .parse::<f64>()
+            .is_ok_and(|v| float_text(v).is_ok_and(|s| s == text)),
+        T::String => true,
+        T::Bytes => false,
     }
 }
 

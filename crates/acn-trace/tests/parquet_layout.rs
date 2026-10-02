@@ -281,3 +281,63 @@ fn unlisted_names_mistyped_values_and_unsorted_tables_are_refused() {
     parquet_io::write_trace(dir.path(), &inv, &t).unwrap();
     assert!(parquet_io::write_trace(dir.path(), &inv, &t).is_err());
 }
+
+/// Cites: TRC-25, TRC-20
+#[test]
+fn links_and_events_are_checked_and_must_belong_to_a_span() {
+    use acn_trace::model::{EventRow, LinkRow};
+    let inv = schema::inventory().unwrap();
+    let base = trace();
+    let s0 = &base.spans[0];
+    let link = LinkRow {
+        trace_id: s0.trace_id,
+        span_id: s0.span_id,
+        seq: 0,
+        linked_trace_id: [9; 16],
+        linked_span_id: [9; 8],
+        attrs: [("acn.not_in_inventory".to_owned(), AttrValue::Int(1))].into(),
+    };
+    let mut t = base.clone();
+    t.links.push(link.clone());
+    t.sort();
+    assert!(
+        parquet_io::batches(&inv, &t).is_err(),
+        "an unlisted name on a link"
+    );
+
+    let mut t = base.clone();
+    t.links.push(LinkRow {
+        attrs: Default::default(),
+        span_id: [7; 8],
+        ..link
+    });
+    t.sort();
+    assert!(parquet_io::batches(&inv, &t).is_err(), "a link to no span");
+
+    let mut t = base.clone();
+    t.events.push(EventRow {
+        trace_id: s0.trace_id,
+        span_id: [7; 8],
+        seq: 0,
+        time_ns: 0,
+        name: "acn.stream.first_token".into(),
+        attrs: Default::default(),
+    });
+    t.sort();
+    assert!(
+        parquet_io::batches(&inv, &t).is_err(),
+        "an event of no span"
+    );
+}
+
+/// Cites: TRC-25
+#[test]
+fn a_nan_attribute_is_refused_as_nan_not_as_disorder() {
+    let inv = schema::inventory().unwrap();
+    let mut t = trace();
+    let chat = t.spans.iter_mut().find(|s| s.name == "chat").unwrap();
+    chat.attrs
+        .insert("acn.call.ttft_ms".into(), AttrValue::Float(f64::NAN));
+    let err = parquet_io::batches(&inv, &t).unwrap_err().to_string();
+    assert!(err.contains("NaN"), "{err}");
+}

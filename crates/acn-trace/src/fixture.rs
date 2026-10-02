@@ -12,7 +12,7 @@ use opentelemetry::trace::{
 use opentelemetry::{Context, KeyValue};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 
-use crate::identity::{Digest, IdentityError};
+use crate::identity::{Digest, HypStatus, IdentityError, Mode};
 use crate::ids::SeededIdGenerator;
 use crate::model::Trace;
 use crate::otel::{Collector, ConvertError, producer_resource};
@@ -26,6 +26,8 @@ pub enum FixtureError {
     Convert(#[from] ConvertError),
     #[error("tracer provider: {0}")]
     Sdk(String),
+    #[error("seed {0} does not fit the Int64 `acn.seed` attribute (ADR-13)")]
+    Seed(u64),
 }
 
 /// What the fixture session records about its run.
@@ -44,6 +46,9 @@ fn at(ns: u64) -> SystemTime {
 
 /// Run the fixture session and return what the collector gathered.
 pub fn session(run: &FixtureRun) -> Result<Trace, FixtureError> {
+    let Ok(seed) = i64::try_from(run.seed) else {
+        return Err(FixtureError::Seed(run.seed));
+    };
     let collector = Collector::new();
     let provider = SdkTracerProvider::builder()
         .with_id_generator(SeededIdGenerator::for_replicate(run.seed, run.replicate)?)
@@ -63,13 +68,13 @@ pub fn session(run: &FixtureRun) -> Result<Trace, FixtureError> {
         .with_start_time(at(0))
         .with_attributes(vec![
             KeyValue::new("acn.run_id", run.run_id.clone()),
-            KeyValue::new("acn.hypothesis.id", "none"),
-            KeyValue::new("acn.hypothesis.status", "candidate"),
-            KeyValue::new("acn.backend", "mockllm"),
-            KeyValue::new("acn.mode", "sim"),
+            KeyValue::new("acn.hypothesis.id", crate::bundle::NO_HYPOTHESIS),
+            KeyValue::new("acn.hypothesis.status", HypStatus::Candidate.as_str()),
+            KeyValue::new("acn.backend", crate::bundle::MOCK_BACKEND),
+            KeyValue::new("acn.mode", Mode::Sim.as_str()),
             KeyValue::new("acn.scenario.hash", Digest::of(b"scenario").to_hex()),
             KeyValue::new("acn.workload.hash", Digest::of(b"workload").to_hex()),
-            KeyValue::new("acn.seed", i64::try_from(run.seed).unwrap_or(i64::MAX)),
+            KeyValue::new("acn.seed", seed),
             KeyValue::new("acn.replicate", i64::from(run.replicate)),
             KeyValue::new("acn.role", "treatment"),
             KeyValue::new("acn.harness.knobs", "{}"),

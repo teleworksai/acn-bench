@@ -107,20 +107,51 @@ pub struct Trace {
     pub resources: Vec<ResourceRow>,
 }
 
+impl SpanRow {
+    /// The stored-order key (TRC-25).
+    #[must_use]
+    pub fn key(&self) -> (i64, [u8; 16], [u8; 8]) {
+        (self.start_ns, self.trace_id, self.span_id)
+    }
+}
+
+impl EventRow {
+    /// The stored-order key.
+    #[must_use]
+    pub fn key(&self) -> (i64, [u8; 16], [u8; 8], u32) {
+        (self.time_ns, self.trace_id, self.span_id, self.seq)
+    }
+}
+
+impl LinkRow {
+    /// The stored-order key.
+    #[must_use]
+    pub fn key(&self) -> ([u8; 16], [u8; 8], u32) {
+        (self.trace_id, self.span_id, self.seq)
+    }
+}
+
 impl Trace {
     /// Put every table in its stored order: spans by `(start_ns, trace_id, span_id)`
     /// (TRC-25), events by `(time_ns, trace_id, span_id, seq)`, links by
     /// `(trace_id, span_id, seq)`, resources by id.
     pub fn sort(&mut self) {
-        self.spans.sort_by(|a, b| {
-            (a.start_ns, a.trace_id, a.span_id).cmp(&(b.start_ns, b.trace_id, b.span_id))
-        });
-        self.events.sort_by(|a, b| {
-            (a.time_ns, a.trace_id, a.span_id, a.seq)
-                .cmp(&(b.time_ns, b.trace_id, b.span_id, b.seq))
-        });
-        self.links
-            .sort_by(|a, b| (a.trace_id, a.span_id, a.seq).cmp(&(b.trace_id, b.span_id, b.seq)));
+        self.spans.sort_by_key(SpanRow::key);
+        self.events.sort_by_key(EventRow::key);
+        self.links.sort_by_key(LinkRow::key);
         self.resources.sort_by_key(|r| r.resource_id);
+    }
+
+    /// Whether every table is in stored order, each key once. Compares keys only,
+    /// so a float attribute value cannot make an ordered trace look unordered.
+    #[must_use]
+    pub fn is_sorted(&self) -> bool {
+        self.spans.windows(2).all(|w| w[0].key() < w[1].key())
+            && self.events.windows(2).all(|w| w[0].key() < w[1].key())
+            && self.links.windows(2).all(|w| w[0].key() < w[1].key())
+            && self
+                .resources
+                .windows(2)
+                .all(|w| w[0].resource_id < w[1].resource_id)
     }
 }

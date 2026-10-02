@@ -276,10 +276,11 @@ fn is_canonical(ty: ValueType, text: &str) -> bool {
     match ty {
         ValueType::Bool => text == "true" || text == "false",
         ValueType::Int => text.parse::<i64>().is_ok_and(|v| v.to_string() == text),
-        // serde_json writes an f64 as `ryu` does, which is the reference form.
+        // The reference form is ryu's (CON-27(c)), the one `run_id` is built from;
+        // serde_json's no longer agrees with it for every value (ADR-13).
         ValueType::Float => text
             .parse::<f64>()
-            .is_ok_and(|v| v.is_finite() && serde_json::to_string(&v).is_ok_and(|s| s == text)),
+            .is_ok_and(|v| crate::identity::float_text(v).is_ok_and(|s| s == text)),
         ValueType::String => true,
         ValueType::Bytes => false,
     }

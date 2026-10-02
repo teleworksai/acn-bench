@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use acn_trace::env::{self, EnvError, RunHypothesis};
-use acn_trace::identity::{Digest, HypStatus};
+use acn_trace::identity::Digest;
 
 fn write(root: &Path, rel: &str, bytes: &[u8]) {
     let p = root.join(rel);
@@ -124,15 +124,56 @@ fn engine_of(root: &Path) -> Digest {
     Digest::from_hex(&env::compute(root).unwrap().engine_hash).unwrap()
 }
 
+fn canon(p: &Path) -> std::path::PathBuf {
+    std::fs::canonicalize(p).unwrap()
+}
+
+/// A temporary directory with no workspace root above it; the no-root tests are
+/// meaningless if the system temp dir sits inside a checkout.
+fn rootless() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        env::find_root(dir.path()).unwrap(),
+        None,
+        "the temp dir is inside a workspace root; set TMPDIR elsewhere"
+    );
+    dir
+}
+
+fn frozen(root: &Path, rel: &str) -> RunHypothesis {
+    let path = root.join(rel);
+    RunHypothesis::Frozen {
+        hash: acn_trace::identity::file_hash(&path).unwrap(),
+        path,
+    }
+}
+
 /// Cites: CON-28
 #[test]
 fn the_root_is_the_nearest_ancestor_holding_the_record() {
     let dir = frozen_root();
     let deep = dir.path().join("a/b/c");
     std::fs::create_dir_all(&deep).unwrap();
-    assert_eq!(env::find_root(&deep).unwrap(), dir.path());
-    let other = tempfile::tempdir().unwrap();
-    assert_eq!(env::find_root(other.path()), None);
+    assert_eq!(env::find_root(&deep).unwrap(), Some(canon(dir.path())));
+    // A nested kit with its own record is nearer than the outer root.
+    let inner = dir.path().join("a/kit");
+    std::fs::create_dir_all(inner.join("x")).unwrap();
+    std::fs::write(inner.join(env::RECORD_FILE), "{}").unwrap();
+    assert_eq!(
+        env::find_root(&inner.join("x")).unwrap(),
+        Some(canon(&inner))
+    );
+    assert_eq!(env::find_root(rootless().path()).unwrap(), None);
+    assert!(env::find_root(&dir.path().join("missing")).is_err());
+}
+
+/// Cites: CON-28
+#[test]
+fn a_relative_start_finds_the_root_it_is_inside() {
+    // The test process runs in crates/acn-trace, inside this repository.
+    let here = env::find_root(Path::new(".")).unwrap();
+    let repo = canon(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    assert_eq!(here, Some(repo), "`.` must not stop before the root");
 }
 
 /// Cites: CON-28
@@ -152,14 +193,39 @@ fn engine_hash_covers_only_the_frozen_crates() {
     );
 }
 
-/// Cites: CON-28
+/// Cites: CON-28, CON-7
 #[test]
-fn a_consistent_checkout_and_binary_may_run() {
+fn a_consistent_checkout_and_binary_may_run_its_recorded_frozen_hypothesis() {
     let dir = frozen_root();
     let engine = engine_of(dir.path());
-    let pf = env::preflight(dir.path(), engine, RunHypothesis::Status(HypStatus::Frozen)).unwrap();
-    assert_eq!(pf.root(), Some(dir.path()));
+    let h = frozen(dir.path(), "hypotheses/p0.toml");
+    let pf = env::preflight(dir.path(), engine, h.clone()).unwrap();
+    assert_eq!(pf.root(), Some(canon(dir.path()).as_path()));
     assert_eq!(pf.engine_hash(), engine);
+    assert_eq!(pf.hypothesis(), &h);
+}
+
+/// Cites: CON-28, CON-7
+#[test]
+fn a_frozen_claim_must_be_the_recorded_file() {
+    let dir = frozen_root();
+    let engine = engine_of(dir.path());
+    let refused = |h: RunHypothesis| {
+        let err = env::preflight(dir.path(), engine, h).unwrap_err();
+        assert!(matches!(err, EnvError::Refused(_)), "{err}");
+    };
+    // The right file with another hash.
+    refused(RunHypothesis::Frozen {
+        path: dir.path().join("hypotheses/p0.toml"),
+        hash: Digest::of(b"an edited copy"),
+    });
+    // A copy outside hypotheses/, even with the recorded bytes.
+    write(dir.path(), "lab/p0.toml", b"[poc]\nid = \"p0\"\n");
+    refused(frozen(dir.path(), "lab/p0.toml"));
+    // A file under hypotheses/ that the record does not list: the frozen set has
+    // drifted, which the preflight refuses before it looks at the claim.
+    write(dir.path(), "hypotheses/new.toml", b"[poc]\nid = \"new\"\n");
+    refused(frozen(dir.path(), "hypotheses/new.toml"));
 }
 
 /// Cites: CON-28
@@ -199,7 +265,9 @@ fn a_binary_built_from_other_frozen_code_refuses_to_start() {
     let err = env::preflight(
         dir.path(),
         Digest::of(b"another engine"),
-        RunHypothesis::Status(HypStatus::Candidate),
+        RunHypothesis::Candidate {
+            hash: Digest::of(b"c"),
+        },
     )
     .unwrap_err();
     assert!(matches!(err, EnvError::Refused(_)), "{err}");
@@ -208,22 +276,20 @@ fn a_binary_built_from_other_frozen_code_refuses_to_start() {
 /// Cites: CON-28
 #[test]
 fn without_a_root_only_unfrozen_runs_start_and_use_the_embedded_engine() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = rootless();
     let embedded = Digest::of(b"embedded");
     for h in [
         RunHypothesis::None,
-        RunHypothesis::Status(HypStatus::Candidate),
+        RunHypothesis::Candidate {
+            hash: Digest::of(b"c"),
+        },
     ] {
         let pf = env::preflight(dir.path(), embedded, h).unwrap();
         assert_eq!(pf.root(), None);
         assert_eq!(pf.engine_hash(), embedded);
     }
-    let err = env::preflight(
-        dir.path(),
-        embedded,
-        RunHypothesis::Status(HypStatus::Frozen),
-    )
-    .unwrap_err();
+    write(dir.path(), "h.toml", b"x");
+    let err = env::preflight(dir.path(), embedded, frozen(dir.path(), "h.toml")).unwrap_err();
     assert!(matches!(err, EnvError::Refused(_)), "{err}");
 }
 
