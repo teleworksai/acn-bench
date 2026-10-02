@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 4 · IDs: 104 · MUSTs: 99 · implemented: 32 · cited: 52
+Specs: 5 · IDs: 125 · MUSTs: 119 · implemented: 32 · cited: 52
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -72,6 +72,27 @@ Specs: 4 · IDs: 104 · MUSTs: 99 · implemented: 32 · cited: 52
 | TRC-40 | `010-trace-schema.md` | 8 | MUST | no | — |
 | TRC-41 | `010-trace-schema.md` | 8 | MUST | no | — |
 | TRC-42 | `010-trace-schema.md` | 8 | MUST | no | `crates/acn-trace/tests/view_schema.rs` `view_columns_are_checked_against_the_inventory` |
+| MLM-1 | `030-mock-inference.md` | 2 | MUST | no | — |
+| MLM-2 | `030-mock-inference.md` | 2 | MUST | no | — |
+| MLM-3 | `030-mock-inference.md` | 2 | MUST | no | — |
+| MLM-4 | `030-mock-inference.md` | 2 | MUST | no | — |
+| MLM-5 | `030-mock-inference.md` | 2 | MUST | no | — |
+| MLM-6 | `030-mock-inference.md` | 3 | MUST | no | — |
+| MLM-7 | `030-mock-inference.md` | 3 | MUST | no | — |
+| MLM-8 | `030-mock-inference.md` | 3 | MUST | no | — |
+| MLM-10 | `030-mock-inference.md` | 4 | MUST | no | — |
+| MLM-11 | `030-mock-inference.md` | 4 | MUST | no | — |
+| MLM-20 | `030-mock-inference.md` | 5 | MUST | no | — |
+| MLM-21 | `030-mock-inference.md` | 5 | MUST | no | — |
+| MLM-22 | `030-mock-inference.md` | 5 | — | no | — |
+| MLM-23 | `030-mock-inference.md` | 5 | MUST | no | — |
+| MLM-30 | `030-mock-inference.md` | 6 | MUST | no | — |
+| MLM-31 | `030-mock-inference.md` | 6 | MUST | no | — |
+| MLM-40 | `030-mock-inference.md` | 7 | MUST | no | — |
+| MLM-41 | `030-mock-inference.md` | 7 | MUST | no | — |
+| MLM-50 | `030-mock-inference.md` | 8 | MUST | no | — |
+| MLM-51 | `030-mock-inference.md` | 8 | MUST | no | — |
+| MLM-60 | `030-mock-inference.md` | 9 | MUST | no | — |
 | HYP-1 | `080-hypotheses.md` | 2 | MUST | no | — |
 | HYP-2 | `080-hypotheses.md` | 2 | MUST | no | — |
 | HYP-3 | `080-hypotheses.md` | 2 | MUST | no | — |
