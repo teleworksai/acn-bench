@@ -10,8 +10,35 @@ description = "trace schema, Arrow/Parquet IO, run bundle and manifest (SPEC 010
 [lints]
 workspace = true
 
+[features]
+# Arrow/Parquet IO, the OpenTelemetry span model and the bundle. `xtask` and build
+# scripts use the schema, identity and environment hashing without it (ADR-12).
+io = [
+  "dep:arrow-array", "dep:arrow-schema", "dep:arrow-buffer", "dep:parquet",
+  "dep:opentelemetry", "dep:opentelemetry_sdk",
+]
+
 [dependencies]
+blake3.workspace = true
+rand_chacha.workspace = true
+rand_core.workspace = true
+ryu.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 toml.workspace = true
+walkdir.workspace = true
+arrow-array = { workspace = true, optional = true }
+arrow-schema = { workspace = true, optional = true }
+arrow-buffer = { workspace = true, optional = true }
+parquet = { workspace = true, optional = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The integration tests exercise the `io` feature whether or not the workspace enables it.
+acn-trace = { path = ".", features = ["io"] }
+parquet = { workspace = true }
+arrow-array = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+tempfile.workspace = true

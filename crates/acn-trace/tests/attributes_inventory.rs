@@ -433,11 +433,25 @@ fn mutations_that_would_change_meaning_silently_are_rejected() {
         "the full fixture is valid"
     );
     // Option defaults feed params_hash: one spelling only (CON-27c), of the declared type.
-    for bad in ["250", "2.5e2", "250.00", "banana", "inf", "NaN"] {
+    for bad in [
+        "250", "2.5e2", "250.00", "banana", "inf", "NaN", "1e+16", "-0.0",
+    ] {
         reject_full(
             "default = \"250.0\"",
             &format!("default = \"{bad}\""),
             "default",
+        );
+    }
+    // The one spelling is ryu's, the form `run_id` is built from (CON-27(c),
+    // ADR-13), even where serde_json writes another (`1e+16`).
+    for good in ["1e16", "0.05", "1e-7"] {
+        assert!(
+            Inventory::parse(
+                &FULL.replacen("default = \"250.0\"", &format!("default = \"{good}\""), 1),
+                "1.41.0"
+            )
+            .is_ok(),
+            "{good}"
         );
     }
     // The option's attribute must sit on the session alone, and be required.

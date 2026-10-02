@@ -1,7 +1,11 @@
 //! `acn` — the acn-bench command line (CON-8: one JSON object on stdout,
-//! logs on stderr, exit 0 iff `"ok": true`). Subcommands land with their specs;
-//! T01 ships `version` only.
+//! logs on stderr, exit 0 iff `"ok": true`). Subcommands land with their specs:
+//! `version` (T01), `bundle verify` (TRC-23, T02b).
 #![forbid(unsafe_code)]
+
+mod build_info;
+
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
@@ -22,8 +26,52 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Print the version of the `acn` binary.
+    /// Print the version of the `acn` binary, its build_hash (CON-31) and the
+    /// engine_hash of the frozen code it was built from (CON-28).
     Version,
+    /// Run bundles (SPEC 010 §5).
+    Bundle {
+        #[command(subcommand)]
+        cmd: BundleCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum BundleCmd {
+    /// Recompute a bundle's run_id and the hash of every listed file, and print its
+    /// bundle_digest (TRC-23).
+    Verify {
+        /// The bundle directory, `runs/<run_id>/`.
+        dir: PathBuf,
+    },
+}
+
+fn version() -> Value {
+    match (build_info::build_info(), build_info::engine_hash()) {
+        (Ok(b), Ok(e)) => json!({
+            "ok": true,
+            "version": env!("CARGO_PKG_VERSION"),
+            "build_hash": b.build_hash,
+            "build": b,
+            "engine_hash": e.to_hex(),
+        }),
+        (Err(e), _) | (_, Err(e)) => json!({ "ok": false, "error": e.to_string() }),
+    }
+}
+
+fn bundle_verify(dir: &std::path::Path) -> Value {
+    match acn_trace::bundle::verify(dir) {
+        Ok(v) => json!({
+            "ok": true,
+            "run_id": v.run_id.to_hex(),
+            "bundle_digest": v.bundle_digest.to_hex(),
+            "files": v.files,
+        }),
+        Err(e) => {
+            tracing::error!(dir = %dir.display(), "{e}");
+            json!({ "ok": false, "error": e.to_string() })
+        }
+    }
 }
 
 /// Same policy as `xtask::logging::init` (kept in step by hand until a shared
@@ -60,7 +108,10 @@ fn run() -> Value {
         }
     };
     match cli.cmd {
-        Cmd::Version => json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }),
+        Cmd::Version => version(),
+        Cmd::Bundle {
+            cmd: BundleCmd::Verify { dir },
+        } => bundle_verify(&dir),
     }
 }
 

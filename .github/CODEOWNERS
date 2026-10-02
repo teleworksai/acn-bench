@@ -11,6 +11,10 @@
 /tools/ci.sh                     @teleworksai
 /crates/xtask/                   @teleworksai
 /lab/clippy.toml                 @teleworksai
+# The frozen-set walk, identity encodings and build identity (ADR-13).
+/crates/acn-trace/src/env.rs     @teleworksai
+/crates/acn-trace/src/identity.rs @teleworksai
+/crates/acn-cli/build.rs         @teleworksai
 
 # CON-7 / CON-10 / LOOP-20: protected paths need a human merge. Keep these exact
 # entries last: GitHub applies the last matching pattern (ADR-6).

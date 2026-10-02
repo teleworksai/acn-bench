@@ -35,8 +35,8 @@ disallowed-types = [
   { path = "std::collections::HashSet", reason = "CON-5(c): iteration order is random; use BTreeSet" },
   { path = "hashbrown::HashMap", reason = "CON-5(c): iteration order is random; use BTreeMap" },
   { path = "hashbrown::HashSet", reason = "CON-5(c): iteration order is random; use BTreeSet" },
-  { path = "ahash::AHashMap", reason = "CON-5(c): iteration order is random; use BTreeMap" },
-  { path = "ahash::AHashSet", reason = "CON-5(c): iteration order is random; use BTreeSet" },
+  { path = "ahash::AHashMap", reason = "CON-5(c): iteration order is random; use BTreeMap", allow-invalid = true }, # needs ahash/std, which parquet does not enable
+  { path = "ahash::AHashSet", reason = "CON-5(c): iteration order is random; use BTreeSet", allow-invalid = true },
   { path = "std::hash::RandomState", reason = "CON-5: a per-process random hasher seed, however it is constructed" },
   { path = "rand::rngs::OsRng", reason = "CON-5: use the injected ChaCha20Rng" },
   { path = "rand::rngs::ThreadRng", reason = "CON-5: use the injected ChaCha20Rng" },

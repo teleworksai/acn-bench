@@ -25,18 +25,22 @@ thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-rand_chacha = "0.3"
-rand_core = "0.6"
+# CON-5(a): the generator crates are pinned exactly; changing one is a Class C change.
+rand_chacha = "=0.10.0"
+rand_core = "=0.10.1"
+# CON-27(c): floats are written as ryu writes them; pinned like the generator crates.
+ryu = "=1.0.23"
 blake3 = "1"
-arrow = "55"
-parquet = "55"
+arrow-array = "60"
+arrow-schema = "60"
+arrow-buffer = "60"
+parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }
 axum = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 clap = { version = "4", features = ["derive"] }
 plotters = "0.3"
-opentelemetry = "0.30"
-opentelemetry_sdk = "0.30"
-tracing-opentelemetry = "0.31"
+opentelemetry = { version = "0.33", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace"] }
 zstd = "0.13"
 proptest = "1"
 walkdir = "2"

@@ -23,6 +23,9 @@ const FULL_CODEOWNERS: &str = "\
 /tools/ci.sh                     @owner
 /crates/xtask/                   @owner
 /lab/clippy.toml                 @owner
+/crates/acn-trace/src/env.rs     @owner
+/crates/acn-trace/src/identity.rs @owner
+/crates/acn-cli/build.rs         @owner
 /hypotheses/                     @owner
 /scenarios/measured/             @owner
 /crates/acn-hyp/                 @owner

@@ -276,10 +276,11 @@ fn is_canonical(ty: ValueType, text: &str) -> bool {
     match ty {
         ValueType::Bool => text == "true" || text == "false",
         ValueType::Int => text.parse::<i64>().is_ok_and(|v| v.to_string() == text),
-        // serde_json writes an f64 as `ryu` does, which is the reference form.
+        // The reference form is ryu's (CON-27(c)), the one `run_id` is built from;
+        // serde_json's no longer agrees with it for every value (ADR-13).
         ValueType::Float => text
             .parse::<f64>()
-            .is_ok_and(|v| v.is_finite() && serde_json::to_string(&v).is_ok_and(|s| s == text)),
+            .is_ok_and(|v| crate::identity::float_text(v).is_ok_and(|s| s == text)),
         ValueType::String => true,
         ValueType::Bytes => false,
     }
@@ -658,6 +659,36 @@ impl Inventory {
 /// The inventory embedded in this build.
 pub fn inventory() -> Result<Inventory> {
     Inventory::parse(ATTRIBUTES_TOML, SEMCONV_VERSION_FILE)
+}
+
+/// The Parquet writer settings (TRC-25). They are fixed here, in the frozen module,
+/// because each one changes the bytes of every bundle: a change moves `engine_hash`.
+/// The writer sets every one of them explicitly rather than inheriting a library
+/// default, so that a dependency bump cannot change them silently (`build_hash`
+/// records the library version, CON-31).
+pub mod parquet {
+    /// Compression codec and level: zstd, level 3.
+    pub const ZSTD_LEVEL: i32 = 3;
+    /// Rows per row group.
+    pub const ROW_GROUP_ROWS: usize = 65_536;
+    /// Column statistics are written, at page level.
+    pub const PAGE_STATISTICS: bool = true;
+    /// Dictionary encoding is enabled for every column.
+    pub const DICTIONARY: bool = true;
+    /// Target size of a data page, in bytes.
+    pub const DATA_PAGE_BYTES: usize = 1024 * 1024;
+    /// Target size of a dictionary page, in bytes.
+    pub const DICTIONARY_PAGE_BYTES: usize = 1024 * 1024;
+    /// Parquet format writer version: `1.0` pages.
+    pub const WRITER_VERSION_1_0: bool = true;
+    /// The `created_by` field of the file footer. Fixed, so that it names the
+    /// format's owner and never a time or a host; the library version is recorded
+    /// in `build_hash` instead.
+    pub const CREATED_BY: &str = "acn-bench acn-trace (SPEC 010)";
+    /// The union members of the `attrs` map value, in order, by OTLP value type.
+    /// Parquet has no union type, so the value is a struct of these nullable
+    /// members with exactly one set (ADR-13).
+    pub const ATTR_MEMBERS: &[&str] = &["string", "int", "float", "bool", "bytes"];
 }
 
 /// One column of a derived view (TRC-37).

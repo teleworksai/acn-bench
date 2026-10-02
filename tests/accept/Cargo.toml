@@ -16,3 +16,11 @@ autotests = false
 workspace = true
 
 [dependencies]
+acn-trace = { workspace = true, features = ["io"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[test]]
+name = "trace_determinism"
+path = "trace_determinism.rs"

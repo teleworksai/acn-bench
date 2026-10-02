@@ -90,6 +90,11 @@ pub const ENFORCEMENT_POINTS: &[&str] = &[
     "/tools/ci.sh",
     "/crates/xtask/",
     "/lab/clippy.toml",
+    // The frozen-set walk, the identity encodings and the build identity that the
+    // env-hash gate, `run_id` and `build_hash` rest on (ADR-13).
+    "/crates/acn-trace/src/env.rs",
+    "/crates/acn-trace/src/identity.rs",
+    "/crates/acn-cli/build.rs",
 ];
 
 /// Paths CODEOWNERS must cover: the enforcement points, the frozen set, the
