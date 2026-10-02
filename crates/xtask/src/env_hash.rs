@@ -13,45 +13,20 @@
 
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
-use walkdir::WalkDir;
+use serde::Serialize;
 
-use crate::workspace::{read, rel_strict, write};
+pub use acn_trace::env::{ENGINE_PREFIX, FROZEN_SET, FileHash, RECORD_FILE};
+
+use crate::workspace::write;
 use crate::{Error, Result};
 
-/// The frozen set (CON-7), relative to the workspace root.
-pub const FROZEN_SET: &[&str] = &[
-    "hypotheses",
-    "scenarios/measured",
-    "crates/acn-hyp",
-    "crates/acn-attrib/src/core",
-    "crates/acn-trace/src/schema",
-];
+/// The recorded (and computed) environment hash. The walk and both hashes live in
+/// `acn_trace::env`, so the gate and the check every run makes (CON-28) read the
+/// same bytes the same way.
+pub type EnvHash = acn_trace::env::EnvRecord;
 
-/// The part of the frozen set that is code: the verdict engine, the attribution
-/// core and the trace schema. `engine_hash` covers exactly the files below it.
-pub const ENGINE_PREFIX: &str = "crates/";
-
-/// Where the recorded hash lives, relative to the workspace root.
-pub const RECORD_FILE: &str = "env-hash.json";
-
-/// One hashed file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FileHash {
-    pub path: String,
-    pub blake3: String,
-}
-
-/// The recorded (and computed) environment hash.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EnvHash {
-    pub env_hash: String,
-    /// Required: a record written before CON-28 fails to parse, and the error
-    /// says how to regenerate it.
-    pub engine_hash: String,
-    pub files: Vec<FileHash>,
+fn env_err(e: acn_trace::env::EnvError) -> Error {
+    Error::Invalid(e.to_string())
 }
 
 /// Per-file difference between the computed and the recorded set.
@@ -78,109 +53,22 @@ pub struct Report {
     pub files: Vec<FileHash>,
 }
 
-/// blake3 of a file, streamed so a large measured trace cannot exhaust memory.
-fn hash_file(path: &Path) -> Result<String> {
-    let file = std::fs::File::open(path).map_err(|e| Error::io(path, e))?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update_reader(file).map_err(|e| Error::io(path, e))?;
-    Ok(hasher.finalize().to_hex().to_string())
-}
-
-/// The environment hash of a file list: blake3 over `path \0 hex \n` records.
 fn hash_of(files: &[FileHash]) -> String {
-    let mut hasher = blake3::Hasher::new();
-    for f in files {
-        hasher.update(f.path.as_bytes());
-        hasher.update(b"\0");
-        hasher.update(f.blake3.as_bytes());
-        hasher.update(b"\n");
-    }
-    hasher.finalize().to_hex().to_string()
+    acn_trace::env::record_hash(files).to_hex()
 }
 
-/// `engine_hash` of a file list: the record hash of its frozen-crate entries, in
-/// the order of the list (which is sorted by path).
 fn engine_hash_of(files: &[FileHash]) -> String {
-    let engine: Vec<FileHash> = files
-        .iter()
-        .filter(|f| f.path.starts_with(ENGINE_PREFIX))
-        .cloned()
-        .collect();
-    hash_of(&engine)
+    acn_trace::env::engine_hash_of(files).to_hex()
 }
 
 /// Compute the hash over the frozen set under `root`.
 pub fn compute(root: &Path) -> Result<EnvHash> {
-    if !root.is_dir() {
-        return Err(Error::Invalid(format!(
-            "--root {} is not a directory",
-            root.display()
-        )));
-    }
-    let mut files = Vec::new();
-    for base in FROZEN_SET {
-        let dir = root.join(base);
-        // symlink_metadata: a dangling or redirecting symlink in place of a frozen
-        // directory must be refused, not skipped as "does not exist".
-        let meta = std::fs::symlink_metadata(&dir).map_err(|e| {
-            Error::Invalid(format!(
-                "frozen directory `{base}` is missing under {} ({e}); the frozen set is fixed by CON-7",
-                root.display()
-            ))
-        })?;
-        if !meta.is_dir() {
-            return Err(Error::Invalid(format!(
-                "frozen path `{base}` is not a real directory"
-            )));
-        }
-        for entry in WalkDir::new(&dir).sort_by_file_name() {
-            let entry = entry?;
-            let ty = entry.file_type();
-            let shown = entry.path().display();
-            if ty.is_dir() {
-                continue;
-            }
-            if !ty.is_file() {
-                return Err(Error::Invalid(format!(
-                    "only regular files are allowed in the frozen set; found a symlink or special file: {shown}"
-                )));
-            }
-            let name = entry.file_name().to_str().unwrap_or("");
-            let len = entry.metadata()?.len();
-            if name == ".gitkeep" && len == 0 {
-                continue;
-            }
-            if name == ".DS_Store" {
-                return Err(Error::Invalid(format!(
-                    "{shown}: remove Finder metadata from the frozen set (`find . -name .DS_Store -delete`)"
-                )));
-            }
-            files.push(FileHash {
-                path: rel_strict(root, entry.path())?,
-                blake3: hash_file(entry.path())?,
-            });
-        }
-    }
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(EnvHash {
-        env_hash: hash_of(&files),
-        engine_hash: engine_hash_of(&files),
-        files,
-    })
+    acn_trace::env::compute(root).map_err(env_err)
 }
 
 /// Read the recorded hash, if any.
 pub fn recorded(root: &Path) -> Result<Option<EnvHash>> {
-    let path = root.join(RECORD_FILE);
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let parsed: EnvHash = serde_json::from_str(&read(&path)?).map_err(|e| {
-        Error::Invalid(format!(
-            "{RECORD_FILE} is not a valid env-hash record ({e}); it must carry `env_hash`, `engine_hash` (CON-28) and `files`; regenerate it with `cargo xtask env-hash --write` in an `env-change` PR"
-        ))
-    })?;
-    Ok(Some(parsed))
+    acn_trace::env::read_record(root).map_err(env_err)
 }
 
 fn diff(computed: &EnvHash, recorded: &EnvHash) -> Diff {

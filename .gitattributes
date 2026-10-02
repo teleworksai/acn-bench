@@ -1,0 +1,6 @@
+# CON-27(a): hashed inputs are hashed as working-tree bytes, so every checkout must
+# reproduce the committed bytes exactly. A spec that adds a directory of hashed
+# inputs adds it here.
+hypotheses/** -text
+lab/hypotheses/** -text
+scenarios/** -text

@@ -1,6 +1,6 @@
 {
-  "env_hash": "b76161303719196da8c8f08a6ab10aa44ed07075406ffec4d6c3b1bce51e5553",
-  "engine_hash": "af5a006d28bfbd8f4e4f9e483a654aa0d856901b05e57ad170824a21c4554c7e",
+  "env_hash": "867722c57f5cbcf2ef39dffd08e993e8974228e06cdecff44fef79dd8fb73f0c",
+  "engine_hash": "c7730022259ae678c95676f831c0cee8e0747b1967a9f78fa057d85e9ee53505",
   "files": [
     {
       "path": "crates/acn-attrib/src/core/mod.rs",
@@ -24,7 +24,7 @@
     },
     {
       "path": "crates/acn-trace/src/schema/mod.rs",
-      "blake3": "e8bf2804b222c31609322c3ed1bd38272a6d1438b86e371d1e9102b8430dcdd4"
+      "blake3": "8b3153c9b749a064821c8ee5799b849edafaebf2a5aa3ad2ea5d57fe58a51be7"
     },
     {
       "path": "crates/acn-trace/src/schema/views.toml",

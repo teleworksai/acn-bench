@@ -450,7 +450,9 @@ fn clippy_bans_exactly_the_listed_entropy_and_clock_sources_and_unordered_maps()
         "clippy.toml disallowed-types (ADR-8); the list only grows"
     );
     // `allow-invalid` stops clippy from reporting a path that does not resolve, so
-    // it is confined to paths that exist in only some versions of their crate.
+    // it is confined to paths that exist in only some versions of their crate, or
+    // only under a feature (ahash's maps need `ahash/std`, which the Parquet
+    // dependency tree does not enable; ADR-13).
     let mut lenient: Vec<String> = Vec::new();
     for key in ["disallowed-methods", "disallowed-types"] {
         for e in cfg[key].as_array().expect("array") {
@@ -463,6 +465,8 @@ fn clippy_bans_exactly_the_listed_entropy_and_clock_sources_and_unordered_maps()
     assert_eq!(
         lenient,
         sorted(&[
+            "ahash::AHashMap",
+            "ahash::AHashSet",
             "rand::rng",
             "getrandom::fill",
             "getrandom::getrandom",
@@ -616,7 +620,7 @@ fn deny_toml_is_exactly_the_agreed_policy() {
     let expected: toml::Value = toml::from_str(
         r#"
 [licenses]
-allow = ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "MPL-2.0"]
+allow = ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "MPL-2.0", "CC0-1.0"]
 
 [advisories]
 yanked = "deny"
