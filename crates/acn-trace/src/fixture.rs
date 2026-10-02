@@ -107,6 +107,8 @@ pub fn session(run: &FixtureRun) -> Result<Trace, FixtureError> {
                 .with_start_time(at(start))
                 .with_attributes(vec![
                     KeyValue::new("gen_ai.operation.name", "chat"),
+                    KeyValue::new("gen_ai.provider.name", crate::bundle::MOCK_BACKEND),
+                    KeyValue::new("gen_ai.request.model", "fixture"),
                     KeyValue::new("acn.call.index", call_index),
                     KeyValue::new("acn.call.input_tokens", 1000 + 200 * call_index),
                     KeyValue::new("acn.call.new_input_tokens", 200),

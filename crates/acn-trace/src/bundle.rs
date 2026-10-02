@@ -15,6 +15,7 @@ use walkdir::WalkDir;
 
 use crate::env::{Preflight, RunHypothesis};
 use crate::identity::{self, BuildInfo, Digest, HypStatus, Mode, RunIdentity, RunParams};
+use crate::ingest;
 use crate::model::{AttrValue, Trace};
 use crate::parquet_io::{self, EVENTS, LINKS, RESOURCES, SPANS};
 use crate::schema;
@@ -51,6 +52,8 @@ pub enum BundleError {
     Schema(#[from] schema::SchemaError),
     #[error("directory walk failed: {0}")]
     Walk(#[from] walkdir::Error),
+    #[error(transparent)]
+    Ingest(#[from] ingest::IngestError),
 }
 
 type Result<T> = std::result::Result<T, BundleError>;
@@ -266,8 +269,25 @@ impl Manifest {
     }
 }
 
-/// The derived views a bundle may hold (TRC-22, TRC-31..34, TRC-38).
+/// The derived views every bundle holds (TRC-22, TRC-31..34, TRC-38).
 pub const VIEWS: &[&str] = &["session", "turn", "call", "link", "tool"];
+/// Their directory.
+pub const VIEWS_DIR: &str = "views";
+
+/// Every session of a bundle names the bundle's run (TRC-10).
+fn check_sessions(trace: &Trace, run_id: &str) -> Result<()> {
+    for s in trace.spans.iter().filter(|s| s.name == "acn.session") {
+        match s.attrs.get("acn.run_id") {
+            Some(AttrValue::String(r)) if r == run_id => {}
+            other => {
+                return invalid(format!(
+                    "a session names run {other:?}, not the bundle's {run_id} (TRC-10)"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Whether a listed path belongs to the layout of TRC-22: one of the four tables,
 /// a known view, or a file under `sidecar/`. The manifest itself and `logs/` are
@@ -509,7 +529,16 @@ impl Bundle {
         )?;
         self.manifest.producers = producers;
 
+        check_sessions(trace, &self.manifest.run_id)?;
+        // The views are computed before anything is written, so a trace they
+        // cannot be derived from leaves no tables behind either.
+        let views = ingest::views(&self.inv, &schema::views()?, trace)?;
         parquet_io::write_trace(&self.dir, &self.inv, trace)?;
+        let views_dir = self.dir.join(VIEWS_DIR);
+        std::fs::create_dir(&views_dir).map_err(io(&views_dir))?;
+        for (view, batch) in &views {
+            parquet_io::write_batch(&self.dir.join(&view.file), batch)?;
+        }
         self.manifest.files = hash_files(&self.dir)?;
         self.manifest.validate()?;
         let bytes = self.manifest.to_bytes()?;
@@ -594,8 +623,12 @@ pub fn verify(dir: &Path) -> Result<Verified> {
             manifest.run_id
         ));
     }
-    for table in [SPANS, EVENTS, LINKS, RESOURCES] {
-        if !manifest.files.contains_key(table) {
+    for table in [SPANS, EVENTS, LINKS, RESOURCES]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(VIEWS.iter().map(|v| format!("{VIEWS_DIR}/{v}.parquet")))
+    {
+        if !manifest.files.contains_key(&table) {
             return invalid(format!("{table} is not listed (TRC-22)"));
         }
     }
@@ -634,4 +667,25 @@ pub fn verify(dir: &Path) -> Result<Verified> {
         bundle_digest: Digest::of(&bytes),
         files: manifest.files.len(),
     })
+}
+
+/// `acn bundle verify --views` (TRC-35): everything [`verify`] checks, then read the
+/// four tables back, recompute the five views from them alone, and require each
+/// view file to be byte-identical to the recomputation.
+pub fn verify_views(dir: &Path) -> Result<Verified> {
+    let verified = verify(dir)?;
+    let inv = schema::inventory()?;
+    let trace = parquet_io::read_trace(dir, &inv)?;
+    check_sessions(&trace, &verified.run_id.to_hex())?;
+    for (view, batch) in ingest::views(&inv, &schema::views()?, &trace)? {
+        let path = dir.join(&view.file);
+        let on_disk = std::fs::read(&path).map_err(io(&path))?;
+        if parquet_io::encode(&batch)? != on_disk {
+            return invalid(format!(
+                "{} differs from the view recomputed from the tables (TRC-35)",
+                view.file
+            ));
+        }
+    }
+    Ok(verified)
 }

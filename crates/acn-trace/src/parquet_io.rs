@@ -506,64 +506,212 @@ pub fn write_trace(dir: &Path, inv: &Inventory, trace: &Trace) -> Result<()> {
     Ok(())
 }
 
-/// Read `resources.parquet` back (TRC-19 checks in `bundle::verify`). A file whose
-/// schema is not exactly [`resources_schema`] is refused.
-pub fn read_resources(path: &Path) -> Result<Vec<crate::model::ResourceRow>> {
-    use arrow_array::Array as _;
-    use arrow_array::cast::AsArray as _;
-    use arrow_array::types::{Float64Type, Int32Type, Int64Type};
-    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-
-    let file = File::open(path).map_err(|source| WriteError::Io {
+fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> WriteError + '_ {
+    move |source| WriteError::Io {
         path: path.display().to_string(),
         source,
-    })?;
+    }
+}
+
+/// The batches of one table, refused unless its schema is exactly `expected`.
+fn read_table(path: &Path, expected: &Schema) -> Result<Vec<RecordBatch>> {
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    let file = File::open(path).map_err(io_err(path))?;
     let reader = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
-    let mut rows = Vec::new();
+    let mut out = Vec::new();
     for batch in reader {
         let batch = batch?;
-        if batch.schema().fields() != resources_schema().fields() {
+        if batch.schema().fields() != expected.fields() {
             return invalid(format!(
-                "{}: not the resources schema (TRC-25)",
+                "{}: not the expected schema (TRC-25)",
                 path.display()
             ));
         }
-        let ids = batch.column(0).as_primitive::<Int32Type>();
-        let map = batch.column(1).as_map();
-        let keys = map.keys().as_string::<i32>();
-        let values = map.values().as_struct();
-        let (s, i, f, b, y) = (
-            values.column(0).as_string::<i32>(),
-            values.column(1).as_primitive::<Int64Type>(),
-            values.column(2).as_primitive::<Float64Type>(),
-            values.column(3).as_boolean(),
-            values.column(4).as_binary::<i32>(),
-        );
-        for row in 0..batch.num_rows() {
-            let mut attrs = Attrs::new();
-            let offsets = map.value_offsets();
-            let (lo, hi) = (offsets[row], offsets[row + 1]);
-            let (Ok(lo), Ok(hi)) = (usize::try_from(lo), usize::try_from(hi)) else {
-                return invalid("negative map offset");
+        out.push(batch);
+    }
+    Ok(out)
+}
+
+/// The attributes of every row of an `attrs` map column.
+fn decode_attrs(column: &ArrayRef) -> Result<Vec<Attrs>> {
+    use arrow_array::Array as _;
+    use arrow_array::cast::AsArray as _;
+    use arrow_array::types::{Float64Type, Int64Type};
+    let map = column.as_map();
+    let keys = map.keys().as_string::<i32>();
+    let values = map.values().as_struct();
+    let (s, i, f, b, y) = (
+        values.column(0).as_string::<i32>(),
+        values.column(1).as_primitive::<Int64Type>(),
+        values.column(2).as_primitive::<Float64Type>(),
+        values.column(3).as_boolean(),
+        values.column(4).as_binary::<i32>(),
+    );
+    let offsets = map.value_offsets();
+    let mut rows = Vec::with_capacity(map.len());
+    for row in 0..map.len() {
+        let (Ok(lo), Ok(hi)) = (
+            usize::try_from(offsets[row]),
+            usize::try_from(offsets[row + 1]),
+        ) else {
+            return invalid("negative map offset");
+        };
+        let mut attrs = Attrs::new();
+        for e in lo..hi {
+            let set = [
+                s.is_valid(e),
+                i.is_valid(e),
+                f.is_valid(e),
+                b.is_valid(e),
+                y.is_valid(e),
+            ];
+            let value = match set {
+                [true, false, false, false, false] => AttrValue::String(s.value(e).to_owned()),
+                [false, true, false, false, false] => AttrValue::Int(i.value(e)),
+                [false, false, true, false, false] => AttrValue::Float(f.value(e)),
+                [false, false, false, true, false] => AttrValue::Bool(b.value(e)),
+                [false, false, false, false, true] => AttrValue::Bytes(y.value(e).to_vec()),
+                _ => return invalid("an attribute value must set exactly one member (TRC-25)"),
             };
-            for e in lo..hi {
-                let set = [
-                    s.is_valid(e),
-                    i.is_valid(e),
-                    f.is_valid(e),
-                    b.is_valid(e),
-                    y.is_valid(e),
-                ];
-                let value = match set {
-                    [true, false, false, false, false] => AttrValue::String(s.value(e).to_owned()),
-                    [false, true, false, false, false] => AttrValue::Int(i.value(e)),
-                    [false, false, true, false, false] => AttrValue::Float(f.value(e)),
-                    [false, false, false, true, false] => AttrValue::Bool(b.value(e)),
-                    [false, false, false, false, true] => AttrValue::Bytes(y.value(e).to_vec()),
-                    _ => return invalid("an attribute value must set exactly one member (TRC-25)"),
-                };
-                attrs.insert(keys.value(e).to_owned(), value);
+            if attrs.insert(keys.value(e).to_owned(), value).is_some() {
+                return invalid("an attribute key appears twice in one row");
             }
+        }
+        rows.push(attrs);
+    }
+    Ok(rows)
+}
+
+fn fixed_at<const N: usize>(column: &ArrayRef, row: usize) -> Result<Option<[u8; N]>> {
+    use arrow_array::Array as _;
+    use arrow_array::cast::AsArray as _;
+    let a = column.as_fixed_size_binary();
+    if a.is_null(row) {
+        return Ok(None);
+    }
+    match <[u8; N]>::try_from(a.value(row)) {
+        Ok(v) => Ok(Some(v)),
+        Err(_) => invalid(format!("an id is not {N} bytes")),
+    }
+}
+
+fn fixed_req<const N: usize>(column: &ArrayRef, row: usize) -> Result<[u8; N]> {
+    fixed_at::<N>(column, row)?.map_or_else(|| invalid("a required id is null"), Ok)
+}
+
+fn dict_values(column: &ArrayRef) -> Result<Vec<String>> {
+    use arrow_array::cast::AsArray as _;
+    use arrow_array::types::Int32Type;
+    let d = column.as_dictionary::<Int32Type>();
+    let Some(values) = d.values().as_string_opt::<i32>() else {
+        return invalid("a dictionary column without string values");
+    };
+    let mut out = Vec::with_capacity(d.len());
+    for k in d.keys().iter() {
+        let Some(k) = k.and_then(|k| usize::try_from(k).ok()) else {
+            return invalid("a null or negative dictionary key");
+        };
+        out.push(values.value(k).to_owned());
+    }
+    Ok(out)
+}
+
+fn seq_of(v: i64) -> Result<u32> {
+    u32::try_from(v).or_else(|_| invalid("a seq out of range"))
+}
+
+/// Read the four tables of a bundle directory back into a [`Trace`] (TRC-35: the
+/// views are recomputable from these and from nothing else). Each table must have
+/// exactly the schema the writer gives it.
+pub fn read_trace(dir: &Path, inv: &Inventory) -> Result<Trace> {
+    use crate::model::{EventRow, LinkRow, SpanRow};
+    use arrow_array::Array as _;
+    use arrow_array::cast::AsArray as _;
+    use arrow_array::types::{Int8Type, Int32Type, Int64Type};
+
+    let mut trace = Trace::default();
+    for batch in read_table(&dir.join(SPANS), &spans_schema(inv))? {
+        let col = |n: &str| batch.column_by_name(n).cloned();
+        let (Some(tid), Some(sid), Some(pid), Some(name), Some(kind), Some(start), Some(end)) = (
+            col("trace_id"),
+            col("span_id"),
+            col("parent_span_id"),
+            col("name"),
+            col("kind"),
+            col("start_ns"),
+            col("end_ns"),
+        ) else {
+            return invalid("spans.parquet lacks a base column");
+        };
+        let (Some(status), Some(message), Some(res), Some(attrs)) = (
+            col("status_code"),
+            col("status_message"),
+            col("resource_id"),
+            col("attrs"),
+        ) else {
+            return invalid("spans.parquet lacks a base column");
+        };
+        let names = dict_values(&name)?;
+        let attrs = decode_attrs(&attrs)?;
+        let message = message.as_string::<i32>();
+        for row in 0..batch.num_rows() {
+            trace.spans.push(SpanRow {
+                trace_id: fixed_req::<16>(&tid, row)?,
+                span_id: fixed_req::<8>(&sid, row)?,
+                parent_span_id: fixed_at::<8>(&pid, row)?,
+                name: names[row].clone(),
+                kind: kind.as_primitive::<Int8Type>().value(row),
+                start_ns: start.as_primitive::<Int64Type>().value(row),
+                end_ns: end.as_primitive::<Int64Type>().value(row),
+                status_code: status.as_primitive::<Int8Type>().value(row),
+                status_message: message.is_valid(row).then(|| message.value(row).to_owned()),
+                resource_id: res.as_primitive::<Int32Type>().value(row),
+                attrs: attrs[row].clone(),
+            });
+        }
+    }
+    for batch in read_table(&dir.join(EVENTS), &events_schema())? {
+        let c = batch.columns();
+        let names = dict_values(&c[4])?;
+        let attrs = decode_attrs(&c[5])?;
+        for row in 0..batch.num_rows() {
+            trace.events.push(EventRow {
+                trace_id: fixed_req::<16>(&c[0], row)?,
+                span_id: fixed_req::<8>(&c[1], row)?,
+                seq: seq_of(c[2].as_primitive::<Int64Type>().value(row))?,
+                time_ns: c[3].as_primitive::<Int64Type>().value(row),
+                name: names[row].clone(),
+                attrs: attrs[row].clone(),
+            });
+        }
+    }
+    for batch in read_table(&dir.join(LINKS), &links_schema())? {
+        let c = batch.columns();
+        for (row, attrs) in decode_attrs(&c[5])?.into_iter().enumerate() {
+            trace.links.push(LinkRow {
+                trace_id: fixed_req::<16>(&c[0], row)?,
+                span_id: fixed_req::<8>(&c[1], row)?,
+                seq: seq_of(c[2].as_primitive::<Int64Type>().value(row))?,
+                linked_trace_id: fixed_req::<16>(&c[3], row)?,
+                linked_span_id: fixed_req::<8>(&c[4], row)?,
+                attrs,
+            });
+        }
+    }
+    trace.resources = read_resources(&dir.join(RESOURCES))?;
+    Ok(trace)
+}
+
+/// Read `resources.parquet` back (TRC-19 checks in `bundle::verify`). A file whose
+/// schema is not exactly [`resources_schema`] is refused.
+pub fn read_resources(path: &Path) -> Result<Vec<crate::model::ResourceRow>> {
+    use arrow_array::cast::AsArray as _;
+    use arrow_array::types::Int32Type;
+    let mut rows = Vec::new();
+    for batch in read_table(path, &resources_schema())? {
+        let ids = batch.column(0).as_primitive::<Int32Type>();
+        let attrs = decode_attrs(batch.column(1))?;
+        for (row, attrs) in attrs.into_iter().enumerate() {
             rows.push(crate::model::ResourceRow {
                 resource_id: ids.value(row),
                 attrs,
@@ -571,4 +719,13 @@ pub fn read_resources(path: &Path) -> Result<Vec<crate::model::ResourceRow>> {
         }
     }
     Ok(rows)
+}
+
+/// Encode one batch as a Parquet file in memory, with the writer settings of TRC-25.
+pub fn encode(batch: &RecordBatch) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut w = ArrowWriter::try_new(&mut out, batch.schema(), Some(writer_properties()?))?;
+    w.write(batch)?;
+    w.close()?;
+    Ok(out)
 }

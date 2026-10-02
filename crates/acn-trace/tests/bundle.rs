@@ -105,9 +105,14 @@ fn a_bundle_lists_every_file_but_its_logs_and_verifies() {
             "events.parquet",
             "links.parquet",
             "resources.parquet",
-            "spans.parquet"
+            "spans.parquet",
+            "views/call.parquet",
+            "views/link.parquet",
+            "views/session.parquet",
+            "views/tool.parquet",
+            "views/turn.parquet",
         ],
-        "logs/ is neither hashed nor listed"
+        "exactly the TRC-22 layout; logs/ is neither hashed nor listed"
     );
     assert_eq!(
         w.bundle_digest,
@@ -604,4 +609,62 @@ fn run_seeds_must_fit_the_int64_seed_attribute() {
     );
     forge(&w.dir, |m| m.seed = u64::MAX.to_string());
     assert!(bundle::verify(&w.dir).is_err());
+}
+
+/// Cites: TRC-35, TRC-22
+#[test]
+fn verify_views_recomputes_every_view_from_the_tables() {
+    let runs = tempfile::tempdir().unwrap();
+    let w = write(runs.path(), 400);
+    let v = bundle::verify_views(&w.dir).unwrap();
+    assert_eq!((v.run_id, v.bundle_digest), (w.run_id, w.bundle_digest));
+
+    // A view replaced by a well-formed but different one, with its listed hash
+    // updated, passes the hash check and fails the recomputation.
+    let inv = acn_trace::schema::inventory().unwrap();
+    let mut t = acn_trace::parquet_io::read_trace(&w.dir, &inv).unwrap();
+    let turn = t.spans.iter_mut().find(|s| s.name == "acn.turn").unwrap();
+    turn.attrs.insert(
+        "acn.turn.outcome".into(),
+        AttrValue::String("timeout".into()),
+    );
+    let views = acn_trace::ingest::views(&inv, &acn_trace::schema::views().unwrap(), &t).unwrap();
+    let (view, batch) = views.iter().find(|(v, _)| v.name == "turn").unwrap();
+    let path = w.dir.join(&view.file);
+    std::fs::write(&path, acn_trace::parquet_io::encode(batch).unwrap()).unwrap();
+    let h = acn_trace::identity::file_hash(&path).unwrap().to_hex();
+    forge(&w.dir, |m| {
+        m.files.insert(view.file.clone(), h.clone());
+    });
+    assert!(bundle::verify(&w.dir).is_ok(), "the hashes agree");
+    let err = bundle::verify_views(&w.dir).unwrap_err().to_string();
+    assert!(err.contains("views/turn.parquet"), "{err}");
+}
+
+/// Cites: TRC-22
+#[test]
+fn a_bundle_without_one_of_its_views_fails_verification() {
+    let runs = tempfile::tempdir().unwrap();
+    let w = write(runs.path(), 401);
+    std::fs::remove_file(w.dir.join("views/tool.parquet")).unwrap();
+    forge(&w.dir, |m| {
+        m.files.remove("views/tool.parquet");
+    });
+    let err = bundle::verify(&w.dir).unwrap_err().to_string();
+    assert!(err.contains("views/tool.parquet"), "{err}");
+}
+
+/// Cites: TRC-10, TRC-22
+#[test]
+fn every_session_names_the_bundles_run() {
+    let runs = tempfile::tempdir().unwrap();
+    let b = Bundle::create(
+        runs.path(),
+        &preflight(RunHypothesis::None),
+        &build(),
+        spec(402),
+    )
+    .unwrap();
+    let t = session(&Digest::of(b"another run").to_hex(), 402);
+    assert!(b.finish(&t).is_err());
 }

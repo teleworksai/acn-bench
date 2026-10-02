@@ -2,7 +2,7 @@
 //! bundles, every file but `logs/` (TRC-24), with ids from the seeded generator
 //! (TRC-27). The fixture scenario is the `acn-trace` fixture session, run once per
 //! replicate through the OpenTelemetry SDK; `acn-emu` replaces it when the sim
-//! engine lands (T11), and the views join the comparison with T02c.
+//! engine lands (T11). The five views are part of every bundle and of the comparison.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // CON-19: tests are exempt
 

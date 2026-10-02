@@ -11,15 +11,16 @@ ids = [
 
 [[implemented]]
 spec = "010"
-ids = ["TRC-2", "TRC-20", "TRC-21", "TRC-23", "TRC-24", "TRC-25", "TRC-27"]
+ids = [
+  "TRC-2", "TRC-20", "TRC-21", "TRC-22", "TRC-23", "TRC-24", "TRC-25", "TRC-27",
+  "TRC-30", "TRC-31", "TRC-32", "TRC-33", "TRC-34", "TRC-35", "TRC-37", "TRC-38",
+]
 
 # T02 lands as a series of PRs (ADR-11); each adds the IDs it completes. Cited ahead of
-# scope by T02a: TRC-3 and TRC-12 (value sets), TRC-31..34, TRC-37 and TRC-38 (the view
-# schema is declared; the writer that is checked against it is T02c).
-# T02b (ADR-13) cites ahead of scope: TRC-1 (producers emit through the SDK; the
-# harness is T04), TRC-19 (resources are checked; the ban on commit identifiers is not
-# machine-checkable), TRC-22 (the bundle lacks views until T02c) and TRC-26 (clock
-# offsets are T02d). CON-28's kit clause and CON-29's live-option clause bind T16 and T04.
+# scope by T02a: TRC-3 and TRC-12 (value sets). T02b (ADR-13) cites ahead of scope:
+# TRC-1 (producers emit through the SDK; the harness is T04), TRC-19 (resources are
+# checked; the ban on commit identifiers is not machine-checkable) and TRC-26 (clock
+# offsets are T02d). T02c (ADR-14) adds the views and the ingester. CON-28's kit clause and CON-29's live-option clause bind T16 and T04.
 # Not yet in scope although cited: CON-5 (its clippy clause and the raw-output golden
 # vector exist; acn_emu::{clock,rng} and the ranged/distribution vectors land in T10–T12).
 # CON-14 is cited by the pr-check tests but stays out of scope: the label rule is

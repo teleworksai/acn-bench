@@ -97,3 +97,14 @@ fn a_tampered_bundle_is_a_json_error_with_exit_one() {
     let (code, json) = acn(&["bundle", "verify", "/nonexistent/bundle"]);
     assert_eq!((code, &json["ok"]), (Some(1), &serde_json::json!(false)));
 }
+
+/// Cites: TRC-35, CON-8
+#[test]
+fn verify_views_recomputes_and_reports_it() {
+    let runs = tempfile::tempdir().unwrap();
+    let (dir, run_id, _) = bundle(runs.path());
+    let (code, json) = acn(&["bundle", "verify", "--views", dir.to_str().unwrap()]);
+    assert_eq!(code, Some(0), "{json}");
+    assert_eq!(json["views_recomputed"], true);
+    assert_eq!(json["run_id"], run_id.to_hex().as_str());
+}
