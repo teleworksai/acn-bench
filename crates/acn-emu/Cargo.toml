@@ -11,3 +11,7 @@ description = "link models, scenario loader, sim engine and live proxy (SPEC 020
 workspace = true
 
 [dependencies]
+tokio.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

@@ -17,6 +17,15 @@ ids = [
   "TRC-36", "TRC-37", "TRC-38",
 ]
 
+[[implemented]]
+spec = "030"
+ids = [
+  "MLM-1", "MLM-2", "MLM-3", "MLM-5", "MLM-6", "MLM-7", "MLM-8", "MLM-10", "MLM-11",
+  "MLM-20", "MLM-21", "MLM-22", "MLM-23", "MLM-30", "MLM-31", "MLM-40", "MLM-41", "MLM-50",
+]
+# T03 (ADR-16) cites ahead of scope: MLM-4 and MLM-60, whose remaining clauses bind the
+# harness (T04), and MLM-51, a review rule (a profile name is never reused).
+
 # T02 lands as a series of PRs (ADR-11); each adds the IDs it completes. Cited ahead of
 # scope by T02a: TRC-3 and TRC-12 (value sets). T02b (ADR-13) cites ahead of scope:
 # TRC-1 (producers emit through the SDK; the harness is T04), TRC-19 (resources are

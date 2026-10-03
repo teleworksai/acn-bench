@@ -1,0 +1,84 @@
+# profiles.toml — the mock's profiles (SPEC 030 §8, MLM-50). Every parameter is
+# stated for every profile; nothing is implied at load time. The constants are
+# PLACEHOLDERS until an L3 calibration (SPEC 085) fits them to measurements. A new
+# set of constants is a new name: a profile is never renamed or reused (MLM-51).
+
+schema_version = 1
+
+[[profile]]
+name = "mock-explicit"
+placeholder = true
+doc = "explicit breakpoints: the mechanics of Anthropic's cache_control"
+cache_model = "explicit_breakpoints"
+prefix_order = ["tools", "system", "messages"]
+ttl_ns = 300_000_000_000
+min_cacheable_tokens = 1024
+increment_tokens = 128
+max_breakpoints = 4
+block_tokens = 16
+capacity_blocks = 65536
+slots = 0
+prefill_base_ns = 20_000_000
+prefill_ns_per_new_token = 50_000
+prefill_ns_per_cached_token = 5_000
+itl_ns = 20_000_000
+itl_jitter_ns = 2_000_000
+tool_calls_per_turn = 1
+output_tokens_min = 32
+output_tokens_max = 256
+fault_429_ppm = 0
+fault_500_ppm = 0
+fault_cut_ppm = 0
+retry_after_s_max = 5
+
+[[profile]]
+name = "mock-auto"
+placeholder = true
+doc = "automatic prefix caching: the mechanics of OpenAI's prompt caching"
+cache_model = "automatic_prefix"
+prefix_order = ["tools", "system", "messages"]
+ttl_ns = 300_000_000_000
+min_cacheable_tokens = 1024
+increment_tokens = 128
+max_breakpoints = 4
+block_tokens = 16
+capacity_blocks = 65536
+slots = 0
+prefill_base_ns = 20_000_000
+prefill_ns_per_new_token = 50_000
+prefill_ns_per_cached_token = 5_000
+itl_ns = 20_000_000
+itl_jitter_ns = 2_000_000
+tool_calls_per_turn = 1
+output_tokens_min = 32
+output_tokens_max = 256
+fault_429_ppm = 0
+fault_500_ppm = 0
+fault_cut_ppm = 0
+retry_after_s_max = 5
+
+[[profile]]
+name = "mock-blocks"
+placeholder = true
+doc = "block-granular prefix caching: the mechanics of vLLM and SGLang"
+cache_model = "block_granular"
+prefix_order = ["tools", "system", "messages"]
+ttl_ns = 300_000_000_000
+min_cacheable_tokens = 1024
+increment_tokens = 128
+max_breakpoints = 4
+block_tokens = 16
+capacity_blocks = 65536
+slots = 4
+prefill_base_ns = 20_000_000
+prefill_ns_per_new_token = 50_000
+prefill_ns_per_cached_token = 5_000
+itl_ns = 20_000_000
+itl_jitter_ns = 2_000_000
+tool_calls_per_turn = 1
+output_tokens_min = 32
+output_tokens_max = 256
+fault_429_ppm = 0
+fault_500_ppm = 0
+fault_cut_ppm = 0
+retry_after_s_max = 5
