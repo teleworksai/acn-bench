@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 5 · IDs: 125 · MUSTs: 119 · implemented: 50 · cited: 72
+Specs: 6 · IDs: 158 · MUSTs: 152 · implemented: 50 · cited: 72
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -93,6 +93,39 @@ Specs: 5 · IDs: 125 · MUSTs: 119 · implemented: 50 · cited: 72
 | MLM-50 | `030-mock-inference.md` | 8 | MUST | yes | `crates/acn-mockllm/tests/profiles.rs` `the_shipped_profiles_cover_the_three_models_and_are_placeholders`<br>`crates/acn-mockllm/tests/profiles.rs` `a_profile_must_state_everything_and_make_sense`<br>`crates/acn-mockllm/tests/profiles.rs` `a_mock_checks_profiles_it_is_handed_directly` |
 | MLM-51 | `030-mock-inference.md` | 8 | MUST | no | `crates/acn-mockllm/tests/profiles.rs` `the_shipped_profiles_cover_the_three_models_and_are_placeholders` |
 | MLM-60 | `030-mock-inference.md` | 9 | MUST | no | — |
+| HAR-1 | `040-harness.md` | 2 | MUST | no | — |
+| HAR-2 | `040-harness.md` | 2 | MUST | no | — |
+| HAR-3 | `040-harness.md` | 2 | MUST | no | — |
+| HAR-4 | `040-harness.md` | 2 | MUST | no | — |
+| HAR-5 | `040-harness.md` | 2 | MUST | no | — |
+| HAR-10 | `040-harness.md` | 3 | MUST | no | — |
+| HAR-11 | `040-harness.md` | 3 | MUST | no | — |
+| HAR-12 | `040-harness.md` | 3 | MUST | no | — |
+| HAR-13 | `040-harness.md` | 3 | MUST | no | — |
+| HAR-14 | `040-harness.md` | 3 | MUST | no | — |
+| HAR-15 | `040-harness.md` | 3 | MUST | no | — |
+| HAR-16 | `040-harness.md` | 3 | MUST | no | — |
+| HAR-17 | `040-harness.md` | 3 | MUST | no | — |
+| HAR-20 | `040-harness.md` | 4 | MUST | no | — |
+| HAR-21 | `040-harness.md` | 4 | MUST | no | — |
+| HAR-22 | `040-harness.md` | 4 | MUST | no | — |
+| HAR-23 | `040-harness.md` | 4 | MUST | no | — |
+| HAR-24 | `040-harness.md` | 4 | MUST | no | — |
+| HAR-25 | `040-harness.md` | 4 | MUST | no | — |
+| HAR-30 | `040-harness.md` | 5 | MUST | no | — |
+| HAR-31 | `040-harness.md` | 5 | MUST | no | — |
+| HAR-32 | `040-harness.md` | 5 | MUST | no | — |
+| HAR-33 | `040-harness.md` | 5 | MUST | no | — |
+| HAR-34 | `040-harness.md` | 5 | MUST | no | — |
+| HAR-40 | `040-harness.md` | 6 | MUST | no | — |
+| HAR-41 | `040-harness.md` | 6 | MUST | no | — |
+| HAR-42 | `040-harness.md` | 6 | MUST | no | — |
+| HAR-43 | `040-harness.md` | 6 | MUST | no | — |
+| HAR-50 | `040-harness.md` | 7 | MUST | no | — |
+| HAR-51 | `040-harness.md` | 7 | MUST | no | — |
+| HAR-52 | `040-harness.md` | 7 | MUST | no | — |
+| HAR-60 | `040-harness.md` | 8 | MUST | no | — |
+| HAR-61 | `040-harness.md` | 8 | MUST | no | — |
 | HYP-1 | `080-hypotheses.md` | 2 | MUST | no | — |
 | HYP-2 | `080-hypotheses.md` | 2 | MUST | no | — |
 | HYP-3 | `080-hypotheses.md` | 2 | MUST | no | — |
