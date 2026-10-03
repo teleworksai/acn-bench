@@ -6,6 +6,7 @@ version = 4
 name = "acn-accept"
 version = "0.1.0"
 dependencies = [
+ "acn-harness",
  "acn-trace",
  "serde_json",
  "tempfile",
@@ -19,6 +20,7 @@ version = "0.1.0"
 name = "acn-cli"
 version = "0.1.0"
 dependencies = [
+ "acn-harness",
  "acn-trace",
  "anyhow",
  "clap",
@@ -49,6 +51,26 @@ version = "0.1.0"
 [[package]]
 name = "acn-harness"
 version = "0.1.0"
+dependencies = [
+ "acn-emu",
+ "acn-mockllm",
+ "acn-trace",
+ "axum",
+ "blake3",
+ "futures-util",
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "rand_chacha 0.10.0",
+ "rand_core 0.10.1",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+ "tracing",
+]
 
 [[package]]
 name = "acn-hyp"

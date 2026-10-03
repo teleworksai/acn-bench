@@ -2,7 +2,7 @@
 
 # `acn.*` attribute inventory (TRC-20)
 
-Source: `crates/acn-trace/src/schema/acn_attributes.toml` (frozen set, CON-7). Semantic conventions pinned at **1.41.0** (TRC-2). 8 spans, 5 events, 71 attributes (67 promoted to typed columns, TRC-25), 2 run options, 5 provider mappings.
+Source: `crates/acn-trace/src/schema/acn_attributes.toml` (frozen set, CON-7). Semantic conventions pinned at **1.41.0** (TRC-2). 8 spans, 5 events, 75 attributes (67 promoted to typed columns, TRC-25), 6 run options, 5 provider mappings.
 
 An optional attribute is present when its condition holds and absent, never zero or empty, otherwise.
 
@@ -46,6 +46,10 @@ An optional attribute is present when its condition holds and absent, never zero
 | `acn.harness.knobs` | string | — | `acn.session` | always | no | — | acn-harness, acn-gen | TRC-10 | JSON string of the knob map in force (SPEC 040) |
 | `acn.stall_threshold_ms` | float | ms | `acn.session` | always | yes | — | acn-harness, acn-gen | TRC-12 | gap above which a stream stall event is emitted; the value of `opt.stall_threshold_ms` |
 | `acn.keep_content` | bool | — | `acn.session` | always | yes | — | acn-harness, acn-gen | TRC-42 | whether raw provider content is kept in the sidecar; the value of `opt.keep_content` |
+| `acn.harness.endpoint` | string | — | `acn.session` | always | no | — | acn-harness | HAR-25 | the endpoint base URL a live run calls, empty for the provider's default and in sim; the value of `opt.endpoint` |
+| `acn.harness.max_retries` | int | — | `acn.session` | always | no | — | acn-harness | HAR-24 | retries of a 429, a 5xx or a transport error before a call fails; the value of `opt.max_retries` |
+| `acn.harness.retry_base_ms` | float | ms | `acn.session` | always | no | — | acn-harness | HAR-24 | the wait before retry k is this times 2^k when the response gives no retry-after; the value of `opt.retry_base_ms` |
+| `acn.harness.request_timeout_ms` | float | ms | `acn.session` | always | no | — | acn-harness | HAR-24 | an attempt that takes longer is abandoned as client_abort; the value of `opt.request_timeout_ms` |
 | `acn.turn.index` | int | — | `acn.turn` | always | yes | — | acn-harness, acn-gen | TRC-11 | turn index within the session, from 0 |
 | `acn.turn.deadline_ms` | float | ms | `acn.turn` | when the turn has a deadline | yes | — | acn-harness, acn-gen | TRC-11 | turn deadline |
 | `acn.turn.outcome` | string | — | `acn.turn` | always | yes | `success`, `failure`, `timeout`, `aborted` | acn-harness, acn-gen | TRC-11 | decided by the workload's checker |
@@ -113,6 +117,10 @@ An option enters `params_hash` only when it differs from its default.
 |---|---|---|---|---|
 | `opt.stall_threshold_ms` | float | `250.0` | `acn.stall_threshold_ms` | gap above which `acn.stream.stall` is emitted |
 | `opt.keep_content` | bool | `false` | `acn.keep_content` | keep raw provider message content in the sidecar (TRC-42); such a run is never published |
+| `opt.endpoint` | string | `` | `acn.harness.endpoint` | the endpoint a live harness run calls (HAR-25); empty means the provider's default |
+| `opt.max_retries` | int | `3` | `acn.harness.max_retries` | retries per call (HAR-24) |
+| `opt.retry_base_ms` | float | `500.0` | `acn.harness.retry_base_ms` | base of the exponential retry wait (HAR-24) |
+| `opt.request_timeout_ms` | float | `600000.0` | `acn.harness.request_timeout_ms` | per-attempt timeout (HAR-24) |
 
 ## Provider normalisation (TRC-21)
 

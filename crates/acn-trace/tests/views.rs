@@ -901,6 +901,8 @@ fn only_the_ingester_reads_convention_attributes() {
         "acn-trace/src/ingest.rs",
         "acn-trace/src/fixture.rs",
         "acn-trace/src/schema/mod.rs",
+        // A producer: it writes the GenAI attributes of its `chat` spans (HAR-31).
+        "acn-harness/src/agent.rs",
     ];
     let mut offenders = Vec::new();
     for entry in walkdir::WalkDir::new(&crates) {

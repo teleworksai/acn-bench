@@ -15,7 +15,12 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+[features]
+# HAR-20: real-provider backends; off in CI's default tiers.
+real-api = ["acn-harness/real-api"]
+
 [dependencies]
+acn-harness = { path = "../acn-harness" }
 acn-trace = { workspace = true, features = ["io"] }
 anyhow.workspace = true
 clap.workspace = true

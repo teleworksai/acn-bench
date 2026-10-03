@@ -329,7 +329,7 @@ fn exactly_these_attributes_are_optional_and_key_placements_hold() {
             .count()
     };
     for (span, n) in [
-        ("acn.session", 13),
+        ("acn.session", 17), // TRC-10, with the four harness options of HAR-24/25
         ("acn.turn", 5),
         ("chat", 20),
         ("execute_tool", 4),

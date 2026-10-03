@@ -4,3 +4,4 @@
 hypotheses/** -text
 lab/hypotheses/** -text
 scenarios/** -text
+workloads/** -text

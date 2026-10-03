@@ -248,6 +248,50 @@ requirement = "TRC-42"
 doc = "whether raw provider content is kept in the sidecar; the value of `opt.keep_content`"
 
 [[attribute]]
+name = "acn.harness.endpoint"
+on = ["acn.session"]
+type = "string"
+unit = ""
+producers = ["acn-harness"]
+required = true
+promoted = false
+requirement = "HAR-25"
+doc = "the endpoint base URL a live run calls, empty for the provider's default and in sim; the value of `opt.endpoint`"
+
+[[attribute]]
+name = "acn.harness.max_retries"
+on = ["acn.session"]
+type = "int"
+unit = ""
+producers = ["acn-harness"]
+required = true
+promoted = false
+requirement = "HAR-24"
+doc = "retries of a 429, a 5xx or a transport error before a call fails; the value of `opt.max_retries`"
+
+[[attribute]]
+name = "acn.harness.retry_base_ms"
+on = ["acn.session"]
+type = "float"
+unit = "ms"
+producers = ["acn-harness"]
+required = true
+promoted = false
+requirement = "HAR-24"
+doc = "the wait before retry k is this times 2^k when the response gives no retry-after; the value of `opt.retry_base_ms`"
+
+[[attribute]]
+name = "acn.harness.request_timeout_ms"
+on = ["acn.session"]
+type = "float"
+unit = "ms"
+producers = ["acn-harness"]
+required = true
+promoted = false
+requirement = "HAR-24"
+doc = "an attempt that takes longer is abandoned as client_abort; the value of `opt.request_timeout_ms`"
+
+[[attribute]]
 name = "acn.turn.index"
 on = ["acn.turn"]
 type = "int"
@@ -931,6 +975,34 @@ type = "bool"
 default = "false"
 attribute = "acn.keep_content"
 doc = "keep raw provider message content in the sidecar (TRC-42); such a run is never published"
+
+[[option]]
+name = "opt.endpoint"
+type = "string"
+default = ""
+attribute = "acn.harness.endpoint"
+doc = "the endpoint a live harness run calls (HAR-25); empty means the provider's default"
+
+[[option]]
+name = "opt.max_retries"
+type = "int"
+default = "3"
+attribute = "acn.harness.max_retries"
+doc = "retries per call (HAR-24)"
+
+[[option]]
+name = "opt.retry_base_ms"
+type = "float"
+default = "500.0"
+attribute = "acn.harness.retry_base_ms"
+doc = "base of the exponential retry wait (HAR-24)"
+
+[[option]]
+name = "opt.request_timeout_ms"
+type = "float"
+default = "600000.0"
+attribute = "acn.harness.request_timeout_ms"
+doc = "per-attempt timeout (HAR-24)"
 
 # ---- provider normalisation (TRC-21). The rules are part of this frozen file:
 # ----  * A path is a dotted path into the COMPLETE response object: the non-streamed body,
