@@ -92,10 +92,11 @@ pub fn three() -> Profiles {
     ])
 }
 
-/// An [`Env`] that records every request body it is given.
+/// An [`Env`] that records every request body it is given and every exchange.
 pub struct Recording<E> {
     pub inner: E,
     pub bodies: RefCell<Vec<(i64, Vec<u8>)>>,
+    pub exchanges: RefCell<Vec<Exchange>>,
 }
 
 impl<E: Env> Env for Recording<E> {
@@ -115,13 +116,17 @@ impl<E: Env> Env for Recording<E> {
         timeout_ns: i64,
     ) -> Exchange {
         self.bodies.borrow_mut().push((self.now(), body.clone()));
-        self.inner.exchange(path, body, stream, timeout_ns).await
+        let ex = self.inner.exchange(path, body, stream, timeout_ns).await;
+        self.exchanges.borrow_mut().push(ex.clone());
+        ex
     }
 }
 
 /// What one session left behind.
 pub struct Ran {
     pub trace: Trace,
+    /// Every exchange, in order.
+    pub exchanges: Vec<Exchange>,
     /// Every request body, parsed, with the time it was sent.
     pub bodies: Vec<(i64, Value)>,
     pub cache: (usize, usize),
@@ -141,6 +146,10 @@ pub struct Spec<'a> {
     pub vary: &'a [(&'a str, &'a str)],
     pub seed: u64,
     pub opts: Opts,
+    /// The configured backend; the mock answers whatever it is (HAR-23 tests).
+    pub backend: Backend,
+    /// `bytes_scaled` instead of the mock's `tokens` method.
+    pub bytes_scaled: bool,
 }
 
 impl Default for Spec<'_> {
@@ -153,6 +162,8 @@ impl Default for Spec<'_> {
             vary: &[],
             seed: 1,
             opts: Opts::default(),
+            backend: Backend::Mockllm,
+            bytes_scaled: false,
         }
     }
 }
@@ -170,11 +181,15 @@ pub fn session(spec: Spec<'_>) -> Ran {
     let setup = Setup {
         workload,
         knobs,
-        backend: Backend::Mockllm,
+        backend: spec.backend,
         model: spec.model.to_owned(),
         opts: spec.opts,
         inv: acn_trace::schema::inventory().unwrap(),
-        counting: Counting::Tokens(Box::new(profile)),
+        counting: if spec.bytes_scaled {
+            Counting::BytesScaled
+        } else {
+            Counting::Tokens(Box::new(profile))
+        },
         session_attrs: vec![
             KeyValue::new("acn.role", "treatment"),
             KeyValue::new("acn.harness.knobs", knobs.to_json()),
@@ -185,6 +200,7 @@ pub fn session(spec: Spec<'_>) -> Ran {
     let rec = Recording {
         inner: env.clone(),
         bodies: RefCell::new(Vec::new()),
+        exchanges: RefCell::new(Vec::new()),
     };
     let collector = Collector::new();
     let digest = acn_trace::identity::Digest::of(b"test");
@@ -200,6 +216,7 @@ pub fn session(spec: Spec<'_>) -> Ran {
         tracer: &tracer,
         marker: MARKER.to_owned(),
         replicate: 0,
+        seed: spec.seed,
         streams: RefCell::new(Streams::new(spec.seed).unwrap()),
     };
     let result = env
@@ -212,8 +229,10 @@ pub fn session(spec: Spec<'_>) -> Ran {
         .iter()
         .map(|(t, b)| (*t, serde_json::from_slice(b).unwrap()))
         .collect();
+    let exchanges = rec.exchanges.borrow().clone();
     Ran {
         trace: collector.trace().unwrap(),
+        exchanges,
         bodies,
         cache: env.cache_sizes(),
         result,
@@ -347,4 +366,176 @@ pub fn plain_server() -> String {
         "/v1/models",
         get(|| async { r#"{"object":"list","data":[]}"# }),
     ))
+}
+
+/// An [`Env`] that answers from a script of canned responses, one per attempt,
+/// each taking `latency_ns`; its clock moves only when waited on.
+pub struct Scripted {
+    pub now: std::cell::Cell<i64>,
+    pub latency_ns: i64,
+    pub script: RefCell<std::collections::VecDeque<Exchange>>,
+    pub bodies: RefCell<Vec<Vec<u8>>>,
+}
+
+impl Scripted {
+    pub fn new(script: Vec<Exchange>) -> Self {
+        Self {
+            now: std::cell::Cell::new(0),
+            latency_ns: 1_000_000,
+            script: RefCell::new(script.into()),
+            bodies: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+/// A canned non-streamed 200 with `body`.
+pub fn ok(body: &Value) -> Exchange {
+    Exchange {
+        status: 200,
+        body: serde_json::to_vec(body).unwrap(),
+        ..Exchange::default()
+    }
+}
+
+impl Env for Scripted {
+    fn now(&self) -> i64 {
+        self.now.get()
+    }
+
+    async fn sleep_until(&self, t_ns: i64) {
+        self.now.set(self.now.get().max(t_ns));
+    }
+
+    async fn exchange(
+        &self,
+        _path: &'static str,
+        body: Vec<u8>,
+        _stream: bool,
+        _timeout_ns: i64,
+    ) -> Exchange {
+        self.bodies.borrow_mut().push(body);
+        let start = self.now();
+        let end = start + self.latency_ns;
+        self.now.set(end);
+        let mut ex = self
+            .script
+            .borrow_mut()
+            .pop_front()
+            .expect("the script ran out");
+        ex.start_ns = start;
+        ex.end_ns = end;
+        ex.bytes_down = ex.body.len() as u64;
+        ex
+    }
+}
+
+/// One session of a non-streaming copy of `workload` against `env` as `backend`.
+pub fn scripted(
+    env: &Scripted,
+    workload: &str,
+    task: usize,
+    backend: Backend,
+) -> (Trace, Result<(), acn_harness::HarnessError>) {
+    let workload = workload.replace("stream = true", "stream = false");
+    let setup = Setup {
+        workload: Workload::parse(workload.as_bytes()).unwrap(),
+        knobs: Knobs::default(),
+        backend,
+        model: "m".into(),
+        opts: Opts {
+            max_retries: 0,
+            ..Opts::default()
+        },
+        inv: acn_trace::schema::inventory().unwrap(),
+        counting: Counting::BytesScaled,
+        session_attrs: vec![KeyValue::new("acn.role", "treatment")],
+    };
+    let collector = Collector::new();
+    let digest = acn_trace::identity::Digest::of(b"test");
+    let provider = SdkTracerProvider::builder()
+        .with_id_generator(acn_trace::ids::SeededIdGenerator::for_replicate(1, 0).unwrap())
+        .with_resource(producer_resource("acn-harness", "0.1.0", &digest, &digest))
+        .with_simple_exporter(collector.exporter())
+        .build();
+    let tracer = provider.tracer("acn-harness");
+    let rep = Replicate {
+        setup: &setup,
+        env,
+        tracer: &tracer,
+        marker: MARKER.to_owned(),
+        replicate: 0,
+        seed: 1,
+        streams: RefCell::new(Streams::new(1).unwrap()),
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let result = rt.block_on(rep.session(task, 1));
+    provider.shutdown().unwrap();
+    (collector.trace().unwrap(), result)
+}
+
+/// A Chat Completions answer with `text`, or tool calls `(id, name)`.
+pub fn chat_reply(text: Option<&str>, calls: &[(&str, &str)]) -> Value {
+    let mut message = serde_json::json!({ "role": "assistant", "content": text });
+    if !calls.is_empty() {
+        message["tool_calls"] = calls
+            .iter()
+            .map(|(id, name)| serde_json::json!({ "id": id, "type": "function", "function": { "name": name, "arguments": "{}" } }))
+            .collect();
+    }
+    serde_json::json!({
+        "choices": [{ "index": 0, "message": message,
+            "finish_reason": if calls.is_empty() { "stop" } else { "tool_calls" } }],
+        "usage": { "prompt_tokens": 100, "completion_tokens": 5,
+            "prompt_tokens_details": { "cached_tokens": 0 } }
+    })
+}
+
+/// The smoke workload without think times, for live runs on the wall clock.
+pub fn fast_smoke() -> String {
+    smoke()
+        .replace(
+            "think_time_ns = { min = 1_000_000_000, max = 3_000_000_000 }",
+            "think_time_ns = { min = 0, max = 0 }",
+        )
+        .replace(
+            "think_time_ns = { min = 500_000_000, max = 1_500_000_000 }",
+            "think_time_ns = { min = 0, max = 0 }",
+        )
+}
+
+/// What a recording server saw: each POST's `authorization` header and body.
+pub type Seen = std::sync::Arc<std::sync::Mutex<Vec<(Option<String>, Vec<u8>)>>>;
+
+/// The mock over HTTP, recording every chat request it is sent.
+pub fn recording_mock_server(profiles: Profiles) -> (String, Seen) {
+    use axum::extract::Request;
+    use axum::middleware::Next;
+    let seen: Seen = std::sync::Arc::default();
+    let log = std::sync::Arc::clone(&seen);
+    let mock = Mock::with_profiles(profiles, 3).unwrap();
+    let router =
+        acn_mockllm::server::router(mock, std::sync::Arc::new(acn_emu::clock::SimClock::new()))
+            .layer(axum::middleware::from_fn(
+                move |req: Request, next: Next| {
+                    let log = std::sync::Arc::clone(&log);
+                    async move {
+                        if req.method() != axum::http::Method::POST {
+                            return next.run(req).await;
+                        }
+                        let (parts, body) = req.into_parts();
+                        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+                        let auth = parts
+                            .headers
+                            .get("authorization")
+                            .and_then(|v| v.to_str().ok())
+                            .map(str::to_owned);
+                        log.lock().unwrap().push((auth, bytes.to_vec()));
+                        next.run(Request::from_parts(parts, axum::body::Body::from(bytes)))
+                            .await
+                    }
+                },
+            ));
+    (serve(router), seen)
 }

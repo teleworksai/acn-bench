@@ -18,7 +18,7 @@ use opentelemetry_sdk::trace::SdkTracerProvider;
 use crate::HarnessError;
 use crate::agent::{Counting, Opts, Replicate, Setup, Streams, permutation};
 use crate::env::{Env, LiveEnv, SimEnv};
-use crate::knobs::Knobs;
+use crate::knobs::{Domain, Knobs};
 use crate::wire::Backend;
 use crate::workload::Workload;
 
@@ -72,8 +72,8 @@ struct Hyp {
     reference: HypothesisRef,
     status: HypStatus,
     seed: u64,
-    /// `[varies]` parameter name → kind, when there is a hypothesis file.
-    varies: Option<BTreeMap<String, String>>,
+    /// `[varies]` parameter name → domain, when there is a hypothesis file.
+    varies: Option<BTreeMap<String, Domain>>,
 }
 
 /// HYP-9: a frozen file's seed, and a candidate's without `[design].seed`.
@@ -110,14 +110,15 @@ fn hypothesis(arg: &HypothesisArg, start: &Path) -> Result<Hyp, HarnessError> {
         .and_then(toml::Value::as_str)
         .ok_or_else(|| bad("`[poc].id` is missing".into()))?
         .to_owned();
-    let varies = doc.get("varies").and_then(toml::Value::as_table).map(|t| {
-        t.iter()
-            .map(|(k, v)| {
-                let kind = v.get("kind").and_then(toml::Value::as_str).unwrap_or("");
-                (k.clone(), kind.to_owned())
-            })
-            .collect()
-    });
+    // TODO(T05): replace this reading with acn-hyp's typed loader (SPEC 080).
+    let varies = match doc.get("varies").and_then(toml::Value::as_table) {
+        Some(t) => Some(
+            t.iter()
+                .map(|(k, v)| Domain::parse(k, v).map(|d| (k.clone(), d)))
+                .collect::<Result<BTreeMap<_, _>, _>>()?,
+        ),
+        None => None,
+    };
     // HYP-3: frozen when it lies under `<root>/hypotheses/`; the preflight then
     // checks that `env-hash.json` records it with this hash.
     let abs = std::fs::canonicalize(path).map_err(|e| bad(e.to_string()))?;
@@ -181,6 +182,12 @@ fn endpoint(backend: Backend, opts: &Opts) -> Result<(String, String), HarnessEr
             "--endpoint carries credentials; they come from the environment (HAR-22)".into(),
         ));
     }
+    // A base URL only: a query could carry a key into the manifest (HAR-22).
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(HarnessError::Config(
+            "--endpoint is a base URL, with no query or fragment (HAR-22)".into(),
+        ));
+    }
     let host = parsed
         .host_str()
         .ok_or_else(|| HarnessError::Config("--endpoint has no host".into()))?
@@ -203,8 +210,20 @@ fn headers(backend: Backend, marker: &str) -> Result<Vec<(String, String)>, Harn
     }
 }
 
-/// Run one cell and arm into one bundle (HAR-50).
+/// Run one cell and arm into one bundle (HAR-50), on a runtime of its own. From
+/// inside a tokio runtime, await [`run_async`] instead.
 pub fn run(cfg: &RunConfig) -> Result<Written, HarnessError> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| HarnessError::Internal(format!("runtime: {e}")))?
+        .block_on(run_async(cfg))
+}
+
+/// [`run`] on the caller's runtime. The future is not `Send`: the agent's
+/// lineages share their state through `RefCell`s, so it is awaited in place (or
+/// on a `LocalSet`), never spawned onto another thread.
+pub async fn run_async(cfg: &RunConfig) -> Result<Written, HarnessError> {
     if !matches!(cfg.arm.as_str(), "treatment" | "control") {
         return Err(HarnessError::Config(format!(
             "--arm is treatment or control, not `{}`",
@@ -248,10 +267,6 @@ pub fn run(cfg: &RunConfig) -> Result<Written, HarnessError> {
     let pf = acn_trace::env::preflight(&cfg.start_dir, cfg.engine_hash, hyp.run.clone())?;
 
     let live = cfg.mode == Mode::Live;
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| HarnessError::Internal(format!("runtime: {e}")))?;
     let clock = Arc::new(acn_emu::clock::WallClock::start());
     let (url, host) = if live {
         let (u, h) = endpoint(cfg.backend, &cfg.opts)?;
@@ -262,7 +277,7 @@ pub fn run(cfg: &RunConfig) -> Result<Written, HarnessError> {
     if live {
         // HAR-23: the endpoint says what it is before the run gets an identity.
         let probe = LiveEnv::new(Arc::clone(&clock), &url, headers(cfg.backend, "-")?)?;
-        let is_mock = rt.block_on(probe.probe_is_mock())?;
+        let is_mock = probe.probe_is_mock().await?;
         if is_mock != (cfg.backend == Backend::Mockllm) {
             return Err(HarnessError::BackendMismatch(format!(
                 "configured `{}`, but the endpoint {} the mock's marker (CON-26, HAR-23)",
@@ -322,7 +337,7 @@ pub fn run(cfg: &RunConfig) -> Result<Written, HarnessError> {
         },
     )?;
     let dir = bundle.dir().to_path_buf();
-    let result = (|| {
+    let result = async {
         let run_id = Digest::from_hex(bundle.run_id())?;
         let session_attrs = session_attrs(cfg, &hyp, bundle.run_id(), &knobs, &workload.hash);
         let setup = Setup {
@@ -365,9 +380,10 @@ pub fn run(cfg: &RunConfig) -> Result<Written, HarnessError> {
                     tracer: &tracer,
                     marker,
                     replicate: i,
+                    seed: rseed,
                     streams,
                 };
-                rt.block_on(sessions(&rep, tasks, seed))?;
+                sessions(&rep, tasks, seed).await?;
             } else {
                 let mock = Mock::with_profiles(profiles.clone(), rseed)
                     .map_err(|e| HarnessError::Config(e.to_string()))?;
@@ -378,6 +394,7 @@ pub fn run(cfg: &RunConfig) -> Result<Written, HarnessError> {
                     tracer: &tracer,
                     marker,
                     replicate: i,
+                    seed: rseed,
                     streams,
                 };
                 env.drive(sessions(&rep, tasks, seed))??;
@@ -388,7 +405,8 @@ pub fn run(cfg: &RunConfig) -> Result<Written, HarnessError> {
         }
         let trace = collector.trace()?;
         Ok::<_, HarnessError>(bundle.finish(&trace)?)
-    })();
+    }
+    .await;
     if result.is_err() {
         // HAR-23 and CON-29: a run that did not finish leaves no bundle behind;
         // the directory is this run's own, created above.
@@ -402,38 +420,21 @@ pub fn run(cfg: &RunConfig) -> Result<Written, HarnessError> {
 /// where only knobs are (HAR-10).
 pub fn typed_vary(
     raw: &BTreeMap<String, String>,
-    varies: Option<&BTreeMap<String, String>>,
+    varies: Option<&BTreeMap<String, Domain>>,
 ) -> Result<BTreeMap<String, Value>, HarnessError> {
     let mut out = BTreeMap::new();
     for (name, text) in raw {
-        let kind = match varies {
-            Some(v) => v.get(name).map(String::as_str).ok_or_else(|| {
+        let domain = match varies {
+            Some(v) => v.get(name).cloned().ok_or_else(|| {
                 HarnessError::Knob(format!(
                     "`{name}` is not a [varies] parameter of the hypothesis"
                 ))
             })?,
-            None if !Knobs::is_knob(name) => {
-                return Err(HarnessError::Knob(format!(
-                    "`{name}` is not a knob (HAR-10)"
-                )));
-            }
-            None if matches!(
-                name.as_str(),
-                "timestamp_in_system_prompt" | "tool_order_stable"
-            ) =>
-            {
-                "bool"
-            }
-            None => "enum",
+            None => Knobs::domain(name)
+                .ok_or_else(|| HarnessError::Knob(format!("`{name}` is not a knob (HAR-10)")))?,
         };
-        let bad = || HarnessError::Knob(format!("`{name}` = `{text}` is not a {kind}"));
-        let v = match kind {
-            "bool" => Value::Bool(text.parse().map_err(|_| bad())?),
-            "range" => Value::Float(text.parse().map_err(|_| bad())?),
-            "int_range" => Value::Int(text.parse().map_err(|_| bad())?),
-            _ => Value::Str(text.clone()),
-        };
-        out.insert(name.clone(), v);
+        // HYP-6: a value outside the declared domain is refused before the run.
+        out.insert(name.clone(), domain.value(name, text)?);
     }
     Ok(out)
 }

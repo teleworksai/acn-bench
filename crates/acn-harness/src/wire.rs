@@ -147,18 +147,53 @@ pub struct Reply {
     pub token_times: Vec<i64>,
 }
 
+/// The most content blocks or tool calls one response may carry: a stream's
+/// `index` is the provider's, and an absurd one must not allocate without bound.
+pub const MAX_INDEX: usize = 1024;
+
+/// Why an exchange is not a complete response.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AssembleError {
+    /// The stream ended early or reported an error: a transport error, retried
+    /// (HAR-24, MLM-41).
+    #[error("cut: {0}")]
+    Cut(String),
+    /// Not a response of the dialect at all: not retried (ADR-17).
+    #[error("malformed: {0}")]
+    Malformed(String),
+}
+
+fn malformed<T>(m: impl Into<String>) -> Result<T, AssembleError> {
+    Err(AssembleError::Malformed(m.into()))
+}
+
+/// The end of the first event in `buf`: its length and the delimiter's. Events
+/// end with a blank line, `\n\n` or `\r\n\r\n`.
+fn event_end(buf: &[u8]) -> Option<(usize, usize)> {
+    let lf = buf.windows(2).position(|w| w == b"\n\n").map(|i| (i, 2));
+    let crlf = buf
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|i| (i, 4));
+    match (lf, crlf) {
+        (Some(a), Some(b)) => Some(if b.0 < a.0 { b } else { a }),
+        (a, b) => a.or(b),
+    }
+}
+
 /// Parse server-sent events from a byte buffer: each complete event's `data`
 /// payload. Returns the events and the number of bytes consumed.
 #[must_use]
 pub fn sse_events(buf: &[u8]) -> (Vec<String>, usize) {
     let mut out = Vec::new();
     let mut used = 0;
-    while let Some(end) = buf[used..].windows(2).position(|w| w == b"\n\n") {
+    while let Some((end, delim)) = event_end(&buf[used..]) {
         let event = &buf[used..used + end];
-        used += end + 2;
+        used += end + delim;
         let text = String::from_utf8_lossy(event);
         let data: Vec<&str> = text
             .lines()
+            .map(|l| l.trim_end_matches('\r'))
             .filter_map(|l| l.strip_prefix("data:"))
             .map(|d| d.strip_prefix(' ').unwrap_or(d))
             .collect();
@@ -170,13 +205,13 @@ pub fn sse_events(buf: &[u8]) -> (Vec<String>, usize) {
 }
 
 /// Assemble a complete response, or say why the exchange is not one.
-pub fn assemble(dialect: Dialect, ex: &Exchange, streamed: bool) -> Result<Reply, String> {
+pub fn assemble(dialect: Dialect, ex: &Exchange, streamed: bool) -> Result<Reply, AssembleError> {
     if !streamed {
         let raw: Value = serde_json::from_slice(&ex.body)
-            .map_err(|e| format!("the response is not JSON: {e}"))?;
+            .map_err(|e| AssembleError::Malformed(format!("the response is not JSON: {e}")))?;
         let (text, tool_calls) = match dialect {
-            Dialect::ChatCompletions => message_of_chat(&raw["choices"][0]["message"]),
-            Dialect::Messages => message_of_blocks(&raw["content"]),
+            Dialect::ChatCompletions => message_of_chat(&raw["choices"][0]["message"])?,
+            Dialect::Messages => message_of_blocks(&raw["content"])?,
         };
         return Ok(Reply {
             raw,
@@ -191,53 +226,81 @@ pub fn assemble(dialect: Dialect, ex: &Exchange, streamed: bool) -> Result<Reply
     }
 }
 
-fn message_of_chat(m: &Value) -> (Option<String>, Vec<ToolCall>) {
-    let text = m.get("content").and_then(Value::as_str).map(str::to_owned);
-    let calls = m
-        .get("tool_calls")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .map(|c| ToolCall {
-                    id: c["id"].as_str().unwrap_or_default().to_owned(),
-                    name: c["function"]["name"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                    arguments: c["function"]["arguments"]
-                        .as_str()
-                        .unwrap_or("{}")
-                        .to_owned(),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    (text, calls)
+/// A tool call needs a non-empty id and name; only missing arguments default.
+fn tool_call(
+    id: Option<&str>,
+    name: Option<&str>,
+    arguments: String,
+) -> Result<ToolCall, AssembleError> {
+    match (id.filter(|s| !s.is_empty()), name.filter(|s| !s.is_empty())) {
+        (Some(id), Some(name)) => Ok(ToolCall {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            arguments,
+        }),
+        _ => malformed("a tool call has no id or no name"),
+    }
 }
 
-fn message_of_blocks(content: &Value) -> (Option<String>, Vec<ToolCall>) {
+fn message_of_chat(m: &Value) -> Result<(Option<String>, Vec<ToolCall>), AssembleError> {
+    if !m.is_object() {
+        return malformed("the response has no `choices[0].message`");
+    }
+    let text = m.get("content").and_then(Value::as_str).map(str::to_owned);
+    let mut calls = Vec::new();
+    for c in m
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        calls.push(tool_call(
+            c["id"].as_str(),
+            c["function"]["name"].as_str(),
+            c["function"]["arguments"]
+                .as_str()
+                .unwrap_or("{}")
+                .to_owned(),
+        )?);
+    }
+    Ok((text, calls))
+}
+
+fn message_of_blocks(content: &Value) -> Result<(Option<String>, Vec<ToolCall>), AssembleError> {
+    let Some(blocks) = content.as_array() else {
+        return malformed("the response has no `content` array");
+    };
     let mut text: Option<String> = None;
     let mut calls = Vec::new();
-    for b in content.as_array().map(Vec::as_slice).unwrap_or_default() {
+    for b in blocks {
         match b["type"].as_str() {
             Some("text") => text
                 .get_or_insert_default()
                 .push_str(b["text"].as_str().unwrap_or_default()),
-            Some("tool_use") => calls.push(ToolCall {
-                id: b["id"].as_str().unwrap_or_default().to_owned(),
-                name: b["name"].as_str().unwrap_or_default().to_owned(),
-                arguments: b.get("input").map_or_else(|| "{}".into(), Value::to_string),
-            }),
+            Some("tool_use") => calls.push(tool_call(
+                b["id"].as_str(),
+                b["name"].as_str(),
+                b.get("input").map_or_else(|| "{}".into(), Value::to_string),
+            )?),
             _ => {}
         }
     }
-    (text, calls)
+    Ok((text, calls))
+}
+
+/// A provider's block or call index, bounded (MAX_INDEX).
+fn index_of(v: &Value) -> Result<usize, AssembleError> {
+    let i = v.as_u64().unwrap_or(0);
+    match usize::try_from(i) {
+        Ok(i) if i < MAX_INDEX => Ok(i),
+        _ => malformed(format!("index {i} exceeds {MAX_INDEX}")),
+    }
 }
 
 /// Chat Completions chunks, accumulated per TRC-21: deltas per choice, `usage`
 /// from the chunk that carries it. Complete only with a `finish_reason` and
 /// `[DONE]` (MLM-41: a cut stream has neither).
-fn assemble_chat_stream(ex: &Exchange) -> Result<Reply, String> {
+fn assemble_chat_stream(ex: &Exchange) -> Result<Reply, AssembleError> {
     let mut text: Option<String> = None;
     let mut calls: Vec<(String, String, String)> = Vec::new();
     let mut finish = Value::Null;
@@ -250,8 +313,8 @@ fn assemble_chat_stream(ex: &Exchange) -> Result<Reply, String> {
             done = true;
             continue;
         }
-        let v: Value =
-            serde_json::from_str(data).map_err(|e| format!("a stream chunk is not JSON: {e}"))?;
+        let v: Value = serde_json::from_str(data)
+            .map_err(|e| AssembleError::Malformed(format!("a stream chunk is not JSON: {e}")))?;
         if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
             usage = u.clone();
         }
@@ -273,7 +336,7 @@ fn assemble_chat_stream(ex: &Exchange) -> Result<Reply, String> {
             .map(Vec::as_slice)
             .unwrap_or_default()
         {
-            let i = usize::try_from(tc["index"].as_u64().unwrap_or(0)).unwrap_or(0);
+            let i = index_of(&tc["index"])?;
             while calls.len() <= i {
                 calls.push(Default::default());
             }
@@ -296,20 +359,21 @@ fn assemble_chat_stream(ex: &Exchange) -> Result<Reply, String> {
         }
     }
     if finish.is_null() || !done {
-        return Err("the stream ended before its final chunk".into());
+        return Err(AssembleError::Cut(
+            "the stream ended before its final chunk".into(),
+        ));
     }
     let tool_calls: Vec<ToolCall> = calls
         .into_iter()
-        .map(|(id, name, arguments)| ToolCall {
-            id,
-            name,
-            arguments: if arguments.is_empty() {
+        .map(|(id, name, arguments)| {
+            let arguments = if arguments.is_empty() {
                 "{}".into()
             } else {
                 arguments
-            },
+            };
+            tool_call(Some(&id), Some(&name), arguments)
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     let mut message = json!({ "role": "assistant", "content": text });
     if !tool_calls.is_empty() {
         message["tool_calls"] = tool_calls
@@ -332,7 +396,7 @@ fn assemble_chat_stream(ex: &Exchange) -> Result<Reply, String> {
 /// Anthropic Messages events assembled into a `message` object: content blocks
 /// from their deltas, `usage` merged from `message_start` and `message_delta`.
 /// Complete only with `message_stop`.
-fn assemble_messages_stream(ex: &Exchange) -> Result<Reply, String> {
+fn assemble_messages_stream(ex: &Exchange) -> Result<Reply, AssembleError> {
     let mut blocks: Vec<Value> = Vec::new();
     let mut partial_json: Vec<String> = Vec::new();
     let mut usage = serde_json::Map::new();
@@ -340,9 +404,9 @@ fn assemble_messages_stream(ex: &Exchange) -> Result<Reply, String> {
     let mut stopped = false;
     let mut times = Vec::new();
     for (at, data) in &ex.events {
-        let v: Value =
-            serde_json::from_str(data).map_err(|e| format!("a stream event is not JSON: {e}"))?;
-        let index = usize::try_from(v["index"].as_u64().unwrap_or(0)).unwrap_or(0);
+        let v: Value = serde_json::from_str(data)
+            .map_err(|e| AssembleError::Malformed(format!("a stream event is not JSON: {e}")))?;
+        let index = index_of(&v["index"])?;
         match v["type"].as_str() {
             Some("message_start") => {
                 if let Some(u) = v["message"]["usage"].as_object() {
@@ -358,7 +422,7 @@ fn assemble_messages_stream(ex: &Exchange) -> Result<Reply, String> {
             }
             Some("content_block_delta") => {
                 if index >= blocks.len() {
-                    return Err("a delta for a block that never started".into());
+                    return malformed("a delta for a block that never started");
                 }
                 let d = &v["delta"];
                 match d["type"].as_str() {
@@ -387,24 +451,33 @@ fn assemble_messages_stream(ex: &Exchange) -> Result<Reply, String> {
                 }
             }
             Some("message_stop") => stopped = true,
-            Some("error") => return Err(format!("the stream reported an error: {data}")),
+            // The provider's own words stay out of the trace (HAR-34): the type only.
+            Some("error") => {
+                return Err(AssembleError::Cut(format!(
+                    "the stream reported an error of type `{}`",
+                    v["error"]["type"].as_str().unwrap_or("unknown")
+                )));
+            }
             _ => {}
         }
     }
     if !stopped {
-        return Err("the stream ended before message_stop".into());
+        return Err(AssembleError::Cut(
+            "the stream ended before message_stop".into(),
+        ));
     }
     for (b, p) in blocks.iter_mut().zip(&partial_json) {
         if b["type"] == "tool_use" {
             b["input"] = if p.is_empty() {
                 json!({})
             } else {
-                serde_json::from_str(p).map_err(|e| format!("tool input is not JSON: {e}"))?
+                serde_json::from_str(p)
+                    .map_err(|e| AssembleError::Malformed(format!("tool input is not JSON: {e}")))?
             };
         }
     }
     let content = Value::Array(blocks);
-    let (text, tool_calls) = message_of_blocks(&content);
+    let (text, tool_calls) = message_of_blocks(&content)?;
     Ok(Reply {
         raw: json!({ "type": "message", "role": "assistant", "content": content,
             "stop_reason": stop_reason, "usage": Value::Object(usage) }),

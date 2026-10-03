@@ -19,7 +19,7 @@ use crate::HarnessError;
 use crate::context::{Context, Dialect, Msg, Sampling, ToolCall, ToolDef, common_prefix};
 use crate::env::{Env, join_all};
 use crate::knobs::{Backfill, Compaction, Fanout, Knobs};
-use crate::wire::{Backend, Exchange, Failure, Reply, assemble};
+use crate::wire::{AssembleError, Backend, Exchange, Failure, Reply, assemble};
 use crate::workload::{Range, Tool, Turn, Workload};
 
 /// The printable ASCII simulated results are made of (HAR-2).
@@ -52,6 +52,23 @@ pub fn permutation(rng: &mut ChaCha20Rng, n: usize) -> Vec<usize> {
         v.swap(i, j);
     }
     v
+}
+
+/// MLM-11's token: 4 bytes. The `window_full` estimate and the mock's counting
+/// method use it.
+pub const BYTES_PER_TOKEN: u64 = 4;
+
+/// The `acn.call.error_class` of a response the dialect cannot read (ADR-17).
+pub const MALFORMED: &str = "malformed_response";
+
+/// TRC-12's scaling: `⌊shared_bytes × tokens / bytes⌋` in integer arithmetic.
+#[must_use]
+pub fn scaled(shared_bytes: u64, tokens: u64, bytes: u64) -> u64 {
+    if bytes == 0 {
+        return 0;
+    }
+    u64::try_from(u128::from(shared_bytes) * u128::from(tokens) / u128::from(bytes))
+        .unwrap_or(tokens)
 }
 
 fn int(v: u64) -> i64 {
@@ -143,6 +160,17 @@ impl Streams {
             workload: rng("harness.workload")?,
         })
     }
+
+    /// A sub-agent's own streams, `harness.<stream>.<scope>`: its draws never
+    /// depend on when its siblings' responses arrive (ADR-17).
+    pub fn scoped(s: u64, scope: &str) -> Result<Self, HarnessError> {
+        let rng = |n: &str| acn_trace::identity::substream_rng(s, &format!("harness.{n}.{scope}"));
+        Ok(Self {
+            tools: rng("tools")?,
+            knobs: rng("knobs")?,
+            workload: rng("workload")?,
+        })
+    }
 }
 
 /// One replicate in progress: everything its lineages share.
@@ -152,8 +180,13 @@ pub struct Replicate<'a, E: Env> {
     pub tracer: &'a SdkTracer,
     pub marker: String,
     pub replicate: u32,
+    /// The replicate seed, for sub-agents' scoped streams.
+    pub seed: u64,
     pub streams: RefCell<Streams>,
 }
+
+/// Retry-after waits longer than this are cut to it (ADR-17).
+pub const MAX_RETRY_AFTER_S: u64 = 300;
 
 /// A context lineage (TRC-12): the main chain or one sub-agent.
 #[derive(Debug, Clone)]
@@ -173,6 +206,10 @@ struct Lineage {
     call_index: i64,
     /// A sub-agent's first context under `fork_from_prefix`, sent as it is (HAR-14).
     first: Option<Context>,
+    /// The task this lineage belongs to.
+    task: usize,
+    /// A sub-agent's own streams; the main lineage uses the replicate's.
+    own: Option<std::rc::Rc<RefCell<Streams>>>,
 }
 
 /// One call's result.
@@ -187,14 +224,14 @@ struct Called {
 
 /// How a turn ended (TRC-11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Outcome {
+pub enum TurnOutcome {
     Success,
     Failure,
     Timeout,
     Aborted,
 }
 
-impl Outcome {
+impl TurnOutcome {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -226,11 +263,17 @@ impl<E: Env> Replicate<'_, E> {
         s
     }
 
-    fn tool_defs(&self, names: &[String]) -> Result<Vec<ToolDef>, HarnessError> {
+    /// The streams a lineage draws from.
+    fn streams_of<'b>(&'b self, lin: &'b Lineage) -> &'b RefCell<Streams> {
+        lin.own.as_deref().unwrap_or(&self.streams)
+    }
+
+    fn tool_defs(&self, lin: &Lineage) -> Result<Vec<ToolDef>, HarnessError> {
+        let names = &lin.tools;
         let order: Vec<usize> = if self.setup.knobs.tool_order_stable {
             (0..names.len()).collect()
         } else {
-            permutation(&mut self.streams.borrow_mut().knobs, names.len())
+            permutation(&mut self.streams_of(lin).borrow_mut().knobs, names.len())
         };
         order
             .into_iter()
@@ -255,7 +298,7 @@ impl<E: Env> Replicate<'_, E> {
     fn context(&self, lin: &Lineage) -> Result<Context, HarnessError> {
         Ok(Context {
             system: self.system(&lin.system_base, lin.turn_start),
-            tools: self.tool_defs(&lin.tools)?,
+            tools: self.tool_defs(lin)?,
             messages: lin.messages.clone(),
         })
     }
@@ -279,30 +322,26 @@ impl<E: Env> Replicate<'_, E> {
         }
     }
 
-    /// Tokens of `this` already in `prev` (TRC-12): the common prefix in whole
-    /// tokens, or scaled from bytes by `input_tokens / request_bytes`.
-    fn shared_tokens(&self, prev: &[u8], this: &[u8], input_tokens: u64) -> u64 {
-        let lcp = common_prefix(prev, this) as u64;
+    /// Tokens of a common prefix of `a` and `b` (TRC-12): whole tokens, or the
+    /// shared bytes scaled by `tokens / bytes` of the one request whose token
+    /// count is known, `basis`.
+    fn shared_tokens(&self, a: &[u8], b: &[u8], basis: (u64, usize)) -> u64 {
+        let lcp = common_prefix(a, b) as u64;
         match self.setup.counting {
-            Counting::Tokens(_) => lcp / 4,
-            Counting::BytesScaled => {
-                let req = this.len() as u64;
-                if req == 0 {
-                    0
-                } else {
-                    u64::try_from(u128::from(lcp) * u128::from(input_tokens) / u128::from(req))
-                        .unwrap_or(input_tokens)
-                }
-            }
+            Counting::Tokens(_) => lcp / BYTES_PER_TOKEN,
+            Counting::BytesScaled => scaled(lcp, basis.0, basis.1 as u64),
         }
     }
 
-    /// Make one call with its retries (HAR-24) and record its `chat` span.
+    /// Make one call with its retries (HAR-24) and record its `chat` span. An
+    /// attempt is abandoned at `opt.request_timeout_ms` or at the turn's
+    /// deadline, whichever comes first.
     async fn call(
         &self,
         lin: &mut Lineage,
         ctx: Context,
         max_tokens: u64,
+        deadline: Option<i64>,
         parent: &Cx,
     ) -> Result<Called, HarnessError> {
         let s = self.setup;
@@ -319,10 +358,17 @@ impl<E: Env> Replicate<'_, E> {
         let index = lin.call_index;
         lin.call_index += 1;
         let start = self.env.now();
-        let timeout_ns = int(s.opts.request_timeout_ms.saturating_mul(1_000_000));
+        let request_timeout = int(s.opts.request_timeout_ms.saturating_mul(1_000_000));
         let (mut up, mut down, mut retries) = (0u64, 0u64, 0u64);
         let mut last: Exchange;
-        let (reply, stop, error) = loop {
+        let (mut reply, mut stop, mut error) = loop {
+            let now = self.env.now();
+            let (timeout_ns, by_deadline) = match deadline {
+                Some(d) if d.saturating_sub(now) < request_timeout => {
+                    (d.saturating_sub(now).max(0), true)
+                }
+                _ => (request_timeout, false),
+            };
             last = self
                 .env
                 .exchange(s.backend.path(), body.clone(), sampling.stream, timeout_ns)
@@ -335,15 +381,28 @@ impl<E: Env> Replicate<'_, E> {
                     s.backend.as_str()
                 )));
             }
-            let retryable = match &last.failure {
+            // `acn.call.error_class` is one of a few fixed classes; the detail
+            // goes to the log (HAR-34: no provider text in the trace).
+            let retryable: String = match &last.failure {
                 Some(Failure::Timeout) => {
-                    break (None, Some("client_abort"), Some("timeout".into()));
+                    let class = if by_deadline { "deadline" } else { "timeout" };
+                    break (None, Some("client_abort"), Some(class.to_owned()));
                 }
-                Some(Failure::Transport(e)) => format!("transport: {e}"),
+                Some(Failure::Transport(e)) => {
+                    tracing::warn!(call = index, "transport error: {e}");
+                    "transport".into()
+                }
                 None if last.status == 200 => {
                     match assemble(s.backend.dialect(), &last, sampling.stream) {
                         Ok(r) => break (Some(r), None, None),
-                        Err(e) => format!("transport: {e}"),
+                        Err(AssembleError::Cut(e)) => {
+                            tracing::warn!(call = index, "{e}");
+                            "transport".into()
+                        }
+                        Err(AssembleError::Malformed(e)) => {
+                            tracing::warn!(call = index, "malformed response: {e}");
+                            break (None, Some("other"), Some(MALFORMED.into()));
+                        }
                     }
                 }
                 None if last.status == 429 || last.status >= 500 => format!("http_{}", last.status),
@@ -356,7 +415,7 @@ impl<E: Env> Replicate<'_, E> {
                 .header("retry-after")
                 .and_then(|v| v.trim().parse::<u64>().ok())
             {
-                Some(secs) => secs.saturating_mul(1_000_000_000),
+                Some(secs) => secs.min(MAX_RETRY_AFTER_S).saturating_mul(1_000_000_000),
                 None => s
                     .opts
                     .retry_base_ms
@@ -369,11 +428,17 @@ impl<E: Env> Replicate<'_, E> {
         };
         let end = self.env.now().max(last.end_ns);
 
+        // A response the frozen mapping cannot read is a malformed response
+        // of this call, not the end of the run (ADR-17).
         let norm: Option<Normalised> = match &reply {
-            Some(r) => Some(
-                normalise::response(&s.inv, s.backend.as_str(), &r.raw)
-                    .map_err(|e| HarnessError::Backend(format!("usage: {e}")))?,
-            ),
+            Some(r) => match normalise::response(&s.inv, s.backend.as_str(), &r.raw) {
+                Ok(n) => Some(n),
+                Err(e) => {
+                    tracing::warn!(call = index, "usage: {e}");
+                    (reply, stop, error) = (None, Some("other"), Some(MALFORMED.into()));
+                    None
+                }
+            },
             None => None,
         };
         let input_tokens = norm.as_ref().and_then(|n| n.input_tokens);
@@ -397,7 +462,7 @@ impl<E: Env> Replicate<'_, E> {
                 let shared = lin
                     .prev
                     .as_deref()
-                    .map_or(0, |p| self.shared_tokens(p, &compared, v));
+                    .map_or(0, |p| self.shared_tokens(p, &compared, (v, compared.len())));
                 attrs.push(KeyValue::new(
                     "acn.call.new_input_tokens",
                     int(v.saturating_sub(shared.min(v))),
@@ -499,10 +564,11 @@ impl<E: Env> Replicate<'_, E> {
     async fn run_tool(
         &self,
         call: &ToolCall,
-        available: &[String],
+        lin: &Lineage,
         requesting: i64,
         parent: &Cx,
     ) -> Result<String, HarnessError> {
+        let available = &lin.tools;
         let start = self.env.now();
         let tool = self
             .setup
@@ -513,7 +579,7 @@ impl<E: Env> Replicate<'_, E> {
             Some(t) => {
                 // Length, then duration, then the bytes: one fixed order (HAR-2).
                 let (dur, content) = {
-                    let mut st = self.streams.borrow_mut();
+                    let mut st = self.streams_of(lin).borrow_mut();
                     let r = t.result_bytes.unwrap_or(Range { min: 0, max: 0 });
                     let d = t.duration_ns.unwrap_or(Range { min: 0, max: 0 });
                     let len = draw(&mut st.tools, r);
@@ -570,6 +636,8 @@ impl<E: Env> Replicate<'_, E> {
             last_uncached: None,
             call_index: 0,
             first: None,
+            task: task_index,
+            own: None,
         };
         let mut ordinals: Vec<String> = Vec::new();
         for (k, turn) in task.turns.iter().enumerate() {
@@ -655,10 +723,10 @@ impl<E: Env> Replicate<'_, E> {
         let mut turn_first = turn_first;
         let outcome = loop {
             if calls >= s.workload.agent.max_calls_per_turn {
-                break Outcome::Aborted;
+                break TurnOutcome::Aborted;
             }
             if deadline.is_some_and(|d| self.env.now() >= d) {
-                break Outcome::Timeout;
+                break TurnOutcome::Timeout;
             }
             // HAR-4, HAR-15: compaction before the call, at most once per call.
             let ctx = self.context(lin)?;
@@ -668,10 +736,16 @@ impl<E: Env> Replicate<'_, E> {
                     text: s.workload.agent.summary_instruction.clone(),
                 });
                 let c = self
-                    .call(lin, cctx, s.workload.agent.summary_max_tokens, &cx)
+                    .call(
+                        lin,
+                        cctx,
+                        s.workload.agent.summary_max_tokens,
+                        deadline,
+                        &cx,
+                    )
                     .await?;
                 let Some(r) = c.reply else {
-                    break Outcome::Aborted;
+                    break TurnOutcome::Aborted;
                 };
                 let summary = if r.tool_calls.is_empty() {
                     r.text.unwrap_or_default()
@@ -689,24 +763,34 @@ impl<E: Env> Replicate<'_, E> {
             }
             let ctx = self.context(lin)?;
             let c = self
-                .call(lin, ctx, s.workload.agent.max_tokens, &cx)
+                .call(lin, ctx, s.workload.agent.max_tokens, deadline, &cx)
                 .await?;
             calls += 1;
+            // HAR-1: an answer that arrives after the deadline is a timeout.
+            if deadline.is_some_and(|d| self.env.now() >= d) {
+                if let Some(r) = &c.reply {
+                    lin.messages.push(assistant(r));
+                }
+                break TurnOutcome::Timeout;
+            }
             let Some(reply) = c.reply.clone() else {
-                break Outcome::Aborted;
+                break TurnOutcome::Aborted;
             };
             lin.messages.push(assistant(&reply));
             if reply.tool_calls.is_empty() {
                 useful = reply.token_times.first().map(|t| t - start);
                 let ok = turn.expect_tools.iter().all(|t| called.contains(t));
                 break if ok {
-                    Outcome::Success
+                    TurnOutcome::Success
                 } else {
-                    Outcome::Failure
+                    TurnOutcome::Failure
                 };
             }
             for tc in &reply.tool_calls {
-                called.insert(tc.name.clone());
+                // The checker counts only tools the lineage has (HAR-3).
+                if lin.tools.contains(&tc.name) {
+                    called.insert(tc.name.clone());
+                }
                 let spawn = self
                     .setup
                     .workload
@@ -714,7 +798,7 @@ impl<E: Env> Replicate<'_, E> {
                     .filter(|t| t.is_subagent() && lin.tools.contains(&t.name));
                 let content = match spawn {
                     Some(t) => self.fan_out(t, tc, &c, k, lin, &cx).await?,
-                    None => self.run_tool(tc, &lin.tools, c.index, &cx).await?,
+                    None => self.run_tool(tc, lin, c.index, &cx).await?,
                 };
                 let ordinal = ordinals.len() as u64;
                 ordinals.push(tc.name.clone());
@@ -726,7 +810,7 @@ impl<E: Env> Replicate<'_, E> {
                 });
             }
             if deadline.is_some_and(|d| self.env.now() >= d) {
-                break Outcome::Timeout;
+                break TurnOutcome::Timeout;
             }
         };
         let span = cx.span();
@@ -740,7 +824,7 @@ impl<E: Env> Replicate<'_, E> {
             #[allow(clippy::cast_precision_loss)]
             span.set_attribute(KeyValue::new("acn.turn.deadline_ms", d as f64));
         }
-        if outcome == Outcome::Success
+        if outcome == TurnOutcome::Success
             && let Some(u) = useful
         {
             span.set_attribute(KeyValue::new("acn.turn.first_useful_result_ms", ms(u)));
@@ -754,7 +838,8 @@ impl<E: Env> Replicate<'_, E> {
         let a = &self.setup.workload.agent;
         match self.setup.knobs.compaction_trigger {
             Compaction::WindowFull => {
-                (ctx.canonical_bytes().len() as u64).div_ceil(4) >= a.compact_at_tokens
+                (ctx.canonical_bytes().len() as u64).div_ceil(BYTES_PER_TOKEN)
+                    >= a.compact_at_tokens
             }
             Compaction::ReadCostThreshold => lin
                 .last_uncached
@@ -795,6 +880,11 @@ impl<E: Env> Replicate<'_, E> {
         let tool_cx = turn_cx.with_span(tool_span);
         let mut children = Vec::new();
         for i in 0..width {
+            // Each child draws from its own streams (ADR-17).
+            let scope = format!("{}.{turn_index}.{}.{i}", parent.task, spawning.index);
+            let own = Some(std::rc::Rc::new(RefCell::new(Streams::scoped(
+                self.seed, &scope,
+            )?)));
             let instruction = format!("{}\n(child {} of {width})", child.instruction, i + 1);
             let mut lin = match self.setup.knobs.fanout_prompting {
                 Fanout::ForkFromPrefix => {
@@ -811,6 +901,8 @@ impl<E: Env> Replicate<'_, E> {
                         last_uncached: None,
                         call_index: 0,
                         first: Some(first),
+                        task: parent.task,
+                        own,
                     }
                 }
                 Fanout::PerChild => Lineage {
@@ -822,6 +914,8 @@ impl<E: Env> Replicate<'_, E> {
                     last_uncached: None,
                     call_index: 0,
                     first: None,
+                    task: parent.task,
+                    own,
                 },
             };
             // TRC-12: a sub-agent's first call is compared with the spawning context.
@@ -830,13 +924,17 @@ impl<E: Env> Replicate<'_, E> {
                 Some(f) => f,
                 None => self.context(&lin)?,
             };
-            let shared = self.shared_tokens(
-                &spawning.compared,
-                &self.compared(&first_ctx)?,
-                spawning
-                    .input_tokens
-                    .unwrap_or((spawning.compared.len() as u64).div_ceil(4)),
-            );
+            // Scaled by the spawning request's own tokens per byte; with no
+            // count from it, whole MLM-11 tokens (ADR-17).
+            let child_bytes = self.compared(&first_ctx)?;
+            let shared = match spawning.input_tokens {
+                Some(t) => self.shared_tokens(
+                    &spawning.compared,
+                    &child_bytes,
+                    (t, spawning.compared.len()),
+                ),
+                None => common_prefix(&spawning.compared, &child_bytes) as u64 / BYTES_PER_TOKEN,
+            };
             let span = self
                 .tracer
                 .span_builder("invoke_agent")
@@ -887,7 +985,13 @@ impl<E: Env> Replicate<'_, E> {
         let mut answer = String::new();
         for _ in 0..max_calls {
             let c = self
-                .call(&mut lin, ctx, self.setup.workload.agent.max_tokens, &cx)
+                .call(
+                    &mut lin,
+                    ctx,
+                    self.setup.workload.agent.max_tokens,
+                    None,
+                    &cx,
+                )
                 .await?;
             let Some(reply) = c.reply else {
                 break;
@@ -898,7 +1002,7 @@ impl<E: Env> Replicate<'_, E> {
                 break;
             }
             for tc in &reply.tool_calls {
-                let content = self.run_tool(tc, &lin.tools, c.index, &cx).await?;
+                let content = self.run_tool(tc, &lin, c.index, &cx).await?;
                 lin.messages.push(Msg::ToolResult {
                     call_id: tc.id.clone(),
                     tool: tc.name.clone(),

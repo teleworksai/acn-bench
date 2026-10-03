@@ -58,6 +58,93 @@ pub struct Knobs {
     pub cache_breakpoint_placement: Placement,
 }
 
+/// The domain of a varied parameter (HYP-6).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Domain {
+    Bool,
+    Enum(Vec<String>),
+    Range { min: f64, max: f64 },
+    IntRange { min: i64, max: i64 },
+}
+
+impl Domain {
+    /// A `[varies]` entry of a hypothesis file. An unknown or missing `kind`,
+    /// or a bound or value list of the wrong type, is an error, never a string.
+    pub fn parse(name: &str, v: &toml::Value) -> Result<Self, HarnessError> {
+        let bad = |m: &str| HarnessError::Config(format!("[varies].{name}: {m}"));
+        let kind = v.get("kind").and_then(toml::Value::as_str);
+        let float = |k: &str| {
+            v.get(k)
+                .and_then(|x| x.as_float().or_else(|| x.as_integer().map(|i| i as f64)))
+                .ok_or_else(|| bad(&format!("`{k}` is not a number")))
+        };
+        let integer = |k: &str| {
+            v.get(k)
+                .and_then(toml::Value::as_integer)
+                .ok_or_else(|| bad(&format!("`{k}` is not an integer")))
+        };
+        match kind {
+            Some("bool") => Ok(Self::Bool),
+            Some("enum") => {
+                let values = v
+                    .get("values")
+                    .and_then(toml::Value::as_array)
+                    .ok_or_else(|| bad("`values` is missing"))?;
+                values
+                    .iter()
+                    .map(|x| {
+                        x.as_str()
+                            .map(str::to_owned)
+                            .ok_or_else(|| bad("a value is not a string"))
+                    })
+                    .collect::<Result<_, _>>()
+                    .map(Self::Enum)
+            }
+            Some("range") => Ok(Self::Range {
+                min: float("min")?,
+                max: float("max")?,
+            }),
+            Some("int_range") => Ok(Self::IntRange {
+                min: integer("min")?,
+                max: integer("max")?,
+            }),
+            Some(k) => Err(bad(&format!(
+                "kind `{k}` is not bool, enum, range or int_range"
+            ))),
+            None => Err(bad("`kind` is missing")),
+        }
+    }
+
+    /// `text` as a value of this domain (CON-27(c): a range value is a float),
+    /// or an error if it lies outside it.
+    pub fn value(&self, name: &str, text: &str) -> Result<Value, HarnessError> {
+        let bad = || {
+            HarnessError::Knob(format!(
+                "`{name}` = `{text}` is outside its domain {self:?}"
+            ))
+        };
+        Ok(match self {
+            Self::Bool => Value::Bool(text.parse().map_err(|_| bad())?),
+            Self::Enum(values) if values.iter().any(|v| v == text) => Value::Str(text.to_owned()),
+            Self::Enum(_) => return Err(bad()),
+            Self::Range { min, max } => {
+                let f: f64 = text.parse().map_err(|_| bad())?;
+                if !(f.is_finite() && *min <= f && f <= *max) {
+                    return Err(bad());
+                }
+                Value::Float(f)
+            }
+            Self::IntRange { min, max } => {
+                let i: i64 = text.parse().map_err(|_| bad())?;
+                if !(*min <= i && i <= *max) {
+                    return Err(bad());
+                }
+                Value::Int(i)
+            }
+        })
+    }
+}
+
 /// The knob names, sorted.
 pub const NAMES: &[&str] = &[
     "backfill_mode",
@@ -111,6 +198,22 @@ impl Knobs {
     #[must_use]
     pub fn is_knob(name: &str) -> bool {
         NAMES.contains(&name)
+    }
+
+    /// A knob's domain (HAR-10), or `None` for a name that is not a knob.
+    #[must_use]
+    pub fn domain(name: &str) -> Option<Domain> {
+        let e = |v: &[&str]| Some(Domain::Enum(v.iter().map(|s| (*s).to_owned()).collect()));
+        match name {
+            "timestamp_in_system_prompt" | "tool_order_stable" => Some(Domain::Bool),
+            "backfill_mode" => e(&["tail_restate", "mid_prefix"]),
+            "fanout_prompting" => e(&["fork_from_prefix", "per_child"]),
+            "compaction_trigger" => e(&["window_full", "read_cost_threshold"]),
+            "cache_breakpoint_placement" => {
+                e(&["none", "system_only", "system_and_tools", "rolling_tail"])
+            }
+            _ => None,
+        }
     }
 
     /// The knob map of a run: each knob from its `vary.<knob>` value when given,

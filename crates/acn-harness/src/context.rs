@@ -139,7 +139,14 @@ impl Context {
             messages.push(match m {
                 Msg::User { text } => json!({ "role": "user", "content": text }),
                 Msg::Assistant { text, tool_calls } => {
-                    let mut a = json!({ "role": "assistant", "content": text });
+                    // `null` content only beside tool calls: providers refuse an
+                    // assistant message with neither (ADR-17).
+                    let content = match text {
+                        Some(t) => json!(t),
+                        None if tool_calls.is_empty() => json!(""),
+                        None => Value::Null,
+                    };
+                    let mut a = json!({ "role": "assistant", "content": content });
                     if !tool_calls.is_empty() {
                         a["tool_calls"] = tool_calls
                             .iter()
@@ -209,8 +216,10 @@ impl Context {
                             serde_json::from_str(&c.arguments).unwrap_or_else(|_| json!({}));
                         b.push(json!({ "type": "tool_use", "id": c.id, "name": c.name, "input": input }));
                     }
+                    // An empty reply sends nothing: the Messages API refuses
+                    // empty text blocks, and the user turns around it merge.
                     if b.is_empty() {
-                        b.push(json!({ "type": "text", "text": "" }));
+                        continue;
                     }
                     ("assistant", b)
                 }

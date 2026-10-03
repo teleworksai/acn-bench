@@ -246,3 +246,157 @@ fn no_message_content_reaches_a_span_or_an_event() {
         }
     }
 }
+
+fn manifest(dir: &std::path::Path) -> Value {
+    serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap()
+}
+
+/// Cites: HAR-51, CON-29
+#[test]
+fn every_varied_knob_and_the_workload_enter_the_run_identity() {
+    let base = run_fixture(&common::smoke(), "auto");
+    let wa = acn_harness::run::run(&base.cfg).unwrap();
+    let ma = manifest(&wa.dir);
+    let smoke_hash = acn_harness::workload::Workload::parse(common::smoke().as_bytes())
+        .unwrap()
+        .hash
+        .to_hex();
+    assert_eq!(ma["workload_hash"], smoke_hash);
+    assert_eq!(ma["params"]["hyp_status"], "candidate");
+    assert_eq!(ma["params"]["arms"], "treatment");
+    assert_eq!(ma["params"]["backend"], "mockllm");
+    assert_eq!(ma["params"]["model"], "auto");
+    // One knob more: its value is a parameter, and the identity moves.
+    let mut knob = run_fixture(&common::smoke(), "auto");
+    knob.cfg
+        .vary
+        .insert("tool_order_stable".into(), "false".into());
+    let wb = acn_harness::run::run(&knob.cfg).unwrap();
+    assert_eq!(
+        manifest(&wb.dir)["params"]["vary.tool_order_stable"],
+        "false"
+    );
+    assert_ne!(wa.run_id, wb.run_id);
+    // One byte more in the workload: another hash, another identity.
+    let edited = run_fixture(&format!("{}# edited\n", common::smoke()), "auto");
+    let wc = acn_harness::run::run(&edited.cfg).unwrap();
+    assert_ne!(manifest(&wc.dir)["workload_hash"], smoke_hash);
+    assert_ne!(wa.run_id, wc.run_id);
+    // The arm too.
+    let mut control = run_fixture(&common::smoke(), "auto");
+    control.cfg.arm = "control".into();
+    assert_ne!(
+        acn_harness::run::run(&control.cfg).unwrap().run_id,
+        wa.run_id
+    );
+}
+
+const CANDIDATE: &str = r#"[poc]
+id = "zz"
+title = "a test hypothesis"
+
+[hypothesis]
+statement = "s"
+
+[varies]
+tool_order_stable = { kind = "bool" }
+provider = { kind = "enum", values = ["anthropic", "openai"] }
+ratio = { kind = "range", min = 0, max = 10 }
+"#;
+
+/// Cites: HAR-50, HAR-10, HYP-9, HYP-6
+#[test]
+fn a_hypothesis_file_names_the_run_types_its_parameters_and_seeds_it() {
+    use acn_harness::run::HypothesisArg;
+    let run_with = |text: &str, vary: &[(&str, &str)]| {
+        let mut f = run_fixture(&common::smoke(), "auto");
+        let path = f.dir.path().join("zz.toml");
+        std::fs::write(&path, text).unwrap();
+        f.cfg.hypothesis = HypothesisArg::File(path);
+        for (k, v) in vary {
+            f.cfg.vary.insert((*k).into(), (*v).into());
+        }
+        (acn_harness::run::run(&f.cfg), f)
+    };
+    let with_seed = format!("{CANDIDATE}\n[design]\nseed = 1234\n");
+    let (w, _f) = run_with(
+        &with_seed,
+        &[
+            ("tool_order_stable", "false"),
+            ("provider", "openai"),
+            ("ratio", "5"),
+        ],
+    );
+    let w = w.unwrap();
+    let m = manifest(&w.dir);
+    assert_eq!(m["hypothesis"]["id"], "zz");
+    assert_eq!(m["hypothesis"]["status"], "candidate");
+    assert_eq!(
+        m["hypothesis"]["hash"],
+        acn_trace::identity::Digest::of(with_seed.as_bytes()).to_hex()
+    );
+    assert_eq!(m["seed"], "1234", "a candidate's [design].seed");
+    assert_eq!(
+        m["params"]["vary.ratio"], "5.0",
+        "a range is a float (CON-27(c))"
+    );
+    assert_eq!(m["params"]["vary.provider"], "openai");
+    let session = common::read(&w.dir)
+        .spans
+        .into_iter()
+        .find(|s| s.name == "acn.session")
+        .unwrap();
+    assert_eq!(text(&session, "acn.hypothesis.id"), Some("zz"));
+    // Without a seed the seed is derived from the file (HYP-9).
+    let (w, _f) = run_with(CANDIDATE, &[]);
+    let hash = acn_trace::identity::Digest::of(CANDIDATE.as_bytes());
+    let derived = acn_trace::identity::derived_seed(
+        &acn_trace::identity::Preimage::new("acn-bench/hypothesis_seed/v1")
+            .unwrap()
+            .digest(&hash)
+            .finish(),
+    );
+    assert_eq!(manifest(&w.unwrap().dir)["seed"], derived.to_string());
+    // Only [varies] parameters, and only values in their domains.
+    for (vary, needle) in [
+        (
+            ("backfill_mode", "tail_restate"),
+            "not a [varies] parameter",
+        ),
+        (("provider", "opneai"), "outside its domain"),
+        (("ratio", "11"), "outside its domain"),
+    ] {
+        let (r, f) = run_with(CANDIDATE, &[vary]);
+        let err = r.unwrap_err().to_string();
+        assert!(err.contains(needle), "{vary:?}: {err}");
+        assert!(
+            !f.cfg.runs_dir.exists(),
+            "refused before anything is written"
+        );
+    }
+    // A misspelt kind is refused, never read as a string.
+    let (r, _f) = run_with(
+        &CANDIDATE.replace("kind = \"range\"", "kind = \"ranged\""),
+        &[],
+    );
+    assert!(r.unwrap_err().to_string().contains("kind `ranged`"));
+}
+
+/// Cites: HAR-50, HYP-9, HYP-3
+#[test]
+fn a_frozen_file_may_not_choose_its_seed() {
+    use acn_harness::run::HypothesisArg;
+    let mut f = run_fixture(&common::smoke(), "auto");
+    let root = f.dir.path().join("kit");
+    std::fs::create_dir_all(root.join("hypotheses")).unwrap();
+    std::fs::write(root.join("env-hash.json"), "{}").unwrap();
+    let path = root.join("hypotheses/zz.toml");
+    std::fs::write(&path, format!("{CANDIDATE}\n[design]\nseed = 1234\n")).unwrap();
+    f.cfg.start_dir = root;
+    f.cfg.hypothesis = HypothesisArg::File(path);
+    let err = acn_harness::run::run(&f.cfg).unwrap_err().to_string();
+    assert!(
+        err.contains("frozen file carries no `[design].seed`"),
+        "{err}"
+    );
+}

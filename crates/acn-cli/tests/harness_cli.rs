@@ -79,3 +79,75 @@ fn harness_run_writes_one_bundle_and_prints_its_identity() {
     assert_eq!(code, Some(1));
     assert!(bad["error"].as_str().unwrap().contains("not a knob"));
 }
+
+/// The mock over HTTP on a virtual clock, from a thread of its own.
+fn mock_server() -> String {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            tx.send(listener.local_addr().unwrap()).unwrap();
+            acn_mockllm::server::serve(
+                listener,
+                acn_mockllm::Mock::new(1).unwrap(),
+                std::sync::Arc::new(acn_emu::clock::SimClock::new()),
+            )
+            .await
+            .unwrap();
+        });
+    });
+    format!("http://{}", rx.recv().unwrap())
+}
+
+/// Cites: HAR-25, HAR-22, CON-29
+#[test]
+fn proxy_variables_change_nothing_about_a_live_run() {
+    let runs = tempfile::tempdir().unwrap();
+    let workload = runs.path().join("w.toml");
+    let fast = std::fs::read_to_string(SMOKE)
+        .unwrap()
+        .replace(
+            "think_time_ns = { min = 1_000_000_000, max = 3_000_000_000 }",
+            "think_time_ns = { min = 0, max = 0 }",
+        )
+        .replace(
+            "think_time_ns = { min = 500_000_000, max = 1_500_000_000 }",
+            "think_time_ns = { min = 0, max = 0 }",
+        );
+    std::fs::write(&workload, fast).unwrap();
+    let endpoint = mock_server();
+    // A proxy that would refuse every connection: a run that honoured it fails.
+    let out = Command::new(env!("CARGO_BIN_EXE_acn"))
+        .args([
+            "harness",
+            "run",
+            "--workload",
+            workload.to_str().unwrap(),
+            "--backend",
+            "mockllm",
+            "--model",
+            "mock-auto",
+            "--mode",
+            "live",
+            "--seed",
+            "5",
+            "--endpoint",
+            &endpoint,
+            "--runs-dir",
+            runs.path().to_str().unwrap(),
+        ])
+        .env("HTTP_PROXY", "http://127.0.0.1:9")
+        .env("HTTPS_PROXY", "http://127.0.0.1:9")
+        .env("ALL_PROXY", "http://127.0.0.1:9")
+        .env("http_proxy", "http://127.0.0.1:9")
+        .env("all_proxy", "http://127.0.0.1:9")
+        .output()
+        .unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(String::from_utf8(out.stdout).unwrap().trim()).unwrap();
+    assert_eq!(json["ok"], true, "{json}");
+}

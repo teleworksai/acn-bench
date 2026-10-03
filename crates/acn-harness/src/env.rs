@@ -297,7 +297,11 @@ impl LiveEnv {
         endpoint: &str,
         headers: Vec<(String, String)>,
     ) -> Result<Self, HarnessError> {
+        // No proxy from the environment: `HTTP_PROXY` and friends would change
+        // what a run receives without changing its identity, and would receive
+        // its credentials (CON-29, HAR-22, HAR-25).
         let client = reqwest::Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| HarnessError::Config(format!("http client: {e}")))?;
@@ -325,7 +329,7 @@ impl LiveEnv {
             .request(reqwest::Method::GET, "/v1/models")
             .send()
             .await
-            .map_err(|e| HarnessError::Backend(format!("GET /v1/models: {}", e.without_url())))?;
+            .map_err(|e| HarnessError::Backend(format!("GET /v1/models: {}", cause(e))))?;
         Ok(resp.headers().contains_key(crate::wire::MOCK_HEADER))
     }
 
@@ -351,7 +355,7 @@ impl LiveEnv {
             Ok(r) => r,
             Err(e) => {
                 ex.end_ns = self.clock.now_ns();
-                ex.failure = Some(Failure::Transport(e.without_url().to_string()));
+                ex.failure = Some(Failure::Transport(cause(e)));
                 return ex;
             }
         };
@@ -379,7 +383,7 @@ impl LiveEnv {
                         ex.events.extend(events.into_iter().map(|d| (at, d)));
                     }
                     Err(e) => {
-                        ex.failure = Some(Failure::Transport(e.without_url().to_string()));
+                        ex.failure = Some(Failure::Transport(cause(e)));
                         break;
                     }
                 }
@@ -390,12 +394,26 @@ impl LiveEnv {
                     ex.bytes_down = u64::try_from(b.len()).unwrap_or(u64::MAX);
                     ex.body = b.to_vec();
                 }
-                Err(e) => ex.failure = Some(Failure::Transport(e.without_url().to_string())),
+                Err(e) => ex.failure = Some(Failure::Transport(cause(e))),
             }
         }
         ex.end_ns = self.clock.now_ns();
         ex
     }
+}
+
+/// A transport error with its causes (connection refused, DNS, TLS), without
+/// the URL: reqwest's own text stops at "error sending request".
+fn cause(e: reqwest::Error) -> String {
+    let e = e.without_url();
+    let mut text = e.to_string();
+    let mut source = std::error::Error::source(&e);
+    while let Some(s) = source {
+        text.push_str(": ");
+        text.push_str(&s.to_string());
+        source = s.source();
+    }
+    text
 }
 
 impl Env for LiveEnv {

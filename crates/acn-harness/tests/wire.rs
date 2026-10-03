@@ -10,7 +10,7 @@ use acn_harness::HarnessError;
 use acn_harness::agent::Opts;
 use acn_harness::context::{Context, Dialect, Msg, Sampling, ToolCall, ToolDef};
 use acn_harness::knobs::Placement;
-use acn_harness::wire::{Backend, Exchange};
+use acn_harness::wire::{Backend, Exchange, assemble};
 use acn_trace::identity::Mode;
 use common::{Spec, children, int, profile, profiles, run_fixture, session, spans, text};
 use serde_json::json;
@@ -227,18 +227,25 @@ fn retry_opts() -> Opts {
 /// Cites: HAR-24, HAR-1, MLM-41
 #[test]
 fn retries_wait_as_told_count_and_end_the_turn_aborted() {
-    // 500s carry no retry-after: 500 ms, then 1000 ms, then give up.
-    let r = failing("fault_500_ppm = 1000000", retry_opts());
+    // 500s carry no retry-after: 500 ms, then 1000 ms, then 2000 ms (base × 2^k),
+    // then give up.
+    let r = failing(
+        "fault_500_ppm = 1000000",
+        Opts {
+            max_retries: 3,
+            ..retry_opts()
+        },
+    );
     r.result.unwrap();
     let chat = spans(&r.trace, "chat")[0];
-    assert_eq!(int(chat, "acn.call.retries"), Some(2));
+    assert_eq!(int(chat, "acn.call.retries"), Some(3));
     assert_eq!(text(chat, "acn.call.stop_reason"), Some("transport_error"));
     assert_eq!(text(chat, "acn.call.error_class"), Some("http_500"));
-    assert_eq!(chat.end_ns - chat.start_ns, 1_500_000_000);
+    assert_eq!(chat.end_ns - chat.start_ns, 3_500_000_000);
     assert_eq!(
         r.bodies.len(),
-        3 * 3,
-        "three attempts in each of three turns"
+        4 * 3,
+        "four attempts in each of three turns"
     );
     let turn = spans(&r.trace, "acn.turn")[0];
     assert_eq!(text(turn, "acn.turn.outcome"), Some("aborted"));
@@ -264,11 +271,7 @@ fn retries_wait_as_told_count_and_end_the_turn_aborted() {
     let r = failing("fault_cut_ppm = 1000000", retry_opts());
     let chat = spans(&r.trace, "chat")[0];
     assert_eq!(int(chat, "acn.call.retries"), Some(2));
-    assert!(
-        text(chat, "acn.call.error_class")
-            .unwrap()
-            .starts_with("transport: the stream ended")
-    );
+    assert_eq!(text(chat, "acn.call.error_class"), Some("transport"));
 }
 
 /// Cites: HAR-24
@@ -349,4 +352,245 @@ fn the_options_are_run_parameters_recorded_with_their_defaults() {
         .find(|s| s.name == "acn.session")
         .unwrap();
     assert_eq!(int(session, "acn.harness.max_retries"), Some(5));
+}
+
+/// Cites: HAR-24
+#[test]
+fn a_client_error_other_than_429_is_not_retried() {
+    use common::{Scripted, scripted};
+    let refused = || Exchange {
+        status: 400,
+        body: br#"{"error":{"message":"bad"}}"#.to_vec(),
+        ..Exchange::default()
+    };
+    let env = Scripted::new(vec![refused(), refused(), refused()]);
+    let (trace, result) = scripted(&env, &common::smoke(), 0, Backend::Openai);
+    result.unwrap();
+    for chat in spans(&trace, "chat") {
+        assert_eq!(int(chat, "acn.call.retries"), Some(0));
+        assert_eq!(text(chat, "acn.call.stop_reason"), Some("other"));
+        assert_eq!(text(chat, "acn.call.error_class"), Some("http_400"));
+    }
+    assert_eq!(env.bodies.borrow().len(), 3, "one attempt per turn");
+}
+
+/// Cites: HAR-23, CON-26, MLM-4
+#[test]
+fn every_response_to_a_provider_run_is_checked_for_the_mock() {
+    // A `vllm` run that the mock answers: its first response gives it away.
+    let r = session(Spec {
+        backend: Backend::Vllm,
+        bytes_scaled: true,
+        ..Spec::default()
+    });
+    let err = r.result.unwrap_err();
+    assert!(matches!(err, HarnessError::BackendMismatch(_)), "{err}");
+    assert_eq!(r.bodies.len(), 1, "stopped at the first response");
+}
+
+fn ev(t: i64, v: serde_json::Value) -> (i64, String) {
+    (t, v.to_string())
+}
+
+/// Cites: HAR-21, HAR-24, HAR-31, TRC-21
+#[test]
+fn anthropic_events_assemble_into_a_message_the_frozen_mapping_reads() {
+    let events = vec![
+        ev(
+            1,
+            json!({ "type": "message_start", "message": { "usage": {
+            "input_tokens": 10, "cache_read_input_tokens": 90,
+            "cache_creation_input_tokens": 5, "output_tokens": 1 } } }),
+        ),
+        ev(
+            2,
+            json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "text", "text": "" } }),
+        ),
+        ev(
+            3,
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "Let me " } }),
+        ),
+        ev(
+            4,
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "look." } }),
+        ),
+        ev(
+            5,
+            json!({ "type": "content_block_start", "index": 1,
+            "content_block": { "type": "tool_use", "id": "toolu_1", "name": "read_file", "input": {} } }),
+        ),
+        ev(
+            6,
+            json!({ "type": "content_block_delta", "index": 1, "delta": { "type": "input_json_delta", "partial_json": "{\"pa" } }),
+        ),
+        ev(
+            7,
+            json!({ "type": "content_block_delta", "index": 1, "delta": { "type": "input_json_delta", "partial_json": "th\":\"a\"}" } }),
+        ),
+        ev(
+            8,
+            json!({ "type": "message_delta", "delta": { "stop_reason": "tool_use" }, "usage": { "output_tokens": 7 } }),
+        ),
+        ev(9, json!({ "type": "message_stop" })),
+    ];
+    let ex = Exchange {
+        status: 200,
+        events: events.clone(),
+        ..Exchange::default()
+    };
+    let r = assemble(Dialect::Messages, &ex, true).unwrap();
+    assert_eq!(r.text.as_deref(), Some("Let me look."));
+    assert_eq!(r.tool_calls.len(), 1);
+    assert_eq!(r.tool_calls[0].id, "toolu_1");
+    assert_eq!(r.tool_calls[0].arguments, r#"{"path":"a"}"#);
+    assert_eq!(r.token_times, [3, 4, 6, 7]);
+    let inv = acn_trace::schema::inventory().unwrap();
+    let n = acn_trace::normalise::response(&inv, "anthropic", &r.raw).unwrap();
+    assert_eq!(n.input_tokens, Some(10 + 90 + 5), "the total of TRC-12");
+    assert_eq!(n.cache_read_tokens, Some(90));
+    assert_eq!(n.cache_write_tokens, Some(5));
+    assert_eq!(n.output_tokens, Some(7), "message_delta's count wins");
+    assert_eq!(
+        n.stop_reason,
+        Some(acn_trace::normalise::StopReason::ToolUse)
+    );
+    // Without message_stop the stream was cut: a transport error, retried.
+    let cut = Exchange {
+        status: 200,
+        events: events[..8].to_vec(),
+        ..Exchange::default()
+    };
+    assert!(matches!(
+        assemble(Dialect::Messages, &cut, true),
+        Err(acn_harness::wire::AssembleError::Cut(_))
+    ));
+    // An absurd block index is refused, not allocated.
+    let huge = Exchange {
+        status: 200,
+        events: vec![ev(
+            1,
+            json!({ "type": "content_block_start", "index": 1_000_000_000_000u64,
+            "content_block": { "type": "text", "text": "" } }),
+        )],
+        ..Exchange::default()
+    };
+    assert!(matches!(
+        assemble(Dialect::Messages, &huge, true),
+        Err(acn_harness::wire::AssembleError::Malformed(_))
+    ));
+}
+
+/// Cites: HAR-21
+#[test]
+fn an_empty_reply_is_never_sent_back_empty() {
+    let ctx = Context {
+        system: "S".into(),
+        tools: vec![],
+        messages: vec![
+            Msg::User { text: "u".into() },
+            Msg::Assistant {
+                text: None,
+                tool_calls: vec![],
+            },
+            Msg::User { text: "v".into() },
+        ],
+    };
+    let m = ctx.encode(Dialect::Messages, "m", SAMPLING, Placement::None, false);
+    assert_eq!(
+        m["messages"],
+        json!([{ "role": "user", "content": [
+            { "type": "text", "text": "u" }, { "type": "text", "text": "v" }
+        ] }]),
+        "no empty text block: the user turns merge"
+    );
+    let c = ctx.encode(
+        Dialect::ChatCompletions,
+        "m",
+        SAMPLING,
+        Placement::None,
+        false,
+    );
+    assert_eq!(
+        c["messages"][2],
+        json!({ "role": "assistant", "content": "" })
+    );
+}
+
+/// Cites: HAR-21, HAR-33
+#[test]
+fn server_sent_events_parse_however_the_bytes_are_split() {
+    use acn_harness::wire::sse_events;
+    let stream: &[u8] = b"event: a\ndata: {\"x\":1}\n\n: comment\n\ndata: {\"x\":2}\r\n\r\ndata: [DONE]\n\ndata: partial";
+    let whole = sse_events(stream);
+    assert_eq!(whole.0, [r#"{"x":1}"#, r#"{"x":2}"#, "[DONE]"]);
+    assert_eq!(
+        &stream[whole.1..],
+        b"data: partial",
+        "a trailing partial event waits"
+    );
+    for cut in 1..stream.len() {
+        let mut buf = stream[..cut].to_vec();
+        let (mut got, used) = sse_events(&buf);
+        buf.drain(..used);
+        buf.extend_from_slice(&stream[cut..]);
+        got.extend(sse_events(&buf).0);
+        assert_eq!(got, whole.0, "split at {cut}");
+    }
+}
+
+fn mockish(router: axum::Router) -> String {
+    use axum::routing::get;
+    common::serve(router.route(
+        "/v1/models",
+        get(|| async { ([("x-acn-mockllm", "acn-mockllm/0 profile=-")], "{}") }),
+    ))
+}
+
+/// Cites: HAR-24
+#[test]
+fn live_retries_honour_retry_after_and_a_live_attempt_times_out() {
+    use axum::routing::post;
+    let busy = mockish(axum::Router::new().route(
+        "/v1/chat/completions",
+        post(|| async {
+            (
+                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                [("retry-after", "1")],
+                "{}",
+            )
+        }),
+    ));
+    let mut f = run_fixture(&common::fast_smoke(), "auto");
+    f.cfg.mode = Mode::Live;
+    f.cfg.opts.endpoint = busy;
+    f.cfg.opts.max_retries = 1;
+    let w = acn_harness::run::run(&f.cfg).unwrap();
+    let trace = common::read(&w.dir);
+    let chat = spans(&trace, "chat")[0];
+    assert_eq!(int(chat, "acn.call.retries"), Some(1));
+    assert_eq!(text(chat, "acn.call.error_class"), Some("http_429"));
+    assert!(
+        chat.end_ns - chat.start_ns >= 1_000_000_000,
+        "waited the second it was told"
+    );
+
+    let slow = mockish(axum::Router::new().route(
+        "/v1/chat/completions",
+        post(|| async {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            "{}"
+        }),
+    ));
+    let mut f = run_fixture(&common::fast_smoke(), "auto");
+    f.cfg.mode = Mode::Live;
+    f.cfg.opts.endpoint = slow;
+    f.cfg.opts.request_timeout_ms = 100;
+    f.cfg.opts.max_retries = 0;
+    let w = acn_harness::run::run(&f.cfg).unwrap();
+    let trace = common::read(&w.dir);
+    let chat = spans(&trace, "chat")[0];
+    assert_eq!(text(chat, "acn.call.stop_reason"), Some("client_abort"));
+    assert_eq!(text(chat, "acn.call.error_class"), Some("timeout"));
+    let took = chat.end_ns - chat.start_ns;
+    assert!((100_000_000..2_000_000_000).contains(&took), "{took}");
 }

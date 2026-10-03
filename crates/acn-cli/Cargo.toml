@@ -37,4 +37,6 @@ acn-trace.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+acn-emu = { path = "../acn-emu" }
+acn-mockllm = { path = "../acn-mockllm" }
 tempfile.workspace = true

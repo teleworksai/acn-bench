@@ -151,3 +151,48 @@ fn replicates_run_in_the_seeded_order_and_live_records_it() {
         serde_json::from_slice(&std::fs::read(w.dir.join("manifest.json")).unwrap()).unwrap();
     assert!(m.get("execution_order").is_none());
 }
+
+/// Cites: HAR-42
+#[test]
+fn in_a_live_run_each_replicate_sends_its_own_marker_as_prompt_and_tenant() {
+    let (url, seen) = common::recording_mock_server(common::three());
+    let mut f = run_fixture(&common::fast_smoke(), "auto");
+    f.cfg.replicates = 3;
+    f.cfg.mode = Mode::Live;
+    f.cfg.opts.endpoint = url;
+    let w = acn_harness::run::run(&f.cfg).unwrap();
+    let expected: std::collections::BTreeSet<String> = (0..3)
+        .map(|i| isolation_marker(&w.run_id, "treatment", i).unwrap())
+        .collect();
+    assert_eq!(expected.len(), 3, "the replicates' markers differ");
+    let mut markers = std::collections::BTreeSet::new();
+    for (auth, body) in seen.lock().unwrap().iter() {
+        let b: serde_json::Value = serde_json::from_slice(body).unwrap();
+        let sys = b["messages"][0]["content"][0]["text"].as_str().unwrap();
+        let marker = sys
+            .lines()
+            .next()
+            .unwrap()
+            .strip_prefix("Session: ")
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            auth.as_deref(),
+            Some(marker.as_str()),
+            "the tenant is the marker"
+        );
+        for t in b["tools"].as_array().unwrap() {
+            assert!(
+                t["function"]["description"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with(&marker)
+            );
+        }
+        markers.insert(marker);
+    }
+    assert_eq!(
+        markers, expected,
+        "one marker per replicate, as HAR-42 derives it"
+    );
+}

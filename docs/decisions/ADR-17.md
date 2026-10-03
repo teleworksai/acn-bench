@@ -1,6 +1,6 @@
 # ADR-17 — T04: the harness, and the readings SPEC 040 leaves open
 
-**Status:** accepted (T04; Class B, with a Class C part and a `spec-change` part). **IDs affected:** HAR-1 to HAR-5, HAR-10 to HAR-17, HAR-20 to HAR-25, HAR-30 to HAR-34, HAR-40 to HAR-43, HAR-50 to HAR-52, HAR-60, HAR-61; TRC-10, TRC-11, TRC-12, TRC-20; MLM-4, MLM-21, MLM-60; CON-26, CON-29.
+**Status:** accepted (T04; Class B, with a Class C part and a `spec-change` part). **IDs affected:** HYP-6, HYP-9, HAR-1 to HAR-5, HAR-10 to HAR-17, HAR-20 to HAR-25, HAR-30 to HAR-34, HAR-40 to HAR-43, HAR-50 to HAR-52, HAR-60, HAR-61; TRC-10, TRC-11, TRC-12, TRC-20; MLM-4, MLM-21, MLM-60; CON-26, CON-29.
 
 ## Context
 SPEC 040 states what the harness does to the bytes it sends and how a run is recorded. Implementing it needed choices the spec does not make, one change to the frozen attribute inventory, and one amendment to SPEC 010. It also turned up one property of the mock that the maintainer should see.
@@ -37,6 +37,37 @@ SPEC 040 states what the harness does to the bytes it sends and how a run is rec
   - The credentials module is always compiled, because reading a variable reaches no provider. Using credentials for a real backend needs `real-api` (HAR-20).
   - An endpoint URL with user information is refused.
   - `LiveEnv`'s `Debug` output never prints headers.
+
+### After the PR #8 review
+- **Error classes are fixed.** `acn.call.error_class` is one of these, and the provider's own text goes to the log, never the trace (HAR-34):
+  - `transport`: retried. A cut stream is one;
+  - `http_<status>`: only 429 and 5xx are retried;
+  - `timeout`: the attempt reached `opt.request_timeout_ms`;
+  - `deadline`: the turn's deadline came first;
+  - `malformed_response`: not retried.
+- **A malformed response is an error of the call.** A 200 with no `choices[0].message` or `content` array, a tool call without an id or a name, a body that is not JSON, or a response the frozen mapping cannot read ends the call with `stop_reason = other` and `malformed_response`. It is never a finished turn, and never the end of the run.
+- **Deadlines (HAR-1).** An attempt is abandoned at the turn's deadline when that comes before `opt.request_timeout_ms` (`client_abort`, `deadline`). An answer that arrives at or after the deadline makes the turn `timeout`, not `success`.
+- **The checker counts only tools the lineage has.** A call to a tool the model was not given never satisfies `expect_tools` (HAR-3).
+- **An empty reply is not sent back empty.** On Messages, an assistant turn with no text and no tool call is left out, and the user turns around it merge. On Chat Completions, its content is `""`, because `null` is accepted only beside tool calls.
+- **`--vary` values are checked against their domain** (HYP-6) before anything is written. The domain is the hypothesis's `[varies]` entry, or the knob's own; a missing or unknown `kind` is an error. This is still the harness's own reading of the file until `acn-hyp` (T05) supplies the typed loader.
+- **Limits.**
+  - A `retry-after` is honoured up to 300 s.
+  - A stream's block or call index must be below 1024.
+  - An endpoint is a base URL with no query or fragment, since a query could carry a key into the manifest.
+- **No proxy.** The HTTP client ignores `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY`. A proxy would change what a run receives without changing its identity, and would receive its credentials (CON-29, HAR-22).
+- **`acn.fanout.shared_prefix_tokens`** scales the shared bytes by the spawning request's own tokens per byte. When that request reported no count, it falls back to whole MLM-11 tokens.
+- **`run_async`.** It is `run` on the caller's runtime, so the loop runner (T05b) can await it. The future is not `Send`, because the lineages share state through `RefCell`s.
+- **A default build refuses `vllm` and `sglang`** as well as the hosted providers, since any of them can be a remote endpoint. HAR-20's "an endpoint the operator names" is read as the mock's.
+- **Temperatures from 0 to 2** are accepted by the workload. Anthropic accepts only up to 1, so a workload meant for it says so itself.
+
+### The maintainer's decisions on the review
+- **Tool order and the checker (review item 13).** On the mock, `tool_order_stable = false` changes which tool the reply policy calls (MLM-40 calls the tool at index 0). It therefore changes which turns pass a checker that expects a tool: the knob moves `cost_per_success` through success as well as through caching. This is recorded here, and SPEC 100 is to settle it together with open question 1 of SPEC 040. Real models choose tools by their own lights.
+- **What HAR-17 can promise (review item 14).**
+  - Each sub-agent draws from its own sub-streams, `harness.<stream>.<task>.<turn>.<call>.<child>`. A child's tool results and tool orders therefore no longer depend on when its siblings' responses arrive.
+  - HAR-17 holds byte for byte only where the knob does not change latency or cache hits. Where it does, two things move with it:
+    - the timestamp, since a turn starts when the previous one ended;
+    - what the mock derives from the prompt, its call ids (MLM-40).
+  - The tests check HAR-17 in exactly those terms: with nothing cached, or with the stamp and the ids set aside.
 
 ### Recording
 - **No scenario yet.** `scenario_hash` is 32 zero bytes, as `none` is for a hypothesis, until SPEC 020 gives the harness a link.

@@ -10,7 +10,7 @@ mod common;
 use std::collections::BTreeMap;
 
 use acn_harness::context::{Context, Dialect, Msg, Sampling, ToolDef};
-use acn_harness::knobs::{Knobs, Placement};
+use acn_harness::knobs::{Domain, Knobs, Placement};
 use acn_harness::run::typed_vary;
 use acn_trace::identity::Value as P;
 use common::{MARKER, Spec, cached, int, session, spans, text};
@@ -44,8 +44,17 @@ fn the_knob_map_is_six_knobs_with_the_shipped_defaults_recorded_whole() {
     assert!(err.to_string().contains("not a knob"), "{err}");
     // With a hypothesis, its [varies] parameters are accepted and typed by kind.
     let varies = BTreeMap::from([
-        ("provider".to_owned(), "enum".to_owned()),
-        ("ratio".to_owned(), "range".to_owned()),
+        (
+            "provider".to_owned(),
+            Domain::Enum(vec!["anthropic".into(), "openai".into()]),
+        ),
+        (
+            "ratio".to_owned(),
+            Domain::Range {
+                min: 0.0,
+                max: 10.0,
+            },
+        ),
     ]);
     let typed = typed_vary(
         &BTreeMap::from([
@@ -61,6 +70,22 @@ fn the_knob_map_is_six_knobs_with_the_shipped_defaults_recorded_whole() {
         "a range is a float (CON-27(c))"
     );
     assert!(typed_vary(&raw("tool_order_stable", "true"), Some(&varies)).is_err());
+    // HYP-6: a value outside its domain is refused before the run.
+    for (k, v) in [("provider", "opneai"), ("ratio", "11"), ("ratio", "NaN")] {
+        let err = typed_vary(&raw(k, v), Some(&varies))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("outside its domain"), "{k}={v}: {err}");
+    }
+    assert!(typed_vary(&raw("backfill_mode", "sideways"), None).is_err());
+    // A misspelt or missing kind is refused, never read as a string.
+    for bad in [
+        "{ kind = \"int-range\", min = 0, max = 3 }",
+        "{ values = [\"a\"] }",
+    ] {
+        let v: toml::Value = toml::from_str(&format!("x = {bad}")).unwrap();
+        assert!(Domain::parse("x", &v["x"]).is_err(), "{bad}");
+    }
 }
 
 /// Cites: HAR-11
@@ -451,4 +476,212 @@ fn a_knob_changes_no_byte_where_its_clause_does_not_apply() {
         bodies(1, &[("backfill_mode", "tail_restate")], false),
         bodies(1, &[("backfill_mode", "mid_prefix")], false)
     );
+}
+
+/// Cites: HAR-16, HAR-17
+#[test]
+fn only_anthropic_and_the_mock_are_ever_sent_a_breakpoint() {
+    use acn_harness::wire::Backend;
+    let ctx = Context {
+        system: "s".into(),
+        tools: vec![ToolDef {
+            name: "t".into(),
+            description: "d".into(),
+            parameters: json!({}),
+        }],
+        messages: vec![Msg::User { text: "u".into() }],
+    };
+    let sampling = Sampling {
+        max_tokens: 1,
+        temperature: 0.0,
+        stream: true,
+    };
+    for (b, marks) in [
+        (Backend::Mockllm, true),
+        (Backend::Anthropic, true),
+        (Backend::Openai, false),
+        (Backend::Vllm, false),
+        (Backend::Sglang, false),
+    ] {
+        assert_eq!(b.marks_breakpoints(), marks, "{}", b.as_str());
+        let bodies: Vec<String> = [
+            Placement::None,
+            Placement::SystemOnly,
+            Placement::SystemAndTools,
+            Placement::RollingTail,
+        ]
+        .iter()
+        .map(|p| {
+            ctx.encode(b.dialect(), "m", sampling, *p, b.marks_breakpoints())
+                .to_string()
+        })
+        .collect();
+        if !marks {
+            assert!(
+                bodies.iter().all(|x| !x.contains("cache_control")),
+                "{}",
+                b.as_str()
+            );
+            assert!(
+                bodies.windows(2).all(|w| w[0] == w[1]),
+                "HAR-17 on {}",
+                b.as_str()
+            );
+        }
+    }
+}
+
+fn drop_ids(v: &mut Value) {
+    match v {
+        Value::Object(m) => {
+            m.remove("id");
+            m.remove("tool_call_id");
+            m.values_mut().for_each(drop_ids);
+        }
+        Value::Array(a) => a.iter_mut().for_each(drop_ids),
+        _ => {}
+    }
+}
+
+/// Cites: HAR-17, HAR-11
+#[test]
+fn the_timestamp_changes_nothing_but_its_own_line() {
+    let strip = |r: common::Ran| {
+        r.bodies
+            .into_iter()
+            .map(|(_, mut b)| {
+                let sys = b["messages"][0]["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                let kept: Vec<&str> = sys
+                    .lines()
+                    .filter(|l| !l.starts_with("Current time:"))
+                    .collect();
+                b["messages"][0]["content"][0]["text"] = json!(kept.join("\n"));
+                // MLM-40: the mock's call ids hash the prompt, stamp included.
+                drop_ids(&mut b);
+                b
+            })
+            .collect::<Vec<_>>()
+    };
+    let profiles = || {
+        common::profiles(&[common::profile(
+            "auto",
+            "automatic_prefix",
+            &["min_cacheable_tokens = 100000"],
+        )])
+    };
+    // The stamp's bytes count towards `window_full` like any others; with no
+    // compaction, the stamp is all that differs.
+    let workload = common::smoke()
+        .replace("compact_at_tokens = 1000", "compact_at_tokens = 1000000")
+        .replace(
+            "read_cost_threshold_tokens = 400",
+            "read_cost_threshold_tokens = 1000000",
+        );
+    assert_eq!(
+        strip(session(Spec {
+            workload: workload.clone(),
+            vary: &[("timestamp_in_system_prompt", "true")],
+            profiles: profiles(),
+            ..Spec::default()
+        })),
+        strip(session(Spec {
+            workload,
+            vary: &[("timestamp_in_system_prompt", "false")],
+            profiles: profiles(),
+            ..Spec::default()
+        })),
+        "with nothing cached, the stamp is the only difference"
+    );
+}
+
+/// Cites: HAR-12, HAR-17, HAR-40
+#[test]
+fn tool_order_draws_only_from_the_knob_stream() {
+    // Two tools with the same ranges: whichever the mock calls, the results are
+    // drawn alike, so they match exactly when the permutation leaves the tool
+    // stream alone.
+    let twin = common::smoke().replace(
+        "result_bytes = { min = 200, max = 500 }\nduration_ns = { min = 2_000_000, max = 6_000_000 }",
+        "result_bytes = { min = 600, max = 1200 }\nduration_ns = { min = 1_000_000, max = 3_000_000 }",
+    );
+    let results = |stable: &'static str| {
+        session(Spec {
+            workload: twin.clone(),
+            vary: if stable == "true" {
+                &[("tool_order_stable", "true")]
+            } else {
+                &[("tool_order_stable", "false")]
+            },
+            ..Spec::default()
+        })
+        .bodies
+        .iter()
+        .flat_map(|(_, b)| {
+            b["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|m| m["role"] == "tool")
+                .map(|m| m["content"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(results("true"), results("false"));
+}
+
+/// Cites: HAR-14, TRC-12, TRC-14
+#[test]
+fn shared_prefix_tokens_is_the_common_prefix_of_the_two_requests() {
+    let profile = common::three().get("auto").unwrap().clone();
+    let bytes = |b: &Value| acn_mockllm::prompt::prompt(b, &profile).unwrap().bytes;
+    for fanout in ["fork_from_prefix", "per_child"] {
+        let r = session(Spec {
+            task: 1,
+            vary: if fanout == "per_child" {
+                &[("fanout_prompting", "per_child")]
+            } else {
+                &[("fanout_prompting", "fork_from_prefix")]
+            },
+            ..Spec::default()
+        });
+        let spawning = bytes(&r.bodies[0].1);
+        let got: Vec<i64> = spans(&r.trace, "invoke_agent")
+            .iter()
+            .map(|a| int(a, "acn.fanout.shared_prefix_tokens").unwrap())
+            .collect();
+        let want: Vec<i64> = r.bodies[1..3]
+            .iter()
+            .map(|(_, b)| {
+                let child = bytes(b);
+                (spawning
+                    .iter()
+                    .zip(&child)
+                    .take_while(|(x, y)| x == y)
+                    .count()
+                    / 4) as i64
+            })
+            .collect();
+        assert_eq!(got, want, "{fanout}");
+    }
+    // Under bytes_scaled the shared bytes are scaled by the spawning request's
+    // own tokens per byte, so the count never exceeds that request's tokens.
+    let r = session(Spec {
+        task: 1,
+        bytes_scaled: true,
+        ..Spec::default()
+    });
+    let spawn_tokens = int(spans(&r.trace, "chat")[0], "acn.call.input_tokens").unwrap();
+    for a in spans(&r.trace, "invoke_agent") {
+        let shared = int(a, "acn.fanout.shared_prefix_tokens").unwrap();
+        assert!(
+            shared > 0 && shared <= spawn_tokens,
+            "{shared} of {spawn_tokens}"
+        );
+    }
+    assert_eq!(acn_harness::agent::scaled(50, 100, 200), 25);
+    assert_eq!(acn_harness::agent::scaled(3, 7, 0), 0);
 }
