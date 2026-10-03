@@ -60,16 +60,84 @@ fn a_breakpoint_never_changes_the_bytes_and_bad_shapes_are_refused() {
     let a = prompt::prompt(&plain, &pr).unwrap();
     let b = prompt::prompt(&marked, &pr).unwrap();
     assert_eq!(a.bytes, b.bytes);
+    let text = String::from_utf8(b.bytes.clone()).unwrap();
     assert_eq!(
-        b.elements,
-        vec![(a.bytes.len(), true)],
-        "the element carries the breakpoint"
+        text,
+        "{\"content\":[{\"text\":\"S\",\"type\":\"text\"}],\"role\":\"system\"}\n"
     );
-    assert!(
-        prompt::prompt(&json!({ "model": "p" }), &pr).is_err(),
-        "no messages"
+    assert_eq!(
+        b.breakpoints,
+        vec![text.find("}]").unwrap() + 1],
+        "a marked part's prefix ends with the part"
     );
-    assert!(prompt::prompt(&json!({ "model": "p", "messages": [], "tools": {} }), &pr).is_err());
+    // A marked message or tool ends with its element, `\n` included.
+    let msg = json!({ "model": "p", "messages": [{ "role": "user", "content": "x", "cache_control": { "type": "ephemeral" } }] });
+    let m = prompt::prompt(&msg, &pr).unwrap();
+    assert_eq!(m.breakpoints, vec![m.bytes.len()]);
+    let tool = json!({ "model": "p", "messages": [{ "role": "user", "content": "x" }],
+        "tools": [{ "type": "function", "function": { "name": "f" }, "cache_control": { "type": "ephemeral" } }] });
+    let t = prompt::prompt(&tool, &pr).unwrap();
+    assert_eq!(
+        t.breakpoints,
+        vec![
+            String::from_utf8(t.bytes.clone())
+                .unwrap()
+                .find('\n')
+                .unwrap()
+                + 1
+        ]
+    );
+    assert!(a.breakpoints.is_empty());
+}
+
+/// Cites: MLM-1
+#[test]
+fn a_prompt_mlm_1_does_not_admit_is_refused() {
+    let pr = profile("[\"tools\", \"system\", \"messages\"]");
+    for (bad, why) in [
+        (json!({ "model": "p" }), "no messages"),
+        (
+            json!({ "model": "p", "messages": [], "tools": {} }),
+            "tools not an array",
+        ),
+        (
+            json!({ "model": "p", "messages": [1] }),
+            "a message that is not an object",
+        ),
+        (
+            json!({ "model": "p", "messages": [{ "role": "robot", "content": "x" }] }),
+            "an unknown role",
+        ),
+        (
+            json!({ "model": "p", "messages": [{ "content": "x" }] }),
+            "no role",
+        ),
+        (
+            json!({ "model": "p", "messages": [{ "role": "user", "content": 7 }] }),
+            "numeric content",
+        ),
+        (
+            json!({ "model": "p", "messages": [{ "role": "user", "content": [1] }] }),
+            "a part that is not an object",
+        ),
+        (
+            json!({ "model": "p", "messages": [], "tools": [{ "type": "function", "function": {} }] }),
+            "a tool without a name",
+        ),
+    ] {
+        assert!(prompt::prompt(&bad, &pr).is_err(), "{why}");
+    }
+    let ok = json!({ "model": "p", "messages": [
+        { "role": "user", "content": [{ "type": "text", "text": "x" }] },
+        { "role": "assistant", "content": null, "tool_calls": [] },
+        { "role": "tool", "tool_call_id": "c", "content": "ok" }
+    ] });
+    assert!(prompt::prompt(&ok, &pr).is_ok());
+}
+
+/// Cites: MLM-10
+#[test]
+fn numbers_have_one_spelling() {
     // 1e21 and 5.0 have one spelling each.
     let mut s = String::new();
     prompt::canonical(&json!({ "a": 1e21, "b": 5.0, "c": -0.0 }), &mut s).unwrap();

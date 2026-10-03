@@ -8,12 +8,14 @@
 //! retry-after; for a text answer, its length and then one word per token; for a
 //! cut stream, the cut point; then one jitter per output token.
 
+use std::collections::BTreeMap;
+
 use rand_chacha::ChaCha20Rng;
 use rand_core::Rng as _;
 use serde_json::{Value, json};
 
 use crate::cache::{Accounting, Cache};
-use crate::profile::{Profile, Profiles};
+use crate::profile::{PPM, Profile, Profiles};
 use crate::prompt::{self, Prompt};
 
 /// The words answers are made of: 4 bytes each, so a word is a token (MLM-40).
@@ -58,7 +60,8 @@ pub struct Outcome {
     pub headers: Vec<(String, String)>,
     /// The non-streamed body (or the error body).
     pub body: Vec<u8>,
-    /// The stream, for a request that asked for one and succeeded.
+    /// The stream events of a streamed 200; a cut stream stops early, without a
+    /// final chunk, usage or `[DONE]` (MLM-41).
     pub chunks: Vec<Chunk>,
     /// When the non-streamed body is sent: the last token's time (MLM-30).
     pub respond_at_ns: i64,
@@ -69,14 +72,51 @@ pub struct Outcome {
     pub stream: bool,
 }
 
-/// The mock: a profile, its cache, its slots and its random stream.
+/// The mock: its profiles, a cache and a slot pool per profile, and its random
+/// stream. A profile is a model, so profiles share neither cache entries nor
+/// slots (ADR-16).
 #[derive(Debug, Clone)]
 pub struct Mock {
     profiles: Profiles,
-    cache: Cache,
-    /// When each slot becomes free (MLM-30).
-    slots: Vec<i64>,
+    caches: BTreeMap<String, Cache>,
+    /// Per profile, when each slot becomes free (MLM-30).
+    slots: BTreeMap<String, Vec<i64>>,
     rng: ChaCha20Rng,
+}
+
+/// The `x-acn-mockllm` header value for `profile` (MLM-4); `-` when no profile
+/// applies.
+#[must_use]
+pub fn marker(profile: &str) -> String {
+    format!(
+        "acn-mockllm/{} profile={profile}",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
+/// The OpenAI-shaped error body (MLM-1).
+#[must_use]
+pub fn error_body(kind: &str, message: &str) -> Vec<u8> {
+    json!({ "error": { "message": message, "type": kind, "code": Value::Null } })
+        .to_string()
+        .into_bytes()
+}
+
+/// A request's token limit: `max_completion_tokens` if set, else `max_tokens`; a
+/// `null` is unset, and any other non-count value is refused (MLM-1).
+fn token_limit(req: &Value) -> Result<Option<u64>, String> {
+    for key in ["max_completion_tokens", "max_tokens"] {
+        match req.get(key) {
+            None | Some(Value::Null) => {}
+            Some(v) => {
+                return v
+                    .as_u64()
+                    .map(Some)
+                    .ok_or_else(|| format!("`{key}` must be a non-negative integer"));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// A uniform draw over `0..n` (n > 0), exact: rejection sampling on 64 bits.
@@ -90,12 +130,6 @@ fn below(rng: &mut ChaCha20Rng, n: u64) -> u64 {
     }
 }
 
-fn error_body(kind: &str, message: &str) -> Vec<u8> {
-    json!({ "error": { "message": message, "type": kind, "code": Value::Null } })
-        .to_string()
-        .into_bytes()
-}
-
 impl Mock {
     /// A mock over the embedded profiles whose draws come from the `mockllm`
     /// sub-stream under `stream_seed` (the replicate seed of CON-30(a)).
@@ -103,12 +137,14 @@ impl Mock {
         Self::with_profiles(crate::profile::embedded()?, stream_seed)
     }
 
-    /// A mock over the given profiles.
+    /// A mock over the given profiles, which are checked as
+    /// [`Profiles::parse`] checks them.
     pub fn with_profiles(profiles: Profiles, stream_seed: u64) -> Result<Self, crate::MockError> {
+        profiles.check()?;
         Ok(Self {
             profiles,
-            cache: Cache::default(),
-            slots: Vec::new(),
+            caches: BTreeMap::new(),
+            slots: BTreeMap::new(),
             rng: acn_trace::identity::substream_rng(stream_seed, "mockllm")?,
         })
     }
@@ -119,24 +155,24 @@ impl Mock {
         &self.profiles
     }
 
-    /// The cache's sizes (prefix entries, blocks).
+    /// The caches' sizes over every profile (prefix entries, blocks).
     #[must_use]
     pub fn cache_sizes(&self) -> (usize, usize) {
-        self.cache.sizes()
+        self.caches.values().fold((0, 0), |(p, b), c| {
+            let (cp, cb) = c.sizes();
+            (p + cp, b + cb)
+        })
     }
 
     fn base_headers(profile: &str) -> Vec<(String, String)> {
-        vec![(
-            "x-acn-mockllm".to_owned(),
-            format!(
-                "acn-mockllm/{} profile={profile}",
-                env!("CARGO_PKG_VERSION")
-            ),
-        )]
+        vec![("x-acn-mockllm".to_owned(), marker(profile))]
     }
 
+    /// An error, answered at arrival: no slot, no cache change, zero timing
+    /// (MLM-31 puts the timing header on every response).
     fn fail(status: u16, kind: &str, message: &str, profile: &str, arrival: i64) -> Outcome {
         let mut headers = Self::base_headers(profile);
+        headers.push(("x-acn-mock-timing".into(), Timing::default().header()));
         headers.push(("content-type".into(), "application/json".into()));
         Outcome {
             status,
@@ -197,16 +233,16 @@ impl Mock {
             .pointer("/stream_options/include_usage")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let limit = req
-            .get("max_completion_tokens")
-            .or_else(|| req.get("max_tokens"))
-            .and_then(Value::as_u64);
+        let limit = match token_limit(&req) {
+            Ok(l) => l,
+            Err(e) => return Self::fail(400, "invalid_request_error", &e, &name, arrival_ns),
+        };
 
         // Faults: three draws, always, so a rate never shifts the other draws.
         let draws = [
-            below(&mut self.rng, 1_000_000),
-            below(&mut self.rng, 1_000_000),
-            below(&mut self.rng, 1_000_000),
+            below(&mut self.rng, PPM),
+            below(&mut self.rng, PPM),
+            below(&mut self.rng, PPM),
         ];
         if draws[0] < profile.fault_429_ppm {
             let retry = 1 + below(&mut self.rng, profile.retry_after_s_max);
@@ -232,48 +268,31 @@ impl Mock {
         let cut = stream && draws[2] < profile.fault_cut_ppm;
 
         // The cache: a cut stream changes nothing (MLM-41).
+        let cache = self.caches.entry(name.clone()).or_default();
         let accounting = if cut {
-            let mut probe = self.cache.clone();
-            match probe.account(&profile, tenant, &prompt, arrival_ns) {
-                Ok(a) => a,
-                Err(e) => {
-                    return Self::fail(
-                        400,
-                        "invalid_request_error",
-                        &e.to_string(),
-                        &name,
-                        arrival_ns,
-                    );
-                }
-            }
+            cache.clone().account(&profile, tenant, &prompt, arrival_ns)
         } else {
-            match self.cache.account(&profile, tenant, &prompt, arrival_ns) {
-                Ok(a) => a,
-                Err(e) => {
-                    return Self::fail(
-                        400,
-                        "invalid_request_error",
-                        &e.to_string(),
-                        &name,
-                        arrival_ns,
-                    );
-                }
-            }
+            cache.account(&profile, tenant, &prompt, arrival_ns)
         };
 
         let reply = self.reply(&req, &prompt, &profile, limit);
         let n_tokens = reply.tokens();
 
         // Timing (MLM-30).
-        let start = if profile.slots == 0 {
-            arrival_ns
-        } else {
-            while (self.slots.len() as u64) < profile.slots {
-                self.slots.push(i64::MIN);
-            }
-            let free = self.slots.iter().copied().min().unwrap_or(i64::MIN);
-            arrival_ns.max(free)
-        };
+        // The slot that frees earliest, ties to the lowest index (ADR-16).
+        let slots = self.slots.entry(name.clone()).or_default();
+        if profile.slots > 0 {
+            slots.resize(
+                usize::try_from(profile.slots).unwrap_or(usize::MAX),
+                i64::MIN,
+            );
+        }
+        let slot = slots
+            .iter()
+            .copied()
+            .enumerate()
+            .min_by_key(|(i, t)| (*t, *i));
+        let start = slot.map_or(arrival_ns, |(_, free)| arrival_ns.max(free));
         let queue_ns = start - arrival_ns;
         let new_tokens = prompt.tokens() - accounting.cached_tokens;
         let to_i64 = |v: u64| i64::try_from(v).unwrap_or(i64::MAX);
@@ -308,15 +327,10 @@ impl Mock {
             prev = t;
         }
         let last = token_times.last().copied().unwrap_or(first);
-        if profile.slots > 0
-            && let Some(slot) = self
-                .slots
-                .iter_mut()
-                .enumerate()
-                .min_by_key(|(i, t)| (**t, *i))
-                .map(|(_, t)| t)
+        if let Some((i, _)) = slot
+            && let Some(busy) = self.slots.get_mut(&name).and_then(|s| s.get_mut(i))
         {
-            *slot = last;
+            *busy = last;
         }
         let timing = Timing {
             queue_ns,
@@ -365,6 +379,14 @@ impl Mock {
         };
         let mut chunks = Vec::new();
         match &reply {
+            // An empty answer still says who speaks, so the stream assembles to
+            // the plain response's `""` (MLM-3).
+            Reply::Text { words, .. } if words.is_empty() && cut_after.is_none() => {
+                chunks.push(Chunk {
+                    at_ns: last,
+                    data: chunk(json!({ "role": "assistant", "content": "" }), Value::Null),
+                });
+            }
             Reply::Text { words, .. } => {
                 for (k, w) in words.iter().enumerate() {
                     let delta = if k == 0 {
@@ -438,14 +460,29 @@ impl Mock {
         }
     }
 
+    /// The BLAKE3 of a request's prompt bytes, or `None` for a request with no
+    /// prompt (one that gets a 400).
+    fn prompt_hash(&self, body: &[u8]) -> Option<[u8; 32]> {
+        let req: Value = serde_json::from_slice(body).ok()?;
+        let profile = self.profiles.get(req.get("model")?.as_str()?)?;
+        let p = prompt::prompt(&req, profile).ok()?;
+        Some(*blake3::hash(&p.bytes).as_bytes())
+    }
+
     /// Handle requests that arrive together (MLM-7): they are processed in order of
-    /// arrival, tenant, then the BLAKE3 of their body, whatever order they are
-    /// given in. The outcomes are returned in the order given.
+    /// arrival, tenant, then the BLAKE3 of their prompt bytes, whatever order they
+    /// are given in. Requests with no prompt go first among their equals, by the
+    /// BLAKE3 of their body (ADR-16). The outcomes are returned in the order given.
     pub fn handle_batch(&mut self, requests: &[(Vec<u8>, String, i64)]) -> Vec<Outcome> {
         let mut order: Vec<usize> = (0..requests.len()).collect();
-        order.sort_by_key(|&i| {
+        order.sort_by_cached_key(|&i| {
             let (body, tenant, at) = &requests[i];
-            (*at, tenant.clone(), *blake3::hash(body).as_bytes())
+            (
+                *at,
+                tenant.clone(),
+                self.prompt_hash(body),
+                *blake3::hash(body).as_bytes(),
+            )
         });
         let mut out: Vec<Option<Outcome>> = vec![None; requests.len()];
         for i in order {
@@ -477,10 +514,11 @@ impl Mock {
             .count() as u64;
         if !tools.is_empty() && since_user < profile.tool_calls_per_turn {
             let tool = &tools[(since_user as usize) % tools.len()];
+            // `prompt::prompt` refused a tool without a name.
             let name = tool
                 .pointer("/function/name")
                 .and_then(Value::as_str)
-                .unwrap_or("tool");
+                .unwrap_or_default();
             let id = format!("call_{}", &blake3::hash(&prompt.bytes).to_hex()[..16]);
             return Reply::Tool(json!({
                 "id": id, "type": "function",

@@ -17,13 +17,6 @@ pub struct Accounting {
     pub cache_write_tokens: u64,
 }
 
-/// A request that the cache model refuses.
-#[derive(Debug, thiserror::Error)]
-pub enum CacheError {
-    #[error("{0}")]
-    Invalid(String),
-}
-
 #[derive(Debug, Clone)]
 struct Block {
     last_use: i64,
@@ -31,7 +24,7 @@ struct Block {
     children: u64,
 }
 
-/// The cache of one mock instance (MLM-8: it starts empty).
+/// The cache of one profile in one mock instance (MLM-8: it starts empty).
 #[derive(Debug, Clone, Default)]
 pub struct Cache {
     /// Prefix entries (explicit and automatic models): hash → last use.
@@ -91,33 +84,24 @@ impl Cache {
         }
     }
 
-    /// Look the prompt up and store what the model stores (MLM-20..23).
+    /// Look the prompt up and store what the model stores (MLM-20..23). The
+    /// breakpoint count was checked when the prompt was built (MLM-21).
     pub fn account(
         &mut self,
         profile: &Profile,
         tenant: &str,
         prompt: &Prompt,
         now: i64,
-    ) -> Result<Accounting, CacheError> {
+    ) -> Accounting {
         self.expire(profile, now);
         let tokens = prompt.tokens();
-        let acc = match profile.cache_model {
+        match profile.cache_model {
             CacheModel::ExplicitBreakpoints => {
-                let marked: Vec<u64> = prompt
-                    .elements
+                // A breakpoint at byte e marks the prefix of ⌊e/4⌋ tokens (ADR-16).
+                let mut lengths: Vec<u64> = prompt
+                    .breakpoints
                     .iter()
-                    .filter(|(_, b)| *b)
-                    .map(|(end, _)| (*end as u64) / 4)
-                    .collect();
-                if marked.len() as u64 > profile.max_breakpoints {
-                    return Err(CacheError::Invalid(format!(
-                        "{} cache_control breakpoints; at most {} are allowed",
-                        marked.len(),
-                        profile.max_breakpoints
-                    )));
-                }
-                let mut lengths: Vec<u64> = marked
-                    .into_iter()
+                    .map(|end| (*end as u64) / 4)
                     .filter(|n| *n >= profile.min_cacheable_tokens && *n > 0)
                     .collect();
                 lengths.sort_unstable();
@@ -201,8 +185,7 @@ impl Cache {
                     cache_write_tokens: written * profile.block_tokens,
                 }
             }
-        };
-        Ok(acc)
+        }
     }
 
     /// Evict leaves (no stored block extends them) with the earliest last use,

@@ -43,8 +43,27 @@ fn a_profile_must_state_everything_and_make_sense() {
         good.replace("\"system\", \"messages\"", "\"system\", \"system\""), // a segment twice
         good.replace("fault_429_ppm = 0", "fault_429_ppm = 999999")
             .replace("fault_500_ppm = 0", "fault_500_ppm = 2"),
+        good.replace("\"automatic_prefix\"", "\"lru\""), // an unknown cache model
+        good.replace("\"tools\",", "\"prompt\","),       // an unknown segment
+        good.replace("ttl_ns = 1000000", "ttl_ns = 0"),  // a parameter that must be positive
+        good.replace("itl_ns = 100", "itl_ns = 0"),
+        good.replace("retry_after_s_max = 5", "retry_after_s_max = 0"),
+        good.replace("prefill_base_ns = 1000", "prefill_base_ns = -1"), // a negative constant
     ];
     for bad in cases {
         assert!(parse(&bad).is_err(), "{bad}");
     }
+    assert!(Profiles::parse(&format!("schema_version = 2\n{good}")).is_err());
+}
+
+/// Cites: MLM-50
+#[test]
+fn a_mock_checks_profiles_it_is_handed_directly() {
+    let good = common::profile_toml("x", "automatic_prefix", &[]);
+    let mut p = Profiles::parse(&format!("schema_version = 1\n{good}")).unwrap();
+    p.profiles[0].retry_after_s_max = 0;
+    assert!(acn_mockllm::Mock::with_profiles(p.clone(), 1).is_err());
+    p.profiles[0].retry_after_s_max = 5;
+    p.profiles[0].output_tokens_min = 9;
+    assert!(acn_mockllm::Mock::with_profiles(p, 1).is_err());
 }

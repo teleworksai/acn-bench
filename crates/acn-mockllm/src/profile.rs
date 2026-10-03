@@ -70,6 +70,9 @@ struct ProfilesFile {
     profiles: Vec<Profile>,
 }
 
+/// Fault rates are in parts per million (MLM-41).
+pub const PPM: u64 = 1_000_000;
+
 /// The loaded profiles and the BLAKE3 of the file they came from.
 #[derive(Debug, Clone)]
 pub struct Profiles {
@@ -80,17 +83,28 @@ pub struct Profiles {
 impl Profiles {
     /// Parse and check a profiles file.
     pub fn parse(text: &str) -> Result<Self, ProfileError> {
-        let bad = |m: String| Err(ProfileError::Invalid(m));
         let file: ProfilesFile =
             toml::from_str(text).map_err(|e| ProfileError::Invalid(e.to_string()))?;
         if file.schema_version != 1 {
-            return bad(format!(
+            return Err(ProfileError::Invalid(format!(
                 "schema_version {} is not supported",
                 file.schema_version
-            ));
+            )));
         }
+        let profiles = Self {
+            profiles: file.profiles,
+            blake3: blake3::hash(text.as_bytes()).to_hex().to_string(),
+        };
+        profiles.check()?;
+        Ok(profiles)
+    }
+
+    /// Check the invariants the engine relies on. [`Profiles::parse`] runs it, and
+    /// so does [`crate::Mock::with_profiles`], since the fields are public.
+    pub fn check(&self) -> Result<(), ProfileError> {
+        let bad = |m: String| Err(ProfileError::Invalid(m));
         let mut names = std::collections::BTreeSet::new();
-        for p in &file.profiles {
+        for p in &self.profiles {
             let at = &p.name;
             if !names.insert(p.name.as_str()) {
                 return bad(format!("profile `{at}` is defined twice"));
@@ -138,17 +152,14 @@ impl Profiles {
             if [p.fault_429_ppm, p.fault_500_ppm, p.fault_cut_ppm]
                 .iter()
                 .sum::<u64>()
-                > 1_000_000
+                > PPM
             {
                 return bad(format!(
                     "profile `{at}`: the fault rates add up to more than 1e6 ppm"
                 ));
             }
         }
-        Ok(Self {
-            profiles: file.profiles,
-            blake3: blake3::hash(text.as_bytes()).to_hex().to_string(),
-        })
+        Ok(())
     }
 
     /// The profile named `name`.

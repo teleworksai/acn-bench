@@ -73,3 +73,88 @@ fn jitter_stays_in_its_bounds_and_never_reorders_tokens() {
     }
     assert!(seen_jitter, "jitter is drawn");
 }
+
+fn limited(model: &str, max_tokens: u64) -> Vec<u8> {
+    serde_json::json!({ "model": model, "max_tokens": max_tokens,
+        "messages": [{ "role": "user", "content": C }] })
+    .to_string()
+    .into_bytes()
+}
+
+/// Cites: MLM-30
+#[test]
+fn several_slots_serve_fifo_from_the_slot_that_frees_first() {
+    // Nothing cacheable, so every prefill is 1000 + 10 x 16 = 1160.
+    let mut m = mock_with(
+        &[profile_toml(
+            "t",
+            "automatic_prefix",
+            &["slots = 2", "min_cacheable_tokens = 1000"],
+        )],
+        1,
+    );
+    let a = m.handle(&limited("t", 1), "-", 0); // last token at 1160
+    let b = m.handle(&limited("t", 5), "-", 0); // last token at 1560
+    assert_eq!((a.timing.queue_ns, b.timing.queue_ns), (0, 0));
+    assert_eq!((a.respond_at_ns, b.respond_at_ns), (1160, 1560));
+    let c = m.handle(&limited("t", 5), "-", 0);
+    assert_eq!(c.timing.queue_ns, 1160, "a's slot frees first");
+    assert_eq!(c.respond_at_ns, 1160 + 1160 + 400);
+    let d = m.handle(&limited("t", 1), "-", 0);
+    assert_eq!(d.timing.queue_ns, 1560, "then b's");
+    let e = m.handle(&limited("t", 1), "-", 5000);
+    assert_eq!(e.timing.queue_ns, 0, "both free again");
+}
+
+/// Cites: MLM-30
+#[test]
+fn each_profile_has_its_own_slots() {
+    let mut m = mock_with(
+        &[
+            profile_toml("four", "automatic_prefix", &["slots = 4"]),
+            profile_toml("one", "automatic_prefix", &["slots = 1"]),
+        ],
+        1,
+    );
+    m.handle(&user("four", C), "-", 0);
+    let a = m.handle(&user("one", C), "-", 0);
+    let b = m.handle(&user("one", C), "-", 0);
+    assert_eq!(a.timing.queue_ns, 0);
+    assert_eq!(
+        b.timing.queue_ns, a.respond_at_ns,
+        "one slot, whatever another profile has"
+    );
+}
+
+/// Cites: MLM-31
+#[test]
+fn the_timing_header_is_on_every_response() {
+    let mut m = mock_with(
+        &[
+            profile_toml("t", "automatic_prefix", &[]),
+            profile_toml("f", "automatic_prefix", &["fault_429_ppm = 1000000"]),
+        ],
+        1,
+    );
+    let streamed = serde_json::json!({ "model": "t", "stream": true,
+        "messages": [{ "role": "user", "content": C }] })
+    .to_string()
+    .into_bytes();
+    let s = m.handle(&streamed, "-", 0);
+    assert_eq!(
+        header(&s, "x-acn-mock-timing"),
+        Some("queue_ns=0 prefill_ns=1160 decode_ns=400")
+    );
+    for (o, status) in [
+        (m.handle(&user("f", C), "-", 0), 429),
+        (m.handle(b"nope", "-", 0), 400),
+        (m.handle(&user("missing", C), "-", 0), 400),
+    ] {
+        assert_eq!(o.status, status);
+        assert_eq!(
+            header(&o, "x-acn-mock-timing"),
+            Some("queue_ns=0 prefill_ns=0 decode_ns=0"),
+            "an error is answered at arrival"
+        );
+    }
+}

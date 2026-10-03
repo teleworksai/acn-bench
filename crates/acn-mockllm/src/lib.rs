@@ -13,7 +13,7 @@ pub mod server;
 
 pub use engine::{Mock, Outcome};
 
-/// Anything that stops the mock from starting.
+/// Anything that stops the mock from starting or serving.
 #[derive(Debug, thiserror::Error)]
 pub enum MockError {
     #[error(transparent)]

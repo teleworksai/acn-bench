@@ -146,3 +146,215 @@ fn cached_tokens_never_exceed_the_prompt() {
         }
     }
 }
+
+fn ephemeral() -> serde_json::Value {
+    json!({ "type": "ephemeral" })
+}
+
+/// A system message of two text parts, `p` then `q`, the first marked when `mark`.
+fn two_parts(model: &str, p: &str, q: &str, mark: bool) -> Vec<u8> {
+    let mut first = json!({ "type": "text", "text": p });
+    if mark {
+        first["cache_control"] = ephemeral();
+    }
+    json!({ "model": model, "messages": [
+        { "role": "system", "content": [first, { "type": "text", "text": q }] },
+        { "role": "user", "content": "go" }
+    ] })
+    .to_string()
+    .into_bytes()
+}
+
+/// Cites: MLM-21
+#[test]
+fn a_breakpoint_on_a_content_part_marks_the_prefix_ending_with_that_part() {
+    let mut m = mock_with(&[profile_toml("e", "explicit_breakpoints", &[])], 1);
+    // `{"content":[{"text":"` is 21 bytes and `","type":"text"}` 16: with 35
+    // characters the first part ends at byte 72, 18 tokens.
+    assert_eq!(
+        cached(&mut m, &two_parts("e", C, "a", true), "-", 0),
+        (0, 18)
+    );
+    assert_eq!(
+        cached(&mut m, &two_parts("e", C, "b", true), "-", 1),
+        (18, 0),
+        "the second part changed, the marked first part did not"
+    );
+}
+
+/// Cites: MLM-21
+#[test]
+fn a_breakpoint_on_a_tool_definition_marks_the_prefix_ending_with_it() {
+    let mut m = mock_with(&[profile_toml("e", "explicit_breakpoints", &[])], 1);
+    // `{"function":{"name":"` 21 + 40 + `"},"type":"function"}` 21 + `\n`: 83 bytes, 20 tokens.
+    let req = |u: &str| {
+        json!({ "model": "e", "messages": [{ "role": "user", "content": u }],
+            "tools": [{ "type": "function", "function": { "name": "f".repeat(40) }, "cache_control": ephemeral() }] })
+        .to_string()
+        .into_bytes()
+    };
+    assert_eq!(cached(&mut m, &req("a"), "-", 0), (0, 20));
+    assert_eq!(cached(&mut m, &req("b"), "-", 1), (20, 0));
+}
+
+/// Cites: MLM-21
+#[test]
+fn every_cache_control_member_is_a_breakpoint_and_too_many_is_a_400_before_any_fault() {
+    let cc = ephemeral();
+    let req = json!({ "model": "e", "messages": [{ "role": "user", "content": [
+        { "type": "text", "text": "a".repeat(40), "cache_control": cc },
+        { "type": "text", "text": "b", "cache_control": cc }
+    ] }] })
+    .to_string()
+    .into_bytes();
+    let mut m = mock_with(
+        &[profile_toml(
+            "e",
+            "explicit_breakpoints",
+            &["max_breakpoints = 1"],
+        )],
+        1,
+    );
+    let o = m.handle(&req, "-", 0);
+    assert_eq!(o.status, 400, "two marked parts in one message are two");
+    assert!(String::from_utf8_lossy(&o.body).contains("2 cache_control breakpoints"));
+    // An injected 429 never hides the 400.
+    let mut m = mock_with(
+        &[profile_toml(
+            "e",
+            "explicit_breakpoints",
+            &["max_breakpoints = 1", "fault_429_ppm = 1000000"],
+        )],
+        1,
+    );
+    assert_eq!(m.handle(&req, "-", 0).status, 400);
+    // The other models ignore breakpoints: no limit applies.
+    let auto = String::from_utf8(req)
+        .unwrap()
+        .replace("\"model\":\"e\"", "\"model\":\"a\"");
+    let mut m = mock_with(
+        &[profile_toml(
+            "a",
+            "automatic_prefix",
+            &["max_breakpoints = 1"],
+        )],
+        1,
+    );
+    assert_eq!(m.handle(auto.as_bytes(), "-", 0).status, 200);
+}
+
+/// Cites: MLM-21
+#[test]
+fn a_request_can_read_a_shorter_marked_prefix_and_write_a_longer_one() {
+    let mut m = mock_with(&[profile_toml("e", "explicit_breakpoints", &[])], 1);
+    let s33 = "s".repeat(33);
+    assert_eq!(
+        cached(&mut m, &with_system(&s33, &[("a", false)], "e"), "-", 0),
+        (0, 16)
+    );
+    // The system element is 16 tokens; the user element `{"content":C,"role":"user"}\n`
+    // another 16. cache_write_tokens is the longest prefix written (ADR-16).
+    assert_eq!(
+        cached(&mut m, &with_system(&s33, &[(C, true)], "e"), "-", 1),
+        (16, 32)
+    );
+    assert_eq!(
+        cached(&mut m, &with_system(&s33, &[(C, true)], "e"), "-", 2),
+        (32, 0)
+    );
+}
+
+/// Cites: MLM-22
+#[test]
+fn automatic_prefix_rounds_down_to_the_increment_grid() {
+    let mut m = mock_with(&[profile_toml("a", "automatic_prefix", &[])], 1);
+    let c39 = format!("{C}9999"); // 29 + 39 = 68 bytes, 17 tokens
+    assert_eq!(acn_mockllm::prompt::tokens_of(29 + c39.len()), 17);
+    assert_eq!(cached(&mut m, &user("a", &c39), "-", 0), (0, 0));
+    assert_eq!(
+        cached(&mut m, &user("a", &c39), "-", 1),
+        (16, 0),
+        "8 + 2 x 4, not 17"
+    );
+}
+
+/// Cites: MLM-23
+#[test]
+fn blocks_expire_by_ttl() {
+    let mut m = mock_with(&[profile_toml("b", "block_granular", &[])], 1);
+    assert_eq!(cached(&mut m, &user("b", C), "-", 0), (0, 16));
+    assert_eq!(cached(&mut m, &user("b", C), "-", 1_000_000), (16, 0));
+    assert_eq!(
+        cached(&mut m, &user("b", C), "-", 2_000_001),
+        (0, 16),
+        "last used at 1e6, older than the 1e6 ttl"
+    );
+}
+
+/// The block hash of SPEC 030 as ADR-16 states it: tenant length, tenant, prefix.
+fn block_hash(tenant: &str, prefix: &[u8]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(&(tenant.len() as u64).to_le_bytes());
+    h.update(tenant.as_bytes());
+    h.update(prefix);
+    *h.finalize().as_bytes()
+}
+
+/// Cites: MLM-23
+#[test]
+fn leaves_used_at_the_same_time_are_evicted_lowest_hash_first() {
+    // Two tenants store 4 blocks each at t = 0: 8 > 5, so three leaves go, each
+    // time the lower-hashed of the two chains' current leaves.
+    let mut m = mock_with(&[profile_toml("b", "block_granular", &[])], 1);
+    assert_eq!(cached(&mut m, &user("b", C), "x", 0), (0, 16));
+    assert_eq!(cached(&mut m, &user("b", C), "y", 0), (0, 16));
+    let bytes = format!("{{\"content\":\"{C}\",\"role\":\"user\"}}\n");
+    let chain = |t: &str| -> Vec<[u8; 32]> {
+        (1..=4)
+            .map(|j| block_hash(t, &bytes.as_bytes()[..16 * j]))
+            .collect()
+    };
+    let (mut x, mut y) = (chain("x"), chain("y"));
+    for _ in 0..3 {
+        if x.last() < y.last() || y.is_empty() {
+            x.pop();
+        } else {
+            y.pop();
+        }
+    }
+    assert_eq!(m.cache_sizes().1, 5);
+    let blocks = |n: usize| 4 * n as u64;
+    // Each read rewrites what it misses and may evict the other chain: read each
+    // from the state both share.
+    let mut other = m.clone();
+    assert_eq!(cached(&mut other, &user("b", C), "y", 1).0, blocks(y.len()));
+    assert_eq!(
+        cached(&mut m, &user("b", C), "x", 1).0,
+        blocks(x.len()),
+        "x keeps {} blocks",
+        x.len()
+    );
+}
+
+/// Cites: MLM-20
+#[test]
+fn profiles_never_share_cache_entries() {
+    let mut m = mock_with(
+        &[
+            profile_toml("a1", "automatic_prefix", &[]),
+            profile_toml("a2", "automatic_prefix", &["ttl_ns = 1"]),
+        ],
+        1,
+    );
+    assert_eq!(cached(&mut m, &user("a1", C), "-", 0), (0, 0));
+    assert_eq!(
+        cached(&mut m, &user("a2", C), "-", 10),
+        (0, 0),
+        "another profile is another model"
+    );
+    assert_eq!(
+        cached(&mut m, &user("a1", C), "-", 20),
+        (16, 0),
+        "a2's short ttl does not expire a1's entries"
+    );
+}
