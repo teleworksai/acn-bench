@@ -12,26 +12,40 @@ ids = [
 [[implemented]]
 spec = "010"
 ids = [
-  "TRC-2", "TRC-20", "TRC-21", "TRC-22", "TRC-23", "TRC-24", "TRC-25", "TRC-26",
-  "TRC-27", "TRC-28", "TRC-30", "TRC-31", "TRC-32", "TRC-33", "TRC-34", "TRC-35",
-  "TRC-36", "TRC-37", "TRC-38",
+  "TRC-1", "TRC-2", "TRC-10", "TRC-11", "TRC-12", "TRC-13", "TRC-14", "TRC-20",
+  "TRC-21", "TRC-22", "TRC-23", "TRC-24", "TRC-25", "TRC-26", "TRC-27", "TRC-28",
+  "TRC-30", "TRC-31", "TRC-32", "TRC-33", "TRC-34", "TRC-35", "TRC-36", "TRC-37",
+  "TRC-38",
 ]
 
 [[implemented]]
 spec = "030"
 ids = [
-  "MLM-1", "MLM-2", "MLM-3", "MLM-5", "MLM-6", "MLM-7", "MLM-8", "MLM-10", "MLM-11",
-  "MLM-20", "MLM-21", "MLM-22", "MLM-23", "MLM-30", "MLM-31", "MLM-40", "MLM-41", "MLM-50",
+  "MLM-1", "MLM-2", "MLM-3", "MLM-4", "MLM-5", "MLM-6", "MLM-7", "MLM-8", "MLM-10",
+  "MLM-11", "MLM-20", "MLM-21", "MLM-22", "MLM-23", "MLM-30", "MLM-31", "MLM-40",
+  "MLM-41", "MLM-50", "MLM-60",
 ]
-# T03 (ADR-16) cites ahead of scope: MLM-4 and MLM-60, whose remaining clauses bind the
-# harness (T04), and MLM-51, a review rule (a profile name is never reused).
+
+[[implemented]]
+spec = "040"
+ids = [
+  "HAR-1", "HAR-2", "HAR-3", "HAR-4", "HAR-5",
+  "HAR-10", "HAR-11", "HAR-12", "HAR-13", "HAR-14", "HAR-15", "HAR-16", "HAR-17",
+  "HAR-20", "HAR-21", "HAR-22", "HAR-23", "HAR-24", "HAR-25",
+  "HAR-30", "HAR-31", "HAR-32", "HAR-33", "HAR-34",
+  "HAR-40", "HAR-41", "HAR-42", "HAR-43",
+  "HAR-50", "HAR-51", "HAR-52",
+  "HAR-60", "HAR-61",
+]
+# T03 (ADR-16) cited MLM-4 and MLM-60 ahead of scope; T04 (ADR-17) completes their
+# harness clauses. MLM-51 stays out: a review rule (a profile name is never reused).
 
 # T02 lands as a series of PRs (ADR-11); each adds the IDs it completes. Cited ahead of
 # scope by T02a: TRC-3 and TRC-12 (value sets). T02b (ADR-13) cites ahead of scope:
-# TRC-1 (producers emit through the SDK; the harness is T04), TRC-19 (resources are
+# TRC-1 (producers emit through the SDK; T04 brings the harness), TRC-19 (resources are
 # checked; the ban on commit identifiers is not machine-checkable). T02c (ADR-14) adds
 # the views and the ingester; T02d (ADR-15) OTLP, report coverage and clock offsets.
-# TRC-18 stays out: deriving acn.server.* from node spans needs a frozen mapping (T30). CON-28's kit clause and CON-29's live-option clause bind T16 and T04.
+# TRC-18 stays out: deriving acn.server.* from node spans needs a frozen mapping (T30). CON-28's kit clause binds T16; CON-29's live-option clause is T04's (HAR-25).
 # Not yet in scope although cited: CON-5 (its clippy clause and the raw-output golden
 # vector exist; acn_emu::{clock,rng} and the ranged/distribution vectors land in T10–T12).
 # CON-14 is cited by the pr-check tests but stays out of scope: the label rule is

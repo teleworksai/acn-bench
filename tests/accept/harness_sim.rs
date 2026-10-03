@@ -1,0 +1,123 @@
+//! SPEC 040 acceptance: a sim run of the smoke workload, twice, yields
+//! byte-identical bundles that `acn bundle verify --views` accepts (HAR-50..52,
+//! HAR-41, TRC-24), on the embedded mock profiles.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // CON-19: tests are exempt
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use acn_harness::agent::Opts;
+use acn_harness::run::{HypothesisArg, RunConfig, run};
+use acn_harness::wire::Backend;
+use acn_trace::bundle;
+use acn_trace::identity::{BuildParts, Digest, Mode};
+
+fn smoke() -> PathBuf {
+    PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../workloads/harness-smoke.toml"
+    ))
+}
+
+fn cfg(runs: &Path, model: &str, vary: &[(&str, &str)]) -> RunConfig {
+    RunConfig {
+        workload: smoke(),
+        backend: Backend::Mockllm,
+        model: model.into(),
+        mode: Mode::Sim,
+        arm: "treatment".into(),
+        replicates: 3,
+        vary: vary
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect::<BTreeMap<_, _>>(),
+        opts: Opts::default(),
+        hypothesis: HypothesisArg::None { seed: 20_261_002 },
+        runs_dir: runs.to_path_buf(),
+        start_dir: runs.to_path_buf(),
+        engine_hash: Digest::of(b"engine"),
+        build: BuildParts {
+            cargo_lock: Digest::of(b"lock"),
+            rust_toolchain: Digest::of(b"toolchain"),
+            cargo_config: Digest::of(b"config"),
+            source_hash: Digest::of(b"source"),
+            target: "accept",
+            profile: "debug",
+            features: "",
+            rustflags: "",
+        }
+        .info()
+        .unwrap(),
+        profiles: None,
+    }
+}
+
+fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+    let mut out = BTreeMap::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            let rel = p
+                .strip_prefix(dir)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            if p.is_dir() {
+                if rel != bundle::LOGS {
+                    stack.push(p);
+                }
+            } else {
+                out.insert(rel, std::fs::read(&p).unwrap());
+            }
+        }
+    }
+    out
+}
+
+/// Cites: HAR-50, HAR-51, HAR-41, TRC-24, CON-5, MLM-60
+#[test]
+fn two_sim_runs_of_the_smoke_workload_are_byte_identical() {
+    for (model, vary) in [
+        ("mock-explicit", &[][..]),
+        (
+            "mock-auto",
+            &[
+                ("fanout_prompting", "fork_from_prefix"),
+                ("tool_order_stable", "false"),
+            ][..],
+        ),
+        ("mock-blocks", &[("backfill_mode", "tail_restate")][..]),
+    ] {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let wa = run(&cfg(a.path(), model, vary)).unwrap();
+        let wb = run(&cfg(b.path(), model, vary)).unwrap();
+        assert_eq!(wa.run_id, wb.run_id, "{model}");
+        assert_eq!(wa.bundle_digest, wb.bundle_digest, "{model}");
+        let (fa, fb) = (files(&wa.dir), files(&wb.dir));
+        assert_eq!(fa, fb, "{model}: every file but logs/");
+        bundle::verify_views(&wa.dir).unwrap();
+        let m: serde_json::Value = serde_json::from_slice(&fa[bundle::MANIFEST]).unwrap();
+        assert_eq!(m["backend"], "mockllm", "MLM-60");
+        assert_eq!(m["model"], model);
+        assert!(m.get("endpoint_host").is_none(), "no host in sim (CON-26)");
+        assert_eq!(m["params"]["replicates"], "3");
+    }
+}
+
+/// Cites: HAR-52
+#[test]
+fn sim_is_the_mock_only_and_netem_is_not_yet_defined() {
+    let d = tempfile::tempdir().unwrap();
+    let mut c = cfg(d.path(), "mock-auto", &[]);
+    c.backend = Backend::Anthropic;
+    assert!(run(&c).unwrap_err().to_string().contains("HAR-52"));
+    let mut c = cfg(d.path(), "mock-auto", &[]);
+    c.mode = Mode::Netem;
+    assert!(run(&c).unwrap_err().to_string().contains("HAR-52"));
+    assert!(
+        std::fs::read_dir(d.path()).unwrap().next().is_none(),
+        "nothing written"
+    );
+}

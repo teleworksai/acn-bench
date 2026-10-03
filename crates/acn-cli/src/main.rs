@@ -1,6 +1,6 @@
 //! `acn` — the acn-bench command line (CON-8: one JSON object on stdout,
 //! logs on stderr, exit 0 iff `"ok": true`). Subcommands land with their specs:
-//! `version` (T01), `bundle verify` (TRC-23, T02b).
+//! `version` (T01), `bundle verify` (TRC-23, T02b), `harness run` (HAR-50, T04).
 #![forbid(unsafe_code)]
 
 mod build_info;
@@ -34,6 +34,66 @@ enum Cmd {
         #[command(subcommand)]
         cmd: BundleCmd,
     },
+    /// The agent harness (SPEC 040).
+    Harness {
+        #[command(subcommand)]
+        cmd: HarnessCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum HarnessCmd {
+    /// Run one cell and one arm of a workload into one bundle (HAR-50).
+    Run(Box<HarnessRun>),
+}
+
+#[derive(clap::Args)]
+struct HarnessRun {
+    /// The workload file (HAR-60).
+    #[arg(long)]
+    workload: PathBuf,
+    /// mockllm, openai, vllm, sglang or anthropic (HAR-20).
+    #[arg(long)]
+    backend: String,
+    /// The model requested; for mockllm, the profile name (CON-29).
+    #[arg(long)]
+    model: String,
+    /// sim (mockllm only) or live (HAR-52).
+    #[arg(long, default_value = "sim")]
+    mode: String,
+    /// treatment or control.
+    #[arg(long, default_value = "treatment")]
+    arm: String,
+    #[arg(long, default_value_t = 1)]
+    replicates: u32,
+    /// `<name>=<value>`, once per varied parameter: a knob, or with a hypothesis
+    /// any of its [varies] parameters (HAR-10).
+    #[arg(long = "vary", value_name = "NAME=VALUE")]
+    vary: Vec<String>,
+    /// The hypothesis file; the seed is derived from it (HYP-9).
+    #[arg(long, conflicts_with = "seed", required_unless_present = "seed")]
+    hypothesis: Option<PathBuf>,
+    /// The run seed, for a run with no hypothesis.
+    #[arg(long)]
+    seed: Option<u64>,
+    /// `opt.endpoint`: the endpoint's base URL (HAR-25).
+    #[arg(long, default_value = "")]
+    endpoint: String,
+    /// `opt.max_retries` (HAR-24).
+    #[arg(long, default_value_t = 3)]
+    max_retries: u64,
+    /// `opt.retry_base_ms` (HAR-24).
+    #[arg(long, default_value_t = 500)]
+    retry_base_ms: u64,
+    /// `opt.request_timeout_ms` (HAR-24).
+    #[arg(long, default_value_t = 600_000)]
+    request_timeout_ms: u64,
+    /// `opt.stall_threshold_ms` (TRC-12).
+    #[arg(long, default_value_t = 250.0)]
+    stall_threshold_ms: f64,
+    /// Where bundles go.
+    #[arg(long, default_value = "runs")]
+    runs_dir: PathBuf,
 }
 
 #[derive(Subcommand)]
@@ -262,6 +322,54 @@ fn bundle_import(
     })
 }
 
+fn harness_run(a: &HarnessRun) -> Value {
+    respond("harness run", || {
+        let mut vary = std::collections::BTreeMap::new();
+        for v in &a.vary {
+            let (k, val) = v
+                .split_once('=')
+                .ok_or_else(|| anyhow::anyhow!("--vary `{v}` is not NAME=VALUE"))?;
+            if vary.insert(k.to_owned(), val.to_owned()).is_some() {
+                anyhow::bail!("--vary `{k}` is given twice");
+            }
+        }
+        let hypothesis = match (&a.hypothesis, a.seed) {
+            (Some(p), None) => acn_harness::run::HypothesisArg::File(p.clone()),
+            (None, Some(seed)) => acn_harness::run::HypothesisArg::None { seed },
+            _ => anyhow::bail!("give exactly one of --hypothesis and --seed"),
+        };
+        let cfg = acn_harness::run::RunConfig {
+            workload: a.workload.clone(),
+            backend: acn_harness::wire::Backend::parse(&a.backend)?,
+            model: a.model.clone(),
+            mode: acn_trace::identity::Mode::parse(&a.mode)?,
+            arm: a.arm.clone(),
+            replicates: a.replicates,
+            vary,
+            opts: acn_harness::agent::Opts {
+                endpoint: a.endpoint.clone(),
+                max_retries: a.max_retries,
+                retry_base_ms: a.retry_base_ms,
+                request_timeout_ms: a.request_timeout_ms,
+                stall_threshold_ms: a.stall_threshold_ms,
+            },
+            hypothesis,
+            runs_dir: a.runs_dir.clone(),
+            start_dir: std::env::current_dir()?,
+            engine_hash: build_info::engine_hash()?,
+            build: build_info::build_info()?,
+            profiles: None,
+        };
+        let w = acn_harness::run::run(&cfg)?;
+        Ok(json!({
+            "ok": true,
+            "run_id": w.run_id.to_hex(),
+            "bundle_digest": w.bundle_digest.to_hex(),
+            "dir": w.dir.display().to_string(),
+        }))
+    })
+}
+
 fn version() -> Value {
     match (build_info::build_info(), build_info::engine_hash()) {
         (Ok(b), Ok(e)) => json!({
@@ -358,6 +466,9 @@ fn run() -> Value {
                     out,
                 },
         } => bundle_import(&otlp_json, with.as_deref(), &out),
+        Cmd::Harness {
+            cmd: HarnessCmd::Run(a),
+        } => harness_run(&a),
     }
 }
 

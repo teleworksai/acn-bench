@@ -20,3 +20,4 @@
 | [ADR-14](../decisions/ADR-14.md) | T02c: the ingester, the critical path and the views | accepted (T02c, Class B) | TRC-10, TRC-22, TRC-30 to TRC-35, TRC-37, TRC-38 |
 | [ADR-15](../decisions/ADR-15.md) | T02d: OTLP export and import, report coverage, clock offsets | accepted (T02d, Class B) | TRC-18, TRC-26, TRC-28, TRC-36 |
 | [ADR-16](../decisions/ADR-16.md) | T03: a minimal clock, and the readings SPEC 030 leaves open | accepted (T03, Class B) | CON-5, MLM-1, MLM-3 to MLM-5, MLM-7, MLM-20 to MLM-23, MLM-30, MLM-31, MLM-40, MLM-41, MLM-51 |
+| [ADR-17](../decisions/ADR-17.md) | T04: the harness, and the readings SPEC 040 leaves open | accepted (T04; Class B, with a Class C part and a `spec-change` part) | HYP-6, HYP-9, HAR-1 to HAR-5, HAR-10 to HAR-17, HAR-20 to HAR-25, HAR-30 to HAR-34, HAR-40 to HAR-43, HAR-50 to HAR-52, HAR-60, HAR-61; TRC-10, TRC-11, TRC-12, TRC-20; MLM-4, MLM-21, MLM-60; CON-26, CON-29 |

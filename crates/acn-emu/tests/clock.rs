@@ -34,3 +34,13 @@ fn futures_block(f: acn_emu::clock::Sleep<'_>) {
         .unwrap()
         .block_on(f);
 }
+
+/// Cites: TRC-26
+#[test]
+fn utc_text_is_rfc_3339_on_known_instants() {
+    use acn_emu::clock::utc_text;
+    assert_eq!(utc_text(0), "1970-01-01T00:00:00Z");
+    assert_eq!(utc_text(951_782_400), "2000-02-29T00:00:00Z");
+    assert_eq!(utc_text(1_790_000_000), "2026-09-21T14:13:20Z");
+    assert_eq!(acn_emu::clock::wall_time_utc().len(), 20);
+}
