@@ -11,3 +11,21 @@ description = "deterministic mock inference server with cache accounting (SPEC 0
 workspace = true
 
 [dependencies]
+acn-emu = { path = "../acn-emu" }
+acn-trace.workspace = true
+axum.workspace = true
+blake3.workspace = true
+futures-util.workspace = true
+rand_chacha.workspace = true
+rand_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+acn-trace = { workspace = true, features = ["io"] }
+reqwest.workspace = true
+tokio.workspace = true
