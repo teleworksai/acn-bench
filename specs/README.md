@@ -5,7 +5,7 @@
 | 000 | 000-constitution.md | CON | draft v0.2 |
 | 010 | 010-trace-schema.md | TRC | draft v0.2 (ACN profile of OpenTelemetry; ADR-2) |
 | 020 | 020-emulation.md | EMU | to write (T10) |
-| 030 | 030-mock-inference.md | MLM | to write (T03) |
+| 030 | 030-mock-inference.md | MLM | draft v0.1 (mock inference: wire format, prompt tokens, three cache models, timing, replies; implemented by T03) |
 | 040 | 040-harness.md | HAR | to write (T04) |
 | 050 | 050-workload-generator.md | GEN | to write (T13) |
 | 060 | 060-replayer.md | RPL | to write (T50) |
