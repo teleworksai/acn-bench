@@ -1,0 +1,34 @@
+# CANDIDATE (editable; not frozen; verdicts are exploratory) — CON-17
+[poc]
+id = "p17"
+status = "candidate"
+title = "Agent-to-agent traffic is the class that breaks 'agent traffic is ordinary' first"
+report_refs = ["§3.7", "Appendix E (new, from lab)"]
+
+[hypothesis]
+statement = "Two harnesses negotiating over MCP/A2A across an impaired link show a network-attributable share of completion time above 5% at impairments where harness-to-model traffic stays below 5%, because each side's retries, timeouts and fan-out compound across the boundary."
+
+[varies]
+protocol = { kind = "enum", values = ["mcp", "a2a"] }
+topology = { kind = "enum", values = ["peer", "orchestrator_worker"] }
+rtt_ms   = { kind = "range", min = 5, max = 300 }
+loss_model = { kind = "enum", values = ["iid", "gilbert_elliott", "handover_trace"] }
+
+[design]
+twin_required = true
+search = "bisect"            # find the rtt_ms where the share crosses 5%
+replicates = 10
+sim_live_tolerance = { network_attributable_share = 0.03, completion_time_p99 = 0.20 }
+
+[measures]
+primary = ["network_attributable_share", "completion_time_p99", "retry_count", "round_trips_per_action"]
+
+[control]
+description = "The same two-party workflow as a plain REST orchestration with fixed timeouts, same scenario."
+
+[falsifier]
+predicate = "network_attributable_share(a2a) - network_attributable_share(control) < 0.05 at all rtt_ms <= 150"
+
+[expected]
+outcome = "pass"
+note = "Exploratory. If it passes in lab, graduate as SPEC 12x with a frozen copy."

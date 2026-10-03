@@ -1,0 +1,49 @@
+# hypotheses/p4.toml — POC 4: harness cache discipline as a controlled variable
+# FROZEN after M0 (CON-7, CON-17). Format defined by SPEC 080. Any change is a Class C env-change PR.
+
+[poc]
+id = "p4"
+title = "Harness cache discipline as a controlled variable"
+spec = "specs/100-p4-harness-discipline.md"
+report_refs = ["§3.6", "Appendix E POC 4"]
+
+[hypothesis]
+statement = "The harness, not the model or the serving layer, decides cacheability, and its discipline moves cost per successful task by more than the run-to-run noise floor. Instantiated and reported per provider (CON-26); mechanics differ (explicit breakpoints vs automatic prefix vs block-granular)."
+
+[varies]
+# name = { kind, values | range } — the only parameters a search loop may change
+timestamp_in_system_prompt = { kind = "bool" }
+tool_order_stable          = { kind = "bool" }
+backfill_mode              = { kind = "enum", values = ["tail_restate", "mid_prefix"] }
+fanout_prompting           = { kind = "enum", values = ["fork_from_prefix", "per_child"] }
+compaction_trigger         = { kind = "enum", values = ["window_full", "read_cost_threshold"] }
+cache_breakpoint_placement = { kind = "enum", values = ["none", "system_only", "system_and_tools", "rolling_tail"] }  # explicit-breakpoint providers only
+provider                   = { kind = "enum", values = ["anthropic", "openai", "vllm", "sglang"] }  # reported per value, never pooled
+workload                   = { kind = "enum", values = ["coding", "retrieval", "fanout"] }
+
+[measures]
+primary   = ["cached_token_ratio", "ttft_p50_ms", "ttft_p99_ms", "cost_per_success"]
+secondary = ["input_tokens_per_turn", "compactions_per_session"]
+
+[control]
+description = "The harness's default configuration (all knobs at their shipped defaults) on the same workload, seed and backend."
+config = { timestamp_in_system_prompt = true, tool_order_stable = true, backfill_mode = "mid_prefix", fanout_prompting = "per_child", compaction_trigger = "window_full", cache_breakpoint_placement = "system_only" }
+
+[design]
+twin_required = false        # LOOP-4: network-free hypothesis; L2 twin not applicable
+search = "grid"              # LOOP-10
+replicates = 20
+seeds = "derived"           # seed_i = blake3(run_seed ‖ i)
+backends = ["mockllm", "real-api"]   # mockllm bundles are mock-gated and never cited (CON-26)
+min_providers_for_verdict = 2
+sim_live_tolerance = { cached_token_ratio = 0.05, ttft_p50_ms = 0.15 }   # CON-25 (n/a for POC 4 network-free runs; kept for format)
+
+[falsifier]
+# Predicate over bundle statistics, evaluated by `acn hyp verdict`.
+# True ⇒ hypothesis FAILS.
+predicate = "max_over_knobs(abs(effect(cost_per_success))) < noise_floor(cost_per_success, control, ci = 0.95)"
+inconclusive_if = "replicates < 20 or providers_reported < 2"
+
+[expected]
+outcome = "pass"
+note = "Discipline is expected to move cost per successful task by tens of percent; a fail is a publishable negative."

@@ -7,7 +7,9 @@ name = "acn-accept"
 version = "0.1.0"
 dependencies = [
  "acn-harness",
+ "acn-hyp",
  "acn-trace",
+ "blake3",
  "serde_json",
  "tempfile",
 ]
@@ -22,6 +24,7 @@ version = "0.1.0"
 dependencies = [
  "acn-emu",
  "acn-harness",
+ "acn-hyp",
  "acn-mockllm",
  "acn-trace",
  "anyhow",
@@ -77,6 +80,16 @@ dependencies = [
 [[package]]
 name = "acn-hyp"
 version = "0.1.0"
+dependencies = [
+ "acn-trace",
+ "blake3",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "tempfile",
+ "thiserror",
+ "toml",
+]
 
 [[package]]
 name = "acn-mockllm"
@@ -2536,6 +2549,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "acn-hyp",
  "acn-trace",
  "blake3",
  "clap",

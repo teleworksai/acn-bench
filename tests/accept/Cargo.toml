@@ -17,9 +17,11 @@ workspace = true
 
 [dependencies]
 acn-harness = { path = "../../crates/acn-harness" }
+acn-hyp = { path = "../../crates/acn-hyp" }
 acn-trace = { workspace = true, features = ["io"] }
 
 [dev-dependencies]
+blake3.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 
@@ -34,3 +36,7 @@ path = "trace_roundtrip.rs"
 [[test]]
 name = "harness_sim"
 path = "harness_sim.rs"
+
+[[test]]
+name = "hyp_lint"
+path = "hyp_lint.rs"

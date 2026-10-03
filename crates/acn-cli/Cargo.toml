@@ -21,6 +21,7 @@ real-api = ["acn-harness/real-api"]
 
 [dependencies]
 acn-harness = { path = "../acn-harness" }
+acn-hyp = { path = "../acn-hyp" }
 acn-trace = { workspace = true, features = ["io"] }
 anyhow.workspace = true
 clap.workspace = true
