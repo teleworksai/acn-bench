@@ -56,6 +56,20 @@ enum HypCmd {
         /// The hypothesis file.
         file: PathBuf,
     },
+    /// Verify bundles and judge them against a hypothesis: the only path from
+    /// bundles to a verdict (HYP-20). Writes `runs/verdicts/<verdict_id>/verdict.json`.
+    Verdict {
+        /// The hypothesis file.
+        #[arg(long)]
+        hypothesis: PathBuf,
+        /// The bundle directories, `runs/<run_id>/`, in any order.
+        #[arg(required = true)]
+        bundles: Vec<PathBuf>,
+        /// The `runs` directory `verdicts/` goes under; it must be named `runs`
+        /// (HYP-4).
+        #[arg(long, default_value = "runs")]
+        runs_dir: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -474,6 +488,28 @@ fn hyp_lint(file: &std::path::Path) -> Value {
     })
 }
 
+/// `acn hyp verdict` (HYP-20): `ok` reports that the evaluation completed,
+/// whatever the verdict; a refusal is `ok: false` with its reason.
+fn hyp_verdict(file: &std::path::Path, dirs: &[PathBuf], runs_dir: &std::path::Path) -> Value {
+    respond("hyp verdict", || {
+        let h = acn_hyp::load(file)?;
+        let bundles = dirs
+            .iter()
+            .map(|d| acn_hyp::read::read(d))
+            .collect::<Result<Vec<_>, _>>()?;
+        let v = acn_hyp::verdict::verdict(&h, bundles, build_info::engine_hash()?)?;
+        let object: Value = serde_json::from_str(&v.text())?;
+        let path = acn_hyp::verdict::write(runs_dir, &v)?;
+        Ok(json!({
+            "ok": true,
+            "verdict_id": v.verdict_id.to_hex(),
+            "verdict_path": path.display().to_string(),
+            "run_ids": v.bundles.iter().map(|(r, _, _)| r.to_hex()).collect::<Vec<_>>(),
+            "verdict": object,
+        }))
+    })
+}
+
 fn version() -> Value {
     match (build_info::build_info(), build_info::engine_hash()) {
         (Ok(b), Ok(e)) => json!({
@@ -576,6 +612,14 @@ fn run() -> Value {
         Cmd::Hyp {
             cmd: HypCmd::Lint { file },
         } => hyp_lint(&file),
+        Cmd::Hyp {
+            cmd:
+                HypCmd::Verdict {
+                    hypothesis,
+                    bundles,
+                    runs_dir,
+                },
+        } => hyp_verdict(&hypothesis, &bundles, &runs_dir),
     }
 }
 

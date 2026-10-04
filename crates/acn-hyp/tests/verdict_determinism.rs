@@ -1,10 +1,13 @@
 //! HYP-15: the verdict seed and its known answer, the sub-stream names, the
 //! ranged-integer sampler's golden vector, the percentile indices (at the default
 //! level and at 0.9), the `noise_floor` halves, and bootstraps that repeat bit
-//! for bit. The verdict-level checks (byte-identical `verdict.json`, argument
-//! order, ignored replicates) land with `acn hyp verdict` (T05.2b, ADR-19).
+//! for bit; and at the verdict level, `verdict_id`'s known answer, a
+//! byte-identical `verdict.json` across evaluations and argument orders, and a
+//! verdict seed that ignored replicates and twin bundles do not move.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // CON-19: tests are exempt
+
+mod common;
 
 use acn_hyp::bootstrap::{
     B, Function, below, bounds, effect_stats, half_width, percentile_indices, split_half_stats,
@@ -182,4 +185,120 @@ fn bootstraps_repeat_bit_for_bit_and_resample_pairs_and_halves() {
     // A statistic that overflows is not finite: no bounds.
     assert!(effect_stats(&[f64::MAX; 2], &[-f64::MAX; 2], rng()).is_none());
     assert_eq!(Function::NoiseFloor.as_str(), "noise_floor");
+}
+
+/// Cites: HYP-15, CON-27
+#[test]
+fn verdict_id_matches_its_known_answer() {
+    let h = Digest(*blake3::hash(b"a hypothesis file").as_bytes());
+    let pairs = [
+        (Digest::of(b"run a"), Digest::of(b"digest a")),
+        (Digest::of(b"run b"), Digest::of(b"digest b")),
+    ];
+    // The blake3 crate directly: the bare context, its zero byte, the raw
+    // hypothesis hash, then each run_id and bundle_digest, raw, in order.
+    let mut pre = b"acn-bench/verdict_id/v1\0".to_vec();
+    pre.extend_from_slice(&h.0);
+    for (r, d) in &pairs {
+        pre.extend_from_slice(&r.0);
+        pre.extend_from_slice(&d.0);
+    }
+    let expected = Digest(*blake3::hash(&pre).as_bytes());
+    assert_eq!(acn_hyp::verdict::verdict_id(&h, &pairs).unwrap(), expected);
+    assert_ne!(
+        acn_hyp::verdict::verdict_id(&h, &pairs[..1]).unwrap(),
+        expected
+    );
+}
+
+fn sample_set(h: &acn_hyp::Hypothesis) -> Vec<acn_hyp::read::BundleData> {
+    use common::bundles::{Spec, alt, bundle};
+    let base = alt(4, 0.40, 0.46);
+    let mut out = Vec::new();
+    for m in ["fast", "slow"] {
+        out.push(bundle(
+            h,
+            &Spec::new(
+                &format!("c-{m}"),
+                &[("knob", "false"), ("mode", m)],
+                "control",
+                base.clone(),
+            ),
+        ));
+    }
+    for k in ["false", "true"] {
+        for m in ["fast", "slow"] {
+            let e = if k == "true" && m == "slow" {
+                0.3
+            } else {
+                0.05
+            };
+            let r = base.iter().map(|x| x.map(|x| x + e)).collect();
+            out.push(bundle(
+                h,
+                &Spec::new(
+                    &format!("t-{k}-{m}"),
+                    &[("knob", k), ("mode", m)],
+                    "treatment",
+                    r,
+                ),
+            ));
+        }
+    }
+    out
+}
+
+/// Cites: HYP-15
+#[test]
+fn verdict_json_is_byte_identical_across_evaluations_and_argument_orders() {
+    let h = common::candidate(common::BASE, "t1").0.unwrap();
+    let a = acn_hyp::verdict::verdict(&h, sample_set(&h), common::bundles::engine()).unwrap();
+    let b = acn_hyp::verdict::verdict(&h, sample_set(&h), common::bundles::engine()).unwrap();
+    assert_eq!(a.text(), b.text());
+    let mut rev = sample_set(&h);
+    rev.reverse();
+    let r = acn_hyp::verdict::verdict(&h, rev, common::bundles::engine()).unwrap();
+    assert_eq!(a.text(), r.text());
+    assert_eq!(a.verdict_id, r.verdict_id);
+    // Bundles are listed ascending.
+    let ids: Vec<String> = a.bundles.iter().map(|(r, _, _)| r.to_hex()).collect();
+    let mut sorted = ids.clone();
+    sorted.sort();
+    assert_eq!(ids, sorted);
+}
+
+/// Cites: HYP-15, HYP-21, HYP-22
+#[test]
+fn ignored_replicates_and_twin_bundles_do_not_move_the_resampling() {
+    use common::bundles::{Spec, alt, bundle, extra_replicate};
+    let h = common::candidate(common::BASE, "t1").0.unwrap();
+    let plain = acn_hyp::verdict::verdict(&h, sample_set(&h), common::bundles::engine()).unwrap();
+    let effects = |v: &acn_hyp::verdict::Verdict| {
+        let j: serde_json::Value = serde_json::from_str(&v.text()).unwrap();
+        j["slices"][0]["cells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["effects"].clone())
+            .collect::<Vec<_>>()
+    };
+    let mut more = sample_set(&h);
+    extra_replicate(&mut more[2], 6);
+    more.push(bundle(
+        &h,
+        &Spec::new(
+            "live",
+            &[("knob", "true"), ("mode", "slow")],
+            "treatment",
+            alt(4, 0.7, 0.76),
+        )
+        .mode("live"),
+    ));
+    let v = acn_hyp::verdict::verdict(&h, more, common::bundles::engine()).unwrap();
+    assert_ne!(v.verdict_id, plain.verdict_id, "another set, another id");
+    assert_eq!(
+        effects(&v),
+        effects(&plain),
+        "the same draws: the seed is the hypothesis's"
+    );
 }

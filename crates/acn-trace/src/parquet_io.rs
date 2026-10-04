@@ -700,6 +700,14 @@ pub fn read_trace(dir: &Path, inv: &Inventory) -> Result<Trace> {
     Ok(trace)
 }
 
+/// Read one derived view of a bundle directory (TRC-31..34) back as Arrow batches.
+/// The file must have exactly the schema `views.toml` gives the view (TRC-37).
+pub fn read_view(dir: &Path, view: &crate::schema::View) -> Result<Vec<RecordBatch>> {
+    let schema =
+        crate::ingest::view_schema(view).map_err(|e| WriteError::Invalid(e.to_string()))?;
+    read_table(&dir.join(&view.file), &schema)
+}
+
 /// Read `resources.parquet` back (TRC-19 checks in `bundle::verify`). A file whose
 /// schema is not exactly [`resources_schema`] is refused.
 pub fn read_resources(path: &Path) -> Result<Vec<crate::model::ResourceRow>> {

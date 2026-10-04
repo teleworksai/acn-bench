@@ -115,3 +115,138 @@ fn a_frozen_file_that_can_never_fire_exits_one() {
         "{json}"
     );
 }
+
+const ZZ: &str = r#"[poc]
+id = "zz"
+title = "tool order and the cache"
+
+[hypothesis]
+statement = "A stable tool order moves the cached-token ratio."
+
+[varies]
+tool_order_stable = { kind = "bool" }
+
+[measures]
+primary = ["cached_token_ratio"]
+
+[control]
+description = "the shipped default"
+config = { tool_order_stable = true }
+
+[design]
+search = "grid"
+replicates = 4
+twin_required = false
+
+[falsifier]
+predicate = "max_over_knobs(abs(effect(cached_token_ratio))) < 0.001"
+
+[expected]
+outcome = "pass"
+"#;
+
+/// Cites: HYP-20, CON-8
+#[test]
+fn hyp_verdict_judges_harness_bundles_and_never_overwrites_a_verdict() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("zz.toml"), ZZ).unwrap();
+    let workload = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../workloads/harness-smoke.toml"
+    );
+    let mut bundles = Vec::new();
+    for (arm, stable) in [
+        ("treatment", "false"),
+        ("treatment", "true"),
+        ("control", "true"),
+    ] {
+        let (code, json) = acn_in(
+            dir.path(),
+            &[
+                "harness",
+                "run",
+                "--workload",
+                workload,
+                "--backend",
+                "mockllm",
+                "--model",
+                "mock-explicit",
+                "--arm",
+                arm,
+                "--replicates",
+                "4",
+                "--vary",
+                &format!("tool_order_stable={stable}"),
+                "--hypothesis",
+                "zz.toml",
+            ],
+        );
+        assert_eq!(code, Some(0), "{json}");
+        bundles.push(format!("runs/{}", json["run_id"].as_str().unwrap()));
+    }
+    let mut args = vec!["hyp", "verdict", "--hypothesis", "zz.toml"];
+    args.extend(bundles.iter().rev().map(String::as_str));
+    let (code, json) = acn_in(dir.path(), &args);
+    assert_eq!(code, Some(0), "{json}");
+    assert_eq!(json["ok"], true);
+    let run_ids: Vec<&str> = json["run_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.as_str().unwrap())
+        .collect();
+    assert_eq!(run_ids.len(), 3);
+    let mut sorted = run_ids.clone();
+    sorted.sort_unstable();
+    assert_eq!(run_ids, sorted, "ascending, whatever the argument order");
+    let listed: Vec<&str> = json["verdict"]["bundles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["run_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(run_ids, listed);
+    let id = json["verdict_id"].as_str().unwrap();
+    assert_eq!(json["verdict"]["verdict_id"], id);
+    let rel = json["verdict_path"].as_str().unwrap();
+    assert_eq!(rel, format!("runs/verdicts/{id}/verdict.json"));
+    let path = dir.path().join(rel);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.ends_with('\n'));
+    assert!(
+        json["verdict"]["labels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l == "mock-gated")
+    );
+    // Never overwritten: the same set again is refused.
+    let (code, json) = acn_in(dir.path(), &args);
+    assert_eq!(code, Some(1));
+    assert_eq!(json["ok"], false);
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap()
+            .contains("never overwritten"),
+        "{json}"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    // A directory that is not a bundle is refused.
+    let (code, json) = acn_in(
+        dir.path(),
+        &["hyp", "verdict", "--hypothesis", "zz.toml", "."],
+    );
+    assert_eq!(code, Some(1), "{json}");
+    assert!(
+        json["error"].as_str().unwrap().contains("manifest.json"),
+        "{json}"
+    );
+    // HYP-4: verdicts go under a `runs` directory and nowhere else.
+    let mut elsewhere = args.clone();
+    elsewhere.extend(["--runs-dir", "out"]);
+    let (code, json) = acn_in(dir.path(), &elsewhere);
+    assert_eq!(code, Some(1));
+    assert!(json["error"].as_str().unwrap().contains("HYP-4"), "{json}");
+    assert!(!dir.path().join("out").exists());
+}
