@@ -1,6 +1,6 @@
 {
-  "env_hash": "53cc51e489f2c99e8b03203fc54273d3fe9bd11a31ab210897cf27c2ae685ced",
-  "engine_hash": "0bb592832600b1ac1247d77b99a121131947c479316f80a845e712ae47ce5f4a",
+  "env_hash": "6c2d78c5b6ef9714eff2558813a65310382f8aa1664376ec4b89e4d26bb2a631",
+  "engine_hash": "2bc4d8964d67b08e818781e02068ac11bc83792ba7adb80946164b124146bea2",
   "files": [
     {
       "path": "crates/acn-attrib/src/core/mod.rs",
@@ -8,7 +8,7 @@
     },
     {
       "path": "crates/acn-hyp/Cargo.toml",
-      "blake3": "8639355aaf999c0c0d1aa155c332f4220c01a212b904cd6f6422c88c307dd252"
+      "blake3": "18b1eebcfa5ae294342c7d77ab92952b679c6eeb2681d69a331ee57a9d40b4a4"
     },
     {
       "path": "crates/acn-hyp/src/bootstrap.rs",
@@ -27,8 +27,12 @@
       "blake3": "c66c58333ba07f5f51485adcacdeb57deddb1b54da537796934c03c939a5240a"
     },
     {
+      "path": "crates/acn-hyp/src/json.rs",
+      "blake3": "bbf1fc6f1dab75e1c2f878df5d5eca54f5ad8444eae092aceccc1054b42deaee"
+    },
+    {
       "path": "crates/acn-hyp/src/lib.rs",
-      "blake3": "847b805ed4c5ec6336b71a87ccd35123b5f10f71793e90cd54134378396f2666"
+      "blake3": "9dc9a045d7ba8174b2cc974a41a20910806bf7547fe70c946d581e9698228ce5"
     },
     {
       "path": "crates/acn-hyp/src/lint.rs",
@@ -43,12 +47,24 @@
       "blake3": "41a45fe632511c66a5b15c4b68d337b6c2384b8203b04ba0e6ea263980059f20"
     },
     {
+      "path": "crates/acn-hyp/src/read.rs",
+      "blake3": "490b663f94b3c41e0a66686802166fa1f33a29e046d31bafcec95cffa83891b7"
+    },
+    {
       "path": "crates/acn-hyp/src/slice.rs",
       "blake3": "e45b0de0badbbc68c5cd9f7be0ae8037aba50b0515079fd14ab1cc69df638be4"
     },
     {
+      "path": "crates/acn-hyp/src/verdict.rs",
+      "blake3": "a4ac41fca8892c3405e76b19fe6535f9cb5734e599ef7fb0ad50b0286ce3b907"
+    },
+    {
+      "path": "crates/acn-hyp/tests/common/bundles.rs",
+      "blake3": "3a13f211ed55f008065424634726b2e54fb537b1013c291298967176c568b18d"
+    },
+    {
       "path": "crates/acn-hyp/tests/common/mod.rs",
-      "blake3": "d70c7b60c886500afc74243071832bc373d185593a0c8f732d910f8d87ece6cc"
+      "blake3": "2cf36c14078000eb0137a958723c0b3ff394d05e70426e3a18f0f35c20408cf2"
     },
     {
       "path": "crates/acn-hyp/tests/evaluate.rs",
@@ -80,7 +96,11 @@
     },
     {
       "path": "crates/acn-hyp/tests/verdict_determinism.rs",
-      "blake3": "13a2aba4db5e52dbdcbb60e4419dfbdac3455e3a3158c718ba449f0ce0de820a"
+      "blake3": "53393c3b394e4c0a0c81061ddf473e24462f0a50536c1a3a2cd2bea904e6a818"
+    },
+    {
+      "path": "crates/acn-hyp/tests/verdict_semantics.rs",
+      "blake3": "4412e21088aa7625b0f5cb4562e04a7945fdc28c9e03107b8c866416aa7ed3e1"
     },
     {
       "path": "crates/acn-trace/src/schema/SEMCONV_VERSION",

@@ -4,6 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod bundles;
+
 use acn_hyp::{HypError, Hypothesis};
 
 /// A minimal valid candidate: two pooled parameters (four cells), a control.

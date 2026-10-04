@@ -30,14 +30,12 @@ ids = [
 spec = "080"
 ids = [
   "HYP-1", "HYP-2", "HYP-3", "HYP-5", "HYP-6", "HYP-7", "HYP-8", "HYP-9", "HYP-10",
-  "HYP-13", "HYP-14", "HYP-16", "HYP-27",
+  "HYP-11", "HYP-12", "HYP-13", "HYP-14", "HYP-15", "HYP-16", "HYP-20", "HYP-21",
+  "HYP-22", "HYP-23", "HYP-24", "HYP-27", "HYP-28",
 ]
-# T05 lands in parts (ADR-18, ADR-19). T05.2a completes HYP-13 and HYP-14. Its tests
-# also cite HYP-11 and HYP-12 (evaluation, the outcome that tells a clean false from
-# one past an undefined operand, the formulas and prices), HYP-15 (the bootstrap)
-# and HYP-21 and HYP-22 (the outcome and decision cells). Their remaining halves are
-# T05.2b's: listing undefined replicates in verdict.json (HYP-11), the file-level
-# guard counters (HYP-12), verdict.json itself (HYP-15), and the slice rules.
+# T05 lands in parts (ADR-18, ADR-19, ADR-20). T05.3 adds the read-only and
+# `hypothesis_changed` rules (HYP-4), no relax option (HYP-25) and the freeze PR's
+# shape (HYP-26).
 
 [[implemented]]
 spec = "040"
