@@ -6,9 +6,18 @@ The quantities a hypothesis file may read (SPEC 080, HYP-12). A quantity's value
 
 | Quantity | Unit | Per replicate | Defined by |
 |---|---|---|---|
-| `cached_token_ratio` | ratio | sum(call.cache_read_tokens) / sum(call.input_tokens), over the replicate's calls with both present | SPEC 010 Appendix A `c.cached_token_ratio` |
-| `ttft_p50_ms` | ms | the nearest-rank 50th percentile of call.ttft_ns / 1e6, over the replicate's calls with a ttft | SPEC 010 Appendix A `h.ttft` |
-| `ttft_p99_ms` | ms | the nearest-rank 99th percentile of call.ttft_ns / 1e6, over the replicate's calls with a ttft | SPEC 010 Appendix A `h.ttft` |
-| `cost_per_success` | cost | sum over the replicate's calls of the provider's price of its uncached input, cache read, cache write and output tokens, divided by the number of the replicate's turns with outcome `success` | SPEC 100 (POC 4); the price table lives in this crate (HYP-12) |
-| `input_tokens_per_turn` | tokens | sum(call.input_tokens) / count(turn), over the replicate | SPEC 010 Appendix A `c.input_length_by_call_index` |
-| `compactions_per_session` | count | count(turn where compaction != none) / count(session), over the replicate | SPEC 010 Appendix A `t.compaction_vs_length` |
+| `cached_token_ratio` | ratio | sum(call.cache_read_tokens) / sum(call.input_tokens), over the replicate's calls; undefined when any call lacks either count, or the denominator is 0 | SPEC 010 Appendix A `c.cached_token_ratio` |
+| `ttft_p50_ms` | ms | the nearest-rank 50th percentile (rank ceil(0.5 n)) of call.ttft_ns / 1e6, over the replicate's n calls; undefined when n = 0 or any call has no ttft (a call that never produced a token is not dropped, HYP-11) | SPEC 010 Appendix A `h.ttft` |
+| `ttft_p99_ms` | ms | the nearest-rank 99th percentile (rank ceil(0.99 n)) of call.ttft_ns / 1e6, over the replicate's n calls; undefined when n = 0 or any call has no ttft (a call that never produced a token is not dropped, HYP-11) | SPEC 010 Appendix A `h.ttft` |
+| `cost_per_success` | cost | sum over the replicate's calls of in·(call.input_tokens − call.cache_read_tokens − call.cache_write_tokens) + read·call.cache_read_tokens + write·call.cache_write_tokens + out·call.output_tokens, with the weights of the provider's row in PRICES, divided by count(turn where outcome = success); undefined when any call lacks a count, the provider has no row, or no turn succeeded | SPEC 100 (POC 4); the price table is PRICES in this crate (HYP-12, ADR-19) |
+| `input_tokens_per_turn` | tokens | sum(call.input_tokens) / count(turn), over the replicate; undefined when any call lacks input_tokens or there is no turn | SPEC 010 Appendix A `c.input_length_by_call_index` |
+| `compactions_per_session` | count | count(turn where compaction != none) / count(session), over the replicate; undefined when there is no session | SPEC 010 Appendix A `t.compaction_vs_length` |
+
+## Prices
+
+The weights behind `cost_per_success`, per token, in units of one uncached input token (ADR-19). A provider with no row makes the quantity undefined.
+
+| Provider | Input | Cache read | Cache write | Output | Taken from |
+|---|---|---|---|---|---|
+| `anthropic` | 1 | 0.1 | 1.25 | 5 | Claude 4.x list prices, 5-minute cache writes, October 2026 |
+| `openai` | 1 | 0.1 | 1 | 8 | GPT-5 family list prices (automatic caching, no write surcharge), October 2026 |

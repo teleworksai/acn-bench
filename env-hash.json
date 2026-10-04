@@ -1,6 +1,6 @@
 {
-  "env_hash": "ef40753abf9b46a736443e6ed6d15015b34120335bf015d5162458a4c0b906fd",
-  "engine_hash": "cbb780b9d401772ff8440dbaaa430da57725ef5242d535c107582c015f85afe4",
+  "env_hash": "53cc51e489f2c99e8b03203fc54273d3fe9bd11a31ab210897cf27c2ae685ced",
+  "engine_hash": "0bb592832600b1ac1247d77b99a121131947c479316f80a845e712ae47ce5f4a",
   "files": [
     {
       "path": "crates/acn-attrib/src/core/mod.rs",
@@ -8,15 +8,19 @@
     },
     {
       "path": "crates/acn-hyp/Cargo.toml",
-      "blake3": "70bddfe6b26e8126537bcd2eac5b64eabae61d581a816f5550fe9cbd97842b54"
+      "blake3": "8639355aaf999c0c0d1aa155c332f4220c01a212b904cd6f6422c88c307dd252"
+    },
+    {
+      "path": "crates/acn-hyp/src/bootstrap.rs",
+      "blake3": "0172617ba21cbb25b98a2497e74dfd25b04151e2e6758186241af67a8d7b9492"
     },
     {
       "path": "crates/acn-hyp/src/check.rs",
-      "blake3": "10ae5d436ec9cd67fd2f097efe5cdc065d7aa28c17e02c7ba66e4824d57f5dbf"
+      "blake3": "36b408a310f7fb5b58f2e4866b1fa382181659c0f3fbcf824e119f7d5a135aba"
     },
     {
       "path": "crates/acn-hyp/src/eval.rs",
-      "blake3": "6447ca32e26fb0c95e21f74518bae68bcab1b0494e5981c4b30fac9d92d22d1d"
+      "blake3": "7c8ee1177881d2a8087be1bb9b137bcbec0eb04692e77e014544a2d8404c61c2"
     },
     {
       "path": "crates/acn-hyp/src/file.rs",
@@ -24,7 +28,7 @@
     },
     {
       "path": "crates/acn-hyp/src/lib.rs",
-      "blake3": "289b85666e6fac0b249e4d775b11833c58326f6f538eda5c54697f6204308c2e"
+      "blake3": "847b805ed4c5ec6336b71a87ccd35123b5f10f71793e90cd54134378396f2666"
     },
     {
       "path": "crates/acn-hyp/src/lint.rs",
@@ -36,11 +40,19 @@
     },
     {
       "path": "crates/acn-hyp/src/quantities.rs",
-      "blake3": "bc0e3a1921ea92f8afbcc9d772a84e5275d9768a299d1ed63701d82424358cd4"
+      "blake3": "41a45fe632511c66a5b15c4b68d337b6c2384b8203b04ba0e6ea263980059f20"
+    },
+    {
+      "path": "crates/acn-hyp/src/slice.rs",
+      "blake3": "e45b0de0badbbc68c5cd9f7be0ae8037aba50b0515079fd14ab1cc69df638be4"
     },
     {
       "path": "crates/acn-hyp/tests/common/mod.rs",
       "blake3": "d70c7b60c886500afc74243071832bc373d185593a0c8f732d910f8d87ece6cc"
+    },
+    {
+      "path": "crates/acn-hyp/tests/evaluate.rs",
+      "blake3": "dc856b0092eb8abdd864dfb07c78b756beadec1ecc7bf2a965581a0a2502502a"
     },
     {
       "path": "crates/acn-hyp/tests/existing_files.rs",
@@ -64,7 +76,11 @@
     },
     {
       "path": "crates/acn-hyp/tests/quantities.rs",
-      "blake3": "b3d7a4d8f3c3dcfc7ff64a4c5e8b7b081bb746ea2be5991c9535b03d4a96d635"
+      "blake3": "b3c541f69207d14cc8a3803e3ee1bfa9bcb33ffc75e95067a95f0737e519996e"
+    },
+    {
+      "path": "crates/acn-hyp/tests/verdict_determinism.rs",
+      "blake3": "13a2aba4db5e52dbdcbb60e4419dfbdac3455e3a3158c718ba449f0ce0de820a"
     },
     {
       "path": "crates/acn-trace/src/schema/SEMCONV_VERSION",

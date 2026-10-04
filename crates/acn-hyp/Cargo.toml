@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 acn-trace.workspace = true
+rand_chacha.workspace = true
+rand_core.workspace = true
 serde.workspace = true
 serde_path_to_error = "0.1"
 thiserror.workspace = true

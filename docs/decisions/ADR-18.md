@@ -16,7 +16,7 @@ All of it lives in `crates/acn-hyp`, which is in the frozen set, so every PR tha
 T05 lands as three PRs, each Class C, each updating `env-hash.json`:
 
 1. **T05.1 (this PR).** The file format and status (HYP-1 to HYP-9); the predicate language, its parser, its types and units, the built-ins' signatures, the guard's restrictions, the selector rules and the per-cell/slice-level rule (HYP-10 to HYP-14, their static halves); the quantity table and its rendering (HYP-12); the two existing files (HYP-16); and `acn hyp lint` (HYP-27).
-2. **T05.2.** The quantity formulas over the views, including the price table behind `cost_per_success`. Then evaluation with undefined values and Kleene logic (HYP-11), slices and cells (HYP-14), the bootstrap and `verdict.json` (HYP-15), the refusals and rules of HYP-20 to HYP-24 and HYP-28, and `acn hyp verdict`.
+2. **T05.2** (split in two by ADR-19). The quantity formulas over the views, including the price table behind `cost_per_success`. Then evaluation with undefined values and Kleene logic (HYP-11), slices and cells (HYP-14), the bootstrap and `verdict.json` (HYP-15), the refusals and rules of HYP-20 to HYP-24 and HYP-28, and `acn hyp verdict`.
 3. **T05.3.** The read-only and `hypothesis_changed` rules (HYP-4), no relax option (HYP-25), and the freeze PR's shape (HYP-26).
 
 ### Readings T05.1 makes
@@ -49,7 +49,7 @@ T05 lands as three PRs, each Class C, each updating `env-hash.json`:
 - **Negative values (spec-conflict on HYP-27).** HYP-27's probe values are non-negative, but an effect can be negative. When the search finds no witness, lint searches again with the signed values `±1e9, ±1, ±1e-9, 0`, up to 6 slots. A witness found only there is reported as a warning naming the conflict, not as an error. This stands until issue #10 is resolved by a `spec-change`.
 - **The guard is linted.** For a run with the design's replicates and providers equal to the provider count, the guard must evaluate to false. A guard that is true or undefined then would disarm the falsifier for every complete run, and that is a finding.
 - **HYP-27 in CI.** The CI requirement is met by the acceptance suite `tests/accept/hyp_lint.rs`, which `cargo test --workspace` runs. Adding a step to `tools/ci.sh` would change CON-9's list of gates.
-- **The quantity table** names the six quantities `hypotheses/p4.toml` measures, with their units and documented formulas. `cost_per_success` is in the unit `cost`; its price table is T05.2's, and needs the maintainer's decision on prices.
+- **The quantity table** names the six quantities `hypotheses/p4.toml` measures, with their units and documented formulas. `cost_per_success` is in the unit `cost`; its price table is ADR-19's.
 
 ## Consequences
 - `acn hyp lint` exists, `hypotheses/p4.toml` lints clean, and `docs/generated/quantities.md` is rendered.

@@ -30,11 +30,14 @@ ids = [
 spec = "080"
 ids = [
   "HYP-1", "HYP-2", "HYP-3", "HYP-5", "HYP-6", "HYP-7", "HYP-8", "HYP-9", "HYP-10",
-  "HYP-16", "HYP-27",
+  "HYP-13", "HYP-14", "HYP-16", "HYP-27",
 ]
-# T05 lands in three PRs (ADR-18). T05.1 cites HYP-11..14 ahead of scope: their
-# static halves (types, units, selectors, per-cell versus slice-level, the quantity
-# table) are here; evaluation, undefined propagation and the formulas are T05.2's.
+# T05 lands in parts (ADR-18, ADR-19). T05.2a completes HYP-13 and HYP-14. Its tests
+# also cite HYP-11 and HYP-12 (evaluation, the outcome that tells a clean false from
+# one past an undefined operand, the formulas and prices), HYP-15 (the bootstrap)
+# and HYP-21 and HYP-22 (the outcome and decision cells). Their remaining halves are
+# T05.2b's: listing undefined replicates in verdict.json (HYP-11), the file-level
+# guard counters (HYP-12), verdict.json itself (HYP-15), and the slice rules.
 
 [[implemented]]
 spec = "040"

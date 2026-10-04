@@ -190,14 +190,26 @@ pub trait Source {
     fn over_knobs(&self, max: bool, x: &Expr) -> Option<f64>;
     /// `inner at all|any range` over the slice.
     fn quantify(&self, all: bool, range: &AtRange, inner: &Expr) -> Option<bool>;
+    /// Every numeric sub-expression's value as it is computed (HYP-28); an
+    /// undefined one is what keeps a false falsifier from passing (HYP-21).
+    fn observe_num(&self, _e: &Expr, _v: Option<f64>) {}
+    /// Every boolean sub-expression's value as it is computed.
+    fn observe_bool(&self, _e: &Expr, _v: Option<bool>) {}
 }
 
 fn finite(v: f64) -> Option<f64> {
     v.is_finite().then_some(v)
 }
 
-/// A numeric expression's value (HYP-11): `None` is undefined.
+/// A numeric expression's value (HYP-11): `None` is undefined. Every node is
+/// reported to [`Source::observe_num`].
 pub fn num<S: Source + ?Sized>(e: &Expr, s: &S) -> Option<f64> {
+    let v = num_node(e, s);
+    s.observe_num(e, v);
+    v
+}
+
+fn num_node<S: Source + ?Sized>(e: &Expr, s: &S) -> Option<f64> {
     let v = match e {
         Expr::Num(n) => Some(*n),
         Expr::Counter(Counter::Replicates) => s.term(&Term::Counter(CounterKind::Replicates)),
@@ -207,7 +219,8 @@ pub fn num<S: Source + ?Sized>(e: &Expr, s: &S) -> Option<f64> {
         Expr::Quantity(_) | Expr::Select(..) => arm_term(e).and_then(|t| s.term(&t)),
         Expr::Neg(x) => num(x, s).map(|v| -v),
         Expr::Arith(op, a, b) => {
-            let (a, b) = (num(a, s)?, num(b, s)?);
+            let (a, b) = (num(a, s), num(b, s));
+            let (a, b) = (a?, b?);
             match op {
                 ArithOp::Add => Some(a + b),
                 ArithOp::Sub => Some(a - b),
@@ -229,8 +242,14 @@ pub fn num<S: Source + ?Sized>(e: &Expr, s: &S) -> Option<f64> {
             let ci = ci_of(args);
             match b {
                 Builtin::Abs => arg(0).map(f64::abs),
-                Builtin::Min => Some(arg(0)?.min(arg(1)?)),
-                Builtin::Max => Some(arg(0)?.max(arg(1)?)),
+                Builtin::Min => {
+                    let (x, y) = (arg(0), arg(1));
+                    Some(x?.min(y?))
+                }
+                Builtin::Max => {
+                    let (x, y) = (arg(0), arg(1));
+                    Some(x?.max(y?))
+                }
                 Builtin::MaxOverKnobs => s.over_knobs(true, expr(0)?),
                 Builtin::MinOverKnobs => s.over_knobs(false, expr(0)?),
                 Builtin::Effect => Some(s.term(&arm(q, false))? - s.term(&arm(q, true))?),
@@ -265,9 +284,20 @@ pub fn num<S: Source + ?Sized>(e: &Expr, s: &S) -> Option<f64> {
 }
 
 /// A boolean expression's value under Kleene's three-valued logic (HYP-11).
+/// Both operands of `and` and `or` are always evaluated, so every undefined
+/// operand is observed even where Kleene's rules decide without it.
 pub fn truth<S: Source + ?Sized>(e: &Expr, s: &S) -> Option<bool> {
+    let v = truth_node(e, s);
+    s.observe_bool(e, v);
+    v
+}
+
+fn truth_node<S: Source + ?Sized>(e: &Expr, s: &S) -> Option<bool> {
     match e {
-        Expr::Cmp(op, a, b) => Some(op.apply(num(a, s)?, num(b, s)?)),
+        Expr::Cmp(op, a, b) => {
+            let (a, b) = (num(a, s), num(b, s));
+            Some(op.apply(a?, b?))
+        }
         Expr::And(a, b) => match (truth(a, s), truth(b, s)) {
             (Some(false), _) | (_, Some(false)) => Some(false),
             (Some(true), Some(true)) => Some(true),
