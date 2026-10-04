@@ -90,8 +90,9 @@ impl J {
     }
 }
 
-/// A JSON string: `"` and `\` escaped, control characters as `\u00XX` (or their
-/// short forms), everything else as UTF-8.
+/// A JSON string as `acn-trace`'s canonical manifest writes one (serde_json's
+/// escaping): `"` and `\` escaped, `\b \f \n \r \t` in short form, other control
+/// characters as `\u00xx`, everything else as UTF-8.
 fn string(s: &str, out: &mut String) {
     out.push('"');
     for c in s.chars() {
@@ -101,6 +102,8 @@ fn string(s: &str, out: &mut String) {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
             c if u32::from(c) < 0x20 => out.push_str(&format!("\\u{:04x}", u32::from(c))),
             c => out.push(c),
         }

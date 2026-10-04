@@ -517,6 +517,17 @@ pub fn derived_seed(d: &Digest) -> u64 {
     u64::from_le_bytes(first) & !(1u64 << 63)
 }
 
+/// HYP-9's run seed of a hypothesis: the derived seed of
+/// `blake3("acn-bench/hypothesis_seed/v1\0" ‖ hypothesis_hash)`. The one
+/// definition: the harness seeds runs with it and the verdict checks it.
+pub fn hypothesis_seed(hypothesis_hash: &Digest) -> Result<u64> {
+    Ok(derived_seed(
+        &Preimage::new("acn-bench/hypothesis_seed/v1")?
+            .digest(hypothesis_hash)
+            .finish(),
+    ))
+}
+
 /// `replicate_seed(i)`, the derived seed of
 /// `blake3("acn-bench/replicate/v1\0" ‖ seed ‖ i)` (CON-30(a)).
 pub fn replicate_seed(seed: u64, i: u32) -> Result<u64> {

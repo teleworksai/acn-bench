@@ -604,6 +604,25 @@ impl<'a> Evaluation<'a> {
         })
     }
 
+    /// The bounds at `ci` of `effect(q)` in cell `cell` (an index into
+    /// [`SliceData::cells`]), from the same cached resamples the falsifier's
+    /// `ci_low` and `ci_high` read (HYP-15). `None` when undefined.
+    #[must_use]
+    pub fn effect_interval(&self, cell: usize, q: &str, ci: f64) -> Option<(f64, f64)> {
+        let cd = self.slice.cells.get(cell)?;
+        bootstrap::bounds(&self.effect_stats(cd, q)?, ci)
+    }
+
+    /// Derive the `effect` sub-stream of `q` in every cell, so that a name the
+    /// derivation refuses is an error, never an undefined interval.
+    pub fn check_effect_streams(&self, q: &str) -> Result<(), SliceError> {
+        for c in &self.slice.cells {
+            let name = bootstrap::stream_name(&self.slice.key, &key(&c.cell), q, Function::Effect);
+            bootstrap::stream(self.seed, &name).map_err(|e| SliceError(e.to_string()))?;
+        }
+        Ok(())
+    }
+
     /// The largest split-half half-width over the slice's controls (HYP-13),
     /// recording each control's.
     fn noise_floor(&self, t: &Term, q: &str, ci: f64, ctx: Option<usize>) -> Option<f64> {

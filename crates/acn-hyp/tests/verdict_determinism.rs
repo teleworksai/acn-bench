@@ -205,10 +205,6 @@ fn verdict_id_matches_its_known_answer() {
     }
     let expected = Digest(*blake3::hash(&pre).as_bytes());
     assert_eq!(acn_hyp::verdict::verdict_id(&h, &pairs).unwrap(), expected);
-    assert_eq!(
-        expected.to_hex(),
-        acn_hyp::verdict::verdict_id(&h, &pairs).unwrap().to_hex()
-    );
     assert_ne!(
         acn_hyp::verdict::verdict_id(&h, &pairs[..1]).unwrap(),
         expected
@@ -265,7 +261,7 @@ fn verdict_json_is_byte_identical_across_evaluations_and_argument_orders() {
     assert_eq!(a.text(), r.text());
     assert_eq!(a.verdict_id, r.verdict_id);
     // Bundles are listed ascending.
-    let ids: Vec<String> = a.bundles.iter().map(|(r, _)| r.to_hex()).collect();
+    let ids: Vec<String> = a.bundles.iter().map(|(r, _, _)| r.to_hex()).collect();
     let mut sorted = ids.clone();
     sorted.sort();
     assert_eq!(ids, sorted);

@@ -204,7 +204,7 @@ impl Domain {
 }
 
 /// `f` as an exact integer, if it is one in `i64`'s range.
-fn as_int(f: f64) -> Option<i64> {
+pub(crate) fn as_int(f: f64) -> Option<i64> {
     #[allow(clippy::cast_possible_truncation)]
     let i = f as i64;
     (f.fract() == 0.0 && (i as f64) == f && f.abs() < 9.2e18).then_some(i)

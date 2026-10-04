@@ -65,7 +65,8 @@ enum HypCmd {
         /// The bundle directories, `runs/<run_id>/`, in any order.
         #[arg(required = true)]
         bundles: Vec<PathBuf>,
-        /// Where `verdicts/` goes.
+        /// The `runs` directory `verdicts/` goes under; it must be named `runs`
+        /// (HYP-4).
         #[arg(long, default_value = "runs")]
         runs_dir: PathBuf,
     },
@@ -497,13 +498,13 @@ fn hyp_verdict(file: &std::path::Path, dirs: &[PathBuf], runs_dir: &std::path::P
             .map(|d| acn_hyp::read::read(d))
             .collect::<Result<Vec<_>, _>>()?;
         let v = acn_hyp::verdict::verdict(&h, bundles, build_info::engine_hash()?)?;
-        let path = acn_hyp::verdict::write(runs_dir, &v)?;
         let object: Value = serde_json::from_str(&v.text())?;
+        let path = acn_hyp::verdict::write(runs_dir, &v)?;
         Ok(json!({
             "ok": true,
             "verdict_id": v.verdict_id.to_hex(),
             "verdict_path": path.display().to_string(),
-            "run_ids": v.bundles.iter().map(|(r, _)| r.to_hex()).collect::<Vec<_>>(),
+            "run_ids": v.bundles.iter().map(|(r, _, _)| r.to_hex()).collect::<Vec<_>>(),
             "verdict": object,
         }))
     })

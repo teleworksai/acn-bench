@@ -55,7 +55,7 @@ fn cfg(dir: &Path, hyp: &Path, arm: &str, stable: &str) -> RunConfig {
             "/../../workloads/harness-smoke.toml"
         )),
         backend: Backend::Mockllm,
-        model: "mock-explicit".into(),
+        model: "mock-auto".into(),
         mode: Mode::Sim,
         arm: arm.into(),
         replicates: 4,
@@ -77,7 +77,16 @@ fn cfg(dir: &Path, hyp: &Path, arm: &str, stable: &str) -> RunConfig {
         }
         .info()
         .unwrap(),
-        profiles: None,
+        // The embedded profiles cache nothing under 1024 tokens, more than the
+        // smoke workload sends; a small minimum makes the cache columns real.
+        profiles: Some(
+            acn_mockllm::profile::Profiles::parse(
+                &acn_mockllm::profile::PROFILES_TOML
+                    .replace("min_cacheable_tokens = 1024", "min_cacheable_tokens = 32")
+                    .replace("increment_tokens = 128", "increment_tokens = 16"),
+            )
+            .unwrap(),
+        ),
     }
 }
 
@@ -116,14 +125,55 @@ fn harness_bundles_are_read_judged_and_judged_the_same_way_twice() {
         replicates, 12,
         "4 replicates × 3 bundles (two sessions each, one per task)"
     );
-    let v = verdict(&h, b, Digest::of(b"engine")).unwrap();
-    assert!(
-        ["exploratory", "mock-gated", "sim-only"]
+    // What `read` returns is what the harness wrote: compare with the spans.
+    let inv = acn_trace::schema::inventory().unwrap();
+    for (d, x) in dirs.iter().zip(&b) {
+        let trace = acn_trace::parquet_io::read_trace(d, &inv).unwrap();
+        let chats: Vec<_> = trace.spans.iter().filter(|s| s.name == "chat").collect();
+        assert_eq!(x.calls.len(), chats.len());
+        let sum = |key: &str| -> i64 {
+            chats
+                .iter()
+                .map(|s| match s.attrs.get(key) {
+                    Some(acn_trace::model::AttrValue::Int(i)) => *i,
+                    _ => 0,
+                })
+                .sum()
+        };
+        let read: i64 = x
+            .calls
             .iter()
-            .all(|l| v.labels.contains(l)),
-        "{:?}",
-        v.labels
+            .map(|c| c.cache_read_tokens.unwrap_or(0))
+            .sum();
+        let write: i64 = x
+            .calls
+            .iter()
+            .map(|c| c.cache_write_tokens.unwrap_or(0))
+            .sum();
+        let input: i64 = x.calls.iter().map(|c| c.input_tokens.unwrap_or(0)).sum();
+        assert_eq!(read, sum("acn.cache.read_tokens"));
+        assert_eq!(write, sum("acn.cache.write_tokens"));
+        assert_eq!(input, sum("acn.call.input_tokens"));
+        assert!(
+            x.calls.iter().all(|c| c.ttft_ns.is_some()),
+            "every mock call streams a token"
+        );
+        assert_eq!(
+            x.methods,
+            std::collections::BTreeSet::from(["tokens".to_owned()])
+        );
+        assert_eq!(
+            x.turns.len(),
+            trace.spans.iter().filter(|s| s.name == "acn.turn").count()
+        );
+    }
+    assert!(
+        b.iter()
+            .any(|x| x.calls.iter().any(|c| c.cache_read_tokens > Some(0)))
     );
+    let v = verdict(&h, b, Digest::of(b"engine")).unwrap();
+    let labels: Vec<&str> = v.labels.iter().map(|l| l.as_str()).collect();
+    assert_eq!(labels, ["exploratory", "mock-gated", "sim-only"]);
     assert_eq!(v.slices.len(), 1);
     let s = &v.slices[0];
     assert!(

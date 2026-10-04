@@ -16,15 +16,23 @@ It also adds `acn hyp verdict`. Several of these rules leave room for reading, a
 ## Decision
 
 ### Reading a bundle
-- `read` runs `bundle::verify` (TRC-23), not `--views`. The hashes then bind the view files to the manifest, and the verdict reads the `session`, `turn` and `call` views directly.
-- A replicate index of an arm is **completed** in a bundle when the bundle holds at least one session of that arm with that index. Every turn carries an outcome (`acn.turn.outcome` is required), so nothing more is needed.
+- **One verification, then no second read.** `read` runs `bundle::verify_views_read`, which:
+  - checks every hash and the manifest (TRC-23);
+  - recomputes the five views from the four tables, and requires each to be byte-identical to its file (TRC-35);
+  - returns the parsed manifest and the recomputed views.
+
+  The verdict reads its rows from those, never from a second read of the files.
+  - A view edited and re-hashed into a new manifest is refused.
+  - A file swapped after the check is never read.
+  - What is left: a table swapped between being hashed and being decoded within that one call. That is the trust level of a local filesystem.
+- **Completed replicates.** A replicate index of an arm is completed in a bundle when the bundle holds at least one session of that arm with that index, and every one of those sessions ran at least one turn. Every turn carries an outcome (`acn.turn.outcome` is required). A session with no turn did not run, so its replicate is incomplete and is listed as such (HYP-11).
 - A replicate's quantities are computed over all of its sessions, their turns and their calls.
 
 ### What a bundle is
 - **Its cell.** A bundle's cell is its `vary.<name>` values (HYP-6).
   - Every `[varies]` parameter must be present and must parse as a value of its domain. A `range` value must be written as a float (CON-27(c)).
   - A missing parameter, an extra one, or a value outside the domain is a refusal.
-- **Its arms** come from `params.arms`. A session whose role is not among them is a refusal.
+- **One arm per bundle.** `params.arms` must be exactly `control` or `treatment`, and every session must have that role. The harness writes one arm per bundle. A bundle holding both arms, an unknown role, or a mismatched session is refused, never read in part.
 - **A config control bundle** is keyed by its own `vary` values, its effective configuration (HYP-8). A treatment cell maps to it by applying `[control].config` to the cell.
 - **A workload control** is keyed by the parameters it inherits, plus the non-pooled ones.
   - The inherited parameters are `[control].inherits`, or by default every `range` and `int_range` parameter.
@@ -33,10 +41,15 @@ It also adds `acn hyp verdict`. Several of these rules leave room for reading, a
 ### Refusals (HYP-20, HYP-21)
 - **What is refused.** Everything HYP-20 lists, plus:
   - an empty set;
+  - the same run given twice;
   - the parameter cases above;
+  - in a `grid` design, a parameter value that is not one of the grid's levels;
   - netem bundles beside sim bundles;
   - live bundles beside netem bundles.
-- **Duplicate coverage.** It is checked per (slice, cell, arm, mode, replicate index), over indices below `[design].replicates`. One cell's replicates may come from several bundles, as long as no index appears twice.
+- **Duplicate coverage.** It is checked per arm, mode and replicate index, over indices below `[design].replicates`.
+  - An arm is a slice, a role and a configuration: a treatment's cell, or a control's own configuration.
+  - For a workload control, that configuration is only what it inherits. Two workload-control bundles that differ in a parameter it does not inherit therefore cover the same arm, and a shared index is refused, never merged.
+  - One arm's replicates may come from several bundles, as long as no index appears twice.
 - **Scenario and workload.** Within one mode, all bundles of one arm and configuration share their scenario and workload hashes. A treatment shares both with the control it maps to (only the scenario, for a workload control). A sim arm shares both with its live twin.
 - **Pins.** The model pin is looked up by `vary.provider`, or by the backend when the file has no `provider` parameter.
 - **The frozen seed.** It is checked for a frozen file only: every bundle must carry the file's derived seed (HYP-9).
@@ -54,16 +67,18 @@ It also adds `acn hyp verdict`. Several of these rules leave room for reading, a
 - **Which cells.** The cells measured are those with a live arm.
 - **The effect divergence** uses the indices completed in all four arms. A relative tolerance divides by the sim control's mean over those indices.
 - **`twin_failed`** is a reason only when `twin_required` is true. Otherwise the divergences are reported and decide nothing.
-- **Twinned cells.** A decision cell is twinned when both of its arms have live bundles with at least `replicates / 2` indices paired with sim.
+- **Twinned cells.** A decision cell is twinned when both of its arms have live bundles with at least `replicates / 2` indices paired with sim. For an odd count, the half is rounded up.
 - **Labels.** `sim-only` and `partially-twinned` apply per slice when the quantities come from sim. The file's labels are the union of its slices' labels.
 
 ### The file level (HYP-24)
 - **Provider status.** A provider value is `not_run` when no slice with that value has a bundle. It is reported (`pass` or `fail`) when every one of its slices is conclusive, and `inconclusive` otherwise.
+- **A provider that ran counts every one of its slices** (issue #15). Without this, a provider could be run in some slices and left out of the ones that failed. So a slice with no bundles, of a provider that has bundles elsewhere, is inconclusive and listed under `slice_inconclusive`.
 - **The guard's `replicates`** is the minimum over the slices of reported providers, or over every slice when the file has no `provider` parameter. With no such slice it is undefined, so the guard gives `inconclusive`.
-- **`slice_inconclusive`.** In a file with a `provider` parameter, it counts only slices that have bundles. In a file without one, it counts every slice.
+- **`slice_inconclusive`.** In a file with a `provider` parameter, it counts every slice of every provider that has a bundle. In a file without one, it counts every slice.
 
 ### `verdict.json` (HYP-15, HYP-28)
 - **Top-level keys:**
+  - `format`: `acn-bench/verdict/v1`, so a later layout is a new version, not a silent change;
   - `verdict_id`, `verdict`, `reasons`, `labels`;
   - `hypothesis {id, status, hash}`, `expected {outcome, note}`;
   - `providers`: every declared value with its status, or `null` when the file has no `provider` parameter;
@@ -86,10 +101,15 @@ It also adds `acn hyp verdict`. Several of these rules leave room for reading, a
   - the effect of every primary quantity with its 95% interval (CON-18), drawn from the same sub-stream the falsifier's interval would use;
   - whether it is a decision cell and whether it is twinned;
   - its divergences.
-- **Format.** The canonical writer renders floats with `float_text` (CON-27(c)), never with serde_json's formatter.
+- **Format.** The canonical writer renders floats with `float_text` (CON-27(c)), never with serde_json's formatter. It escapes strings as `acn-trace`'s canonical manifest does, which is serde_json's escaping: `\b \f \n \r \t`, other control characters as `\u00xx`.
+- **One source.** The file is rendered from the typed verdict alone: reasons, labels, provider statuses, roles, the twin report and the effects are typed values in the API, and their strings exist only in the rendering.
 
 ### The command
 - `acn hyp verdict --hypothesis <file> <bundle>… [--runs-dir runs]` writes `runs/verdicts/<verdict_id>/verdict.json`.
+- **HYP-4.** The `--runs-dir` directory must be named `runs`; the library's `write` refuses anything else. A command of `acn hyp` therefore writes under a `runs/` directory only.
+- **Atomic, and never overwritten.** The bytes go to a temporary file beside the target, which is then hard-linked into place (that fails if the target exists).
+  - A crash leaves no partial verdict, and an empty directory from an interrupted write does not block a later one.
+  - An existing `verdict.json` is `Exists`, a typed error distinct from a refusal.
 - It prints `ok`, `verdict_id`, `verdict_path`, `run_ids` and `verdict`, the object of the file (CON-8). That object is reparsed for printing, so only the file is canonical.
 - A refusal, an unreadable bundle, or an existing verdict directory gives `ok: false`.
 

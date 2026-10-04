@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "acn-harness",
  "acn-hyp",
+ "acn-mockllm",
  "acn-trace",
  "blake3",
  "serde_json",

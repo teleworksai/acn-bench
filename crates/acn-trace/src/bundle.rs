@@ -620,6 +620,8 @@ pub struct Verified {
     pub run_id: Digest,
     pub bundle_digest: Digest,
     pub files: usize,
+    /// The manifest, parsed from the bytes whose digest is `bundle_digest`.
+    pub manifest: Manifest,
 }
 
 /// `acn bundle verify` (TRC-23): parse the manifest strictly, require its canonical
@@ -687,6 +689,7 @@ pub fn verify(dir: &Path) -> Result<Verified> {
         run_id,
         bundle_digest: Digest::of(&bytes),
         files: manifest.files.len(),
+        manifest,
     })
 }
 
@@ -696,6 +699,15 @@ pub fn verify(dir: &Path) -> Result<Verified> {
 /// read), recompute the five views from them alone, and require each view file to
 /// be byte-identical to the recomputation.
 pub fn verify_views(dir: &Path) -> Result<Verified> {
+    Ok(verify_views_read(dir)?.0)
+}
+
+/// [`verify_views`], and the five views it recomputed from the tables: each is
+/// byte-identical to its file, so a reader takes them from here rather than
+/// opening the files again.
+pub fn verify_views_read(
+    dir: &Path,
+) -> Result<(Verified, Vec<(schema::View, arrow_array::RecordBatch)>)> {
     let verified = verify(dir)?;
     let inv = schema::inventory()?;
     let trace = parquet_io::read_trace(dir, &inv)?;
@@ -710,15 +722,16 @@ pub fn verify_views(dir: &Path) -> Result<Verified> {
         }
     }
     check_sessions(&trace, &verified.run_id.to_hex())?;
-    for (view, batch) in ingest::views(&inv, &schema::views()?, &trace)? {
+    let views = ingest::views(&inv, &schema::views()?, &trace)?;
+    for (view, batch) in &views {
         let path = dir.join(&view.file);
         let on_disk = std::fs::read(&path).map_err(io(&path))?;
-        if parquet_io::encode(&batch)? != on_disk {
+        if parquet_io::encode(batch)? != on_disk {
             return invalid(format!(
                 "{} differs from the view recomputed from the tables (TRC-35)",
                 view.file
             ));
         }
     }
-    Ok(verified)
+    Ok((verified, views))
 }

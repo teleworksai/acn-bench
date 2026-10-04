@@ -1,14 +1,13 @@
-//! Bundles as the verdict reads them (HYP-20): verified (TRC-23), their manifest
-//! parsed, and the `session`, `turn` and `call` views read into the rows the
-//! quantity formulas take (HYP-12). Nothing here judges the set; that is
+//! Bundles as the verdict reads them (HYP-20): verified (TRC-23) with their
+//! views recomputed from the tables (TRC-35), and the `session`, `turn` and
+//! `call` views turned into the rows the quantity formulas take (HYP-12). Nothing here judges the set; that is
 //! [`crate::verdict`].
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use acn_trace::bundle::{self, MANIFEST, Manifest};
+use acn_trace::bundle::{self, Manifest};
 use acn_trace::identity::Digest;
-use acn_trace::parquet_io;
 use acn_trace::schema;
 use arrow_array::cast::AsArray as _;
 use arrow_array::types::Int64Type;
@@ -90,30 +89,34 @@ fn required<T>(v: Vec<Option<T>>, name: &str) -> Result<Vec<T>, String> {
         .collect()
 }
 
-fn view(dir: &Path, views: &schema::Views, name: &str) -> Result<Vec<RecordBatch>, String> {
-    let v = views
-        .view(name)
-        .ok_or_else(|| format!("views.toml has no `{name}` view"))?;
-    parquet_io::read_view(dir, v).map_err(|e| e.to_string())
+fn view<'v>(
+    views: &'v [(schema::View, RecordBatch)],
+    name: &str,
+) -> Result<&'v RecordBatch, String> {
+    views
+        .iter()
+        .find(|(v, _)| v.name == name)
+        .map(|(_, b)| b)
+        .ok_or_else(|| format!("no `{name}` view"))
 }
 
-/// Verify the bundle at `dir` (TRC-23) and read what a verdict needs from it.
+/// Verify the bundle at `dir` (TRC-23), recompute its views from its tables and
+/// require them byte-identical to the files (TRC-35), and read what a verdict
+/// needs from what was verified: the manifest from the bytes `bundle_digest`
+/// covers, and the rows from the recomputed views, never from a second read.
 pub fn read(dir: &Path) -> Result<BundleData, ReadError> {
     let fail = |message: String| ReadError {
         dir: dir.to_path_buf(),
         message,
     };
-    let verified = bundle::verify(dir).map_err(|e| fail(e.to_string()))?;
-    let path = dir.join(MANIFEST);
-    let bytes = std::fs::read(&path).map_err(|e| fail(e.to_string()))?;
-    let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| fail(e.to_string()))?;
-    let views = schema::views().map_err(|e| fail(e.to_string()))?;
+    let (verified, views) = bundle::verify_views_read(dir).map_err(|e| fail(e.to_string()))?;
 
     let mut sessions = Vec::new();
-    for b in view(dir, &views, "session").map_err(fail)? {
-        let sid = ids(&b, "session_id").map_err(fail)?;
-        let role = required(strings(&b, "role").map_err(fail)?, "role").map_err(fail)?;
-        let rep = required(ints(&b, "replicate").map_err(fail)?, "replicate").map_err(fail)?;
+    {
+        let b = view(&views, "session").map_err(fail)?;
+        let sid = ids(b, "session_id").map_err(fail)?;
+        let role = required(strings(b, "role").map_err(fail)?, "role").map_err(fail)?;
+        let rep = required(ints(b, "replicate").map_err(fail)?, "replicate").map_err(fail)?;
         for ((session_id, role), replicate) in sid.into_iter().zip(role).zip(rep) {
             sessions.push(SessionRow {
                 session_id,
@@ -123,11 +126,12 @@ pub fn read(dir: &Path) -> Result<BundleData, ReadError> {
         }
     }
     let mut turns = Vec::new();
-    for b in view(dir, &views, "turn").map_err(fail)? {
-        let sid = ids(&b, "session_id").map_err(fail)?;
-        let outcome = required(strings(&b, "outcome").map_err(fail)?, "outcome").map_err(fail)?;
+    {
+        let b = view(&views, "turn").map_err(fail)?;
+        let sid = ids(b, "session_id").map_err(fail)?;
+        let outcome = required(strings(b, "outcome").map_err(fail)?, "outcome").map_err(fail)?;
         let compaction =
-            required(strings(&b, "compaction").map_err(fail)?, "compaction").map_err(fail)?;
+            required(strings(b, "compaction").map_err(fail)?, "compaction").map_err(fail)?;
         for ((session_id, outcome), compaction) in sid.into_iter().zip(outcome).zip(compaction) {
             turns.push(Turn {
                 session_id,
@@ -138,15 +142,16 @@ pub fn read(dir: &Path) -> Result<BundleData, ReadError> {
     }
     let mut calls = Vec::new();
     let mut methods = BTreeSet::new();
-    for b in view(dir, &views, "call").map_err(fail)? {
-        let sid = ids(&b, "session_id").map_err(fail)?;
-        let input = ints(&b, "input_tokens").map_err(fail)?;
-        let read = ints(&b, "cache_read_tokens").map_err(fail)?;
-        let write = ints(&b, "cache_write_tokens").map_err(fail)?;
-        let output = ints(&b, "output_tokens").map_err(fail)?;
-        let ttft = ints(&b, "ttft_ns").map_err(fail)?;
+    {
+        let b = view(&views, "call").map_err(fail)?;
+        let sid = ids(b, "session_id").map_err(fail)?;
+        let input = ints(b, "input_tokens").map_err(fail)?;
+        let read = ints(b, "cache_read_tokens").map_err(fail)?;
+        let write = ints(b, "cache_write_tokens").map_err(fail)?;
+        let output = ints(b, "output_tokens").map_err(fail)?;
+        let ttft = ints(b, "ttft_ns").map_err(fail)?;
         let method = required(
-            strings(&b, "new_input_tokens_method").map_err(fail)?,
+            strings(b, "new_input_tokens_method").map_err(fail)?,
             "new_input_tokens_method",
         )
         .map_err(fail)?;
@@ -164,7 +169,7 @@ pub fn read(dir: &Path) -> Result<BundleData, ReadError> {
     }
     Ok(BundleData {
         dir: dir.to_path_buf(),
-        manifest,
+        manifest: verified.manifest,
         run_id: verified.run_id,
         bundle_digest: verified.bundle_digest,
         sessions,

@@ -189,10 +189,28 @@ fn hyp_verdict_judges_harness_bundles_and_never_overwrites_a_verdict() {
     let (code, json) = acn_in(dir.path(), &args);
     assert_eq!(code, Some(0), "{json}");
     assert_eq!(json["ok"], true);
-    assert_eq!(json["run_ids"].as_array().unwrap().len(), 3);
+    let run_ids: Vec<&str> = json["run_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.as_str().unwrap())
+        .collect();
+    assert_eq!(run_ids.len(), 3);
+    let mut sorted = run_ids.clone();
+    sorted.sort_unstable();
+    assert_eq!(run_ids, sorted, "ascending, whatever the argument order");
+    let listed: Vec<&str> = json["verdict"]["bundles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["run_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(run_ids, listed);
     let id = json["verdict_id"].as_str().unwrap();
     assert_eq!(json["verdict"]["verdict_id"], id);
-    let path = dir.path().join(json["verdict_path"].as_str().unwrap());
+    let rel = json["verdict_path"].as_str().unwrap();
+    assert_eq!(rel, format!("runs/verdicts/{id}/verdict.json"));
+    let path = dir.path().join(rel);
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.ends_with('\n'));
     assert!(
@@ -220,4 +238,15 @@ fn hyp_verdict_judges_harness_bundles_and_never_overwrites_a_verdict() {
         &["hyp", "verdict", "--hypothesis", "zz.toml", "."],
     );
     assert_eq!(code, Some(1), "{json}");
+    assert!(
+        json["error"].as_str().unwrap().contains("manifest.json"),
+        "{json}"
+    );
+    // HYP-4: verdicts go under a `runs` directory and nowhere else.
+    let mut elsewhere = args.clone();
+    elsewhere.extend(["--runs-dir", "out"]);
+    let (code, json) = acn_in(dir.path(), &elsewhere);
+    assert_eq!(code, Some(1));
+    assert!(json["error"].as_str().unwrap().contains("HYP-4"), "{json}");
+    assert!(!dir.path().join("out").exists());
 }

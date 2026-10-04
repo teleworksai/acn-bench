@@ -78,11 +78,7 @@ struct Hyp {
 
 /// HYP-9: a frozen file's seed, and a candidate's without `[design].seed`.
 fn hypothesis_seed(hash: &Digest) -> Result<u64, HarnessError> {
-    Ok(acn_trace::identity::derived_seed(
-        &Preimage::new("acn-bench/hypothesis_seed/v1")?
-            .digest(hash)
-            .finish(),
-    ))
+    Ok(acn_trace::identity::hypothesis_seed(hash)?)
 }
 
 fn hypothesis(arg: &HypothesisArg, start: &Path) -> Result<Hyp, HarnessError> {
