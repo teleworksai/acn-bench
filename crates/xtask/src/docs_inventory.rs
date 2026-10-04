@@ -231,6 +231,14 @@ pub fn generate(root: &Path) -> Result<BTreeMap<String, String>> {
     if let Some(page) = report_coverage_md(root)? {
         files.insert(format!("{GENERATED_DIR}/report-coverage.md"), page);
     }
+    // HYP-12: the quantity table, in a workspace that has the verdict crate (the
+    // small test fixtures do not). The table itself is this binary's acn-hyp.
+    if root.join("crates/acn-hyp/Cargo.toml").is_file() {
+        files.insert(
+            format!("{GENERATED_DIR}/quantities.md"),
+            format!("{HEADER}{}", acn_hyp::quantities::markdown()),
+        );
+    }
     Ok(files)
 }
 

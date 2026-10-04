@@ -27,6 +27,16 @@ ids = [
 ]
 
 [[implemented]]
+spec = "080"
+ids = [
+  "HYP-1", "HYP-2", "HYP-3", "HYP-5", "HYP-6", "HYP-7", "HYP-8", "HYP-9", "HYP-10",
+  "HYP-16", "HYP-27",
+]
+# T05 lands in three PRs (ADR-18). T05.1 cites HYP-11..14 ahead of scope: their
+# static halves (types, units, selectors, per-cell versus slice-level, the quantity
+# table) are here; evaluation, undefined propagation and the formulas are T05.2's.
+
+[[implemented]]
 spec = "040"
 ids = [
   "HAR-1", "HAR-2", "HAR-3", "HAR-4", "HAR-5",

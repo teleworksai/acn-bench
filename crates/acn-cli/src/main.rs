@@ -1,6 +1,7 @@
 //! `acn` — the acn-bench command line (CON-8: one JSON object on stdout,
 //! logs on stderr, exit 0 iff `"ok": true`). Subcommands land with their specs:
-//! `version` (T01), `bundle verify` (TRC-23, T02b), `harness run` (HAR-50, T04).
+//! `version` (T01), `bundle verify` (TRC-23, T02b), `harness run` (HAR-50, T04),
+//! `hyp lint` (HYP-27, T05).
 #![forbid(unsafe_code)]
 
 mod build_info;
@@ -38,6 +39,22 @@ enum Cmd {
     Harness {
         #[command(subcommand)]
         cmd: HarnessCmd,
+    },
+    /// Hypothesis files and verdicts (SPEC 080).
+    Hyp {
+        #[command(subcommand)]
+        cmd: HypCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum HypCmd {
+    /// Parse a hypothesis file, type-check its predicates, resolve its quantities
+    /// and, for a frozen file, check that its falsifier can fire and fail to fire
+    /// (HYP-27). Reads no bundle.
+    Lint {
+        /// The hypothesis file.
+        file: PathBuf,
     },
 }
 
@@ -370,6 +387,93 @@ fn harness_run(a: &HarnessRun) -> Value {
     })
 }
 
+/// HYP-27's parsed structure: parameters, measures with their units, control
+/// and design, as loading resolved them.
+fn hyp_structure(h: &acn_hyp::Hypothesis) -> Value {
+    use acn_hyp::file::{Control, Domain, Tolerance};
+    let params: serde_json::Map<String, Value> = h
+        .params
+        .values()
+        .map(|p| {
+            let domain = match &p.domain {
+                Domain::Bool => json!({ "kind": "bool" }),
+                Domain::Enum(v) => json!({ "kind": "enum", "values": v }),
+                Domain::Range { min, max, levels } => {
+                    json!({ "kind": "range", "min": min, "max": max, "levels": levels })
+                }
+                Domain::IntRange { min, max, levels } => {
+                    json!({ "kind": "int_range", "min": min, "max": max, "levels": levels })
+                }
+            };
+            (
+                p.name.clone(),
+                json!({ "domain": domain, "pooled": p.pooled }),
+            )
+        })
+        .collect();
+    let unit = |q: &String| acn_hyp::quantities::get(q).map(|x| x.unit);
+    let measures = |qs: &[String]| -> Vec<Value> {
+        qs.iter()
+            .map(|q| json!({ "name": q, "unit": unit(q) }))
+            .collect()
+    };
+    let control = match &h.control {
+        Control::Config(c) => json!({
+            "config": c.iter().map(|(k, v)| (k.clone(), json!(v.to_string()))).collect::<serde_json::Map<_, _>>()
+        }),
+        Control::Workload { mode, inherits } => json!({ "workload": mode, "inherits": inherits }),
+        Control::Missing => Value::Null,
+    };
+    let d = &h.design;
+    let tolerance: serde_json::Map<String, Value> = d
+        .sim_live_tolerance
+        .iter()
+        .map(|(q, t)| {
+            let v = match t {
+                Tolerance::Relative(x) => json!({ "relative": x }),
+                Tolerance::Absolute(x) => json!({ "abs": x }),
+            };
+            (q.clone(), v)
+        })
+        .collect();
+    json!({
+        "params": params,
+        "measures": { "primary": measures(&h.primary), "secondary": measures(&h.secondary) },
+        "control": control,
+        "design": {
+            "search": d.search, "replicates": d.replicates, "twin_required": d.twin_required,
+            "seed": d.seed.map(|s| s.to_string()), "backends": d.backends,
+            "min_providers_for_verdict": d.min_providers_for_verdict,
+            "sim_live_tolerance": tolerance, "pinned": d.pins.is_some(),
+        },
+        "expected": h.expected_outcome,
+    })
+}
+
+fn hyp_lint(file: &std::path::Path) -> Value {
+    let r = acn_hyp::lint::lint(file);
+    let structure = acn_hyp::load(file).ok().map(|h| hyp_structure(&h));
+    for w in &r.warnings {
+        tracing::warn!(file = %file.display(), "{w}");
+    }
+    for e in &r.errors {
+        tracing::error!(file = %file.display(), "{e}");
+    }
+    json!({
+        "ok": r.ok(),
+        "file": file.display().to_string(),
+        "id": r.id,
+        "status": r.status.map(acn_hyp::Status::as_str),
+        "hash": r.hash,
+        "predicate": r.predicate,
+        "guard": r.guard,
+        "errors": r.errors,
+        "warnings": r.warnings,
+        "witness": { "fires": r.fires, "holds": r.holds },
+        "structure": structure,
+    })
+}
+
 fn version() -> Value {
     match (build_info::build_info(), build_info::engine_hash()) {
         (Ok(b), Ok(e)) => json!({
@@ -469,6 +573,9 @@ fn run() -> Value {
         Cmd::Harness {
             cmd: HarnessCmd::Run(a),
         } => harness_run(&a),
+        Cmd::Hyp {
+            cmd: HypCmd::Lint { file },
+        } => hyp_lint(&file),
     }
 }
 

@@ -11,3 +11,13 @@ description = "hypothesis registry, verdicts and the loop runner (SPEC 080, 085;
 workspace = true
 
 [dependencies]
+acn-trace.workspace = true
+serde.workspace = true
+serde_path_to_error = "0.1"
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+blake3.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
