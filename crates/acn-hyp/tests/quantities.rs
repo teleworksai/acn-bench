@@ -1,12 +1,16 @@
 //! HYP-12: name resolution, selectors normalised to one spelling, unique enum
-//! values, and the quantity table and its rendering.
+//! values, the quantity table and its rendering, every formula per replicate
+//! (then the mean over replicates), and the price table.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // CON-19: tests are exempt
 
 mod common;
 
 use acn_hyp::predicate::is_reserved;
-use acn_hyp::quantities::{QUANTITIES, get, markdown};
+use acn_hyp::quantities::{
+    Call, PRICES, QUANTITIES, Replicate, Session, Turn, get, markdown, prices, value,
+};
+use acn_hyp::slice::{Arm, Values};
 use common::{BASE, candidate, err, with_predicate};
 
 /// Cites: HYP-12
@@ -173,4 +177,160 @@ fn selectors_choose_one_arm_and_fix_each_parameter_once_to_a_runnable_value() {
             "predicate = \"max_over_knobs(cached_token_ratio(a, fast)) < 1\"",
         );
     assert!(err(candidate(&np, "t1").0).contains("not pooled"));
+}
+
+fn call(sid: u8, input: i64, read: i64, write: i64, out: i64, ttft_ms: i64) -> Call {
+    Call {
+        session_id: [sid; 8],
+        input_tokens: Some(input),
+        cache_read_tokens: Some(read),
+        cache_write_tokens: Some(write),
+        output_tokens: Some(out),
+        ttft_ns: Some(ttft_ms * 1_000_000),
+    }
+}
+
+fn turn(sid: u8, outcome: &str, compaction: &str) -> Turn {
+    Turn {
+        session_id: [sid; 8],
+        outcome: outcome.into(),
+        compaction: compaction.into(),
+    }
+}
+
+/// Two sessions, three turns (two successes, one compaction), four calls.
+fn replicate(provider: &str) -> Replicate {
+    Replicate {
+        sessions: vec![
+            Session { session_id: [1; 8] },
+            Session { session_id: [2; 8] },
+        ],
+        turns: vec![
+            turn(1, "success", "none"),
+            turn(1, "failure", "window_full"),
+            turn(2, "success", "none"),
+        ],
+        calls: vec![
+            call(1, 1000, 0, 1000, 100, 400),
+            call(1, 1200, 1000, 0, 50, 100),
+            call(2, 1000, 900, 0, 10, 200),
+            call(2, 800, 0, 0, 40, 300),
+        ],
+        price_key: provider.into(),
+    }
+}
+
+/// Cites: HYP-12
+#[test]
+fn every_quantity_has_a_formula_over_one_replicates_rows() {
+    let r = replicate("anthropic");
+    for q in QUANTITIES {
+        assert!(value(q.name, &r).is_some(), "{} has no formula", q.name);
+    }
+    assert_eq!(value("no_such_quantity", &r), None);
+    // 1900 read of 4000 input.
+    assert_eq!(value("cached_token_ratio", &r), Some(1900.0 / 4000.0));
+    // ttft 100, 200, 300, 400 ms: nearest rank ceil(0.5 · 4) = 2 and ceil(0.99 · 4) = 4.
+    assert_eq!(value("ttft_p50_ms", &r), Some(200.0));
+    assert_eq!(value("ttft_p99_ms", &r), Some(400.0));
+    assert_eq!(value("input_tokens_per_turn", &r), Some(4000.0 / 3.0));
+    assert_eq!(value("compactions_per_session", &r), Some(0.5));
+    // Anthropic weights 1, 0.1, 1.25, 5: uncached 0 + 200 + 100 + 800 = 1100,
+    // read 1900 · 0.1, write 1000 · 1.25, output 200 · 5; over 2 successes.
+    let cost = 1100.0 + 190.0 + 1250.0 + 1000.0;
+    assert_eq!(value("cost_per_success", &r), Some(cost / 2.0));
+    let o = replicate("openai");
+    let cost = 1100.0 + 190.0 + 1000.0 + 1600.0;
+    assert_eq!(value("cost_per_success", &o), Some(cost / 2.0));
+}
+
+/// Cites: HYP-12, HYP-11
+#[test]
+fn a_formula_is_undefined_where_its_data_are_missing_and_never_a_partial_total() {
+    let mut r = replicate("anthropic");
+    r.calls[1].input_tokens = None;
+    assert_eq!(value("input_tokens_per_turn", &r), None, "a partial sum");
+    assert_eq!(value("cost_per_success", &r), None, "a partial cost");
+    // The ratio is defined over the calls that report both counts.
+    assert_eq!(value("cached_token_ratio", &r), Some(900.0 / 2800.0));
+    assert_eq!(
+        value("cost_per_success", &replicate("vllm")),
+        None,
+        "no price row"
+    );
+    let mut r = replicate("anthropic");
+    for t in &mut r.turns {
+        t.outcome = "timeout".into();
+    }
+    assert_eq!(
+        value("cost_per_success", &r),
+        None,
+        "no success: division by zero"
+    );
+    let mut r = replicate("anthropic");
+    r.calls[0].cache_read_tokens = Some(2000);
+    assert_eq!(value("cost_per_success", &r), None, "more cached than sent");
+    let mut r = replicate("anthropic");
+    for c in &mut r.calls {
+        c.ttft_ns = None;
+    }
+    assert_eq!(value("ttft_p50_ms", &r), None);
+    let empty = Replicate::default();
+    for q in QUANTITIES {
+        assert_eq!(value(q.name, &empty), None, "{} over no rows", q.name);
+    }
+}
+
+/// Cites: HYP-12
+#[test]
+fn an_arm_is_the_mean_over_replicates_of_the_per_replicate_values() {
+    // Two replicates with cached ratios 1/2 and 1/4 over very different volumes:
+    // the arm is 0.375, the mean of the ratios, not 0.26 from pooled tokens.
+    let one = |read: i64, input: i64| Replicate {
+        calls: vec![Call {
+            session_id: [1; 8],
+            input_tokens: Some(input),
+            cache_read_tokens: Some(read),
+            ..Call::default()
+        }],
+        ..Replicate::default()
+    };
+    let vals = |r: &Replicate| {
+        Some(Values::from([(
+            "cached_token_ratio".to_owned(),
+            value("cached_token_ratio", r),
+        )]))
+    };
+    let arm = Arm {
+        replicates: vec![vals(&one(5, 10)), vals(&one(250, 1000))],
+    };
+    assert_eq!(arm.mean("cached_token_ratio", 2), Some(0.375));
+}
+
+/// Cites: HYP-12
+#[test]
+fn the_price_table_names_each_provider_once_in_input_token_units() {
+    let mut seen = std::collections::BTreeSet::new();
+    for p in PRICES {
+        assert!(seen.insert(p.provider), "{} twice", p.provider);
+        assert_eq!(
+            p.input, 1.0,
+            "{}: the unit is one uncached input token",
+            p.provider
+        );
+        for w in [p.cache_read, p.cache_write, p.output] {
+            assert!(w.is_finite() && w >= 0.0);
+        }
+        assert!(
+            p.cache_read < p.input,
+            "{}: a cache read costs less",
+            p.provider
+        );
+        assert!(!p.reference.is_empty());
+        assert_eq!(prices(p.provider), Some(p));
+        assert!(markdown().contains(&format!("| `{}` |", p.provider)));
+    }
+    // p4's provider values: the two with list prices have rows.
+    assert!(prices("anthropic").is_some() && prices("openai").is_some());
+    assert!(prices("vllm").is_none() && prices("sglang").is_none());
 }

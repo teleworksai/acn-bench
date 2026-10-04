@@ -22,3 +22,4 @@
 | [ADR-16](../decisions/ADR-16.md) | T03: a minimal clock, and the readings SPEC 030 leaves open | accepted (T03, Class B) | CON-5, MLM-1, MLM-3 to MLM-5, MLM-7, MLM-20 to MLM-23, MLM-30, MLM-31, MLM-40, MLM-41, MLM-51 |
 | [ADR-17](../decisions/ADR-17.md) | T04: the harness, and the readings SPEC 040 leaves open | accepted (T04; Class B, with a Class C part and a `spec-change` part) | HYP-6, HYP-9, HAR-1 to HAR-5, HAR-10 to HAR-17, HAR-20 to HAR-25, HAR-30 to HAR-34, HAR-40 to HAR-43, HAR-50 to HAR-52, HAR-60, HAR-61; TRC-10, TRC-11, TRC-12, TRC-20; MLM-4, MLM-21, MLM-60; CON-26, CON-29 |
 | [ADR-18](../decisions/ADR-18.md) | T05 lands in three PRs, and the readings T05.1 makes | accepted (T05.1, Class C) | HYP-1 to HYP-16, HYP-27; CON-7, CON-12 |
+| [ADR-19](../decisions/ADR-19.md) | T05.2 lands in two PRs; the price table and the readings T05.2a makes | accepted (T05.2a, Class C) | HYP-11 to HYP-15; CON-5, CON-27, CON-30 |

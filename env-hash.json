@@ -1,6 +1,6 @@
 {
-  "env_hash": "ef40753abf9b46a736443e6ed6d15015b34120335bf015d5162458a4c0b906fd",
-  "engine_hash": "cbb780b9d401772ff8440dbaaa430da57725ef5242d535c107582c015f85afe4",
+  "env_hash": "c13328b25ed9bbd710b2dc0f316ecd9a0976f46a5797c27ebe4aac733d2f3a43",
+  "engine_hash": "1d947f3e8528a288abe5c7b99be4ffad6826ded671ba663e7e95ce18d49a767f",
   "files": [
     {
       "path": "crates/acn-attrib/src/core/mod.rs",
@@ -8,7 +8,11 @@
     },
     {
       "path": "crates/acn-hyp/Cargo.toml",
-      "blake3": "70bddfe6b26e8126537bcd2eac5b64eabae61d581a816f5550fe9cbd97842b54"
+      "blake3": "8639355aaf999c0c0d1aa155c332f4220c01a212b904cd6f6422c88c307dd252"
+    },
+    {
+      "path": "crates/acn-hyp/src/bootstrap.rs",
+      "blake3": "b3a8603f250362222a67ccdacc81ae5c4821a8c5203a371cd5e685cb9a1dd0e1"
     },
     {
       "path": "crates/acn-hyp/src/check.rs",
@@ -24,7 +28,7 @@
     },
     {
       "path": "crates/acn-hyp/src/lib.rs",
-      "blake3": "289b85666e6fac0b249e4d775b11833c58326f6f538eda5c54697f6204308c2e"
+      "blake3": "847b805ed4c5ec6336b71a87ccd35123b5f10f71793e90cd54134378396f2666"
     },
     {
       "path": "crates/acn-hyp/src/lint.rs",
@@ -36,11 +40,19 @@
     },
     {
       "path": "crates/acn-hyp/src/quantities.rs",
-      "blake3": "bc0e3a1921ea92f8afbcc9d772a84e5275d9768a299d1ed63701d82424358cd4"
+      "blake3": "4a621140b7698738f1b3246a7369e1f12517798eb1de612055ad0b599557a13f"
+    },
+    {
+      "path": "crates/acn-hyp/src/slice.rs",
+      "blake3": "754344b6bfe9716ff637f11bdf8f9d7cd182b5b804b66c464573118468b4bec7"
     },
     {
       "path": "crates/acn-hyp/tests/common/mod.rs",
       "blake3": "d70c7b60c886500afc74243071832bc373d185593a0c8f732d910f8d87ece6cc"
+    },
+    {
+      "path": "crates/acn-hyp/tests/evaluate.rs",
+      "blake3": "8208a343a0ee4e4641922acbd2d8b743904021896df58e7d20b772478e3c6c5d"
     },
     {
       "path": "crates/acn-hyp/tests/existing_files.rs",
@@ -64,7 +76,11 @@
     },
     {
       "path": "crates/acn-hyp/tests/quantities.rs",
-      "blake3": "b3d7a4d8f3c3dcfc7ff64a4c5e8b7b081bb746ea2be5991c9535b03d4a96d635"
+      "blake3": "4c7d86286d23c15940055fc62f38cefd1a913a3d2baf66b4ae1079246af73190"
+    },
+    {
+      "path": "crates/acn-hyp/tests/verdict_determinism.rs",
+      "blake3": "45d806ab6ab7636eff09195fe25b2d6f372d02cf04358cfa345e5b4f4b5fa69f"
     },
     {
       "path": "crates/acn-trace/src/schema/SEMCONV_VERSION",

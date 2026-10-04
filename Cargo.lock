@@ -83,6 +83,8 @@ version = "0.1.0"
 dependencies = [
  "acn-trace",
  "blake3",
+ "rand_chacha 0.10.0",
+ "rand_core 0.10.1",
  "serde",
  "serde_json",
  "serde_path_to_error",

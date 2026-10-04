@@ -1,19 +1,22 @@
-//! `acn-hyp` — hypothesis files and the falsifier language (SPEC 080); verdicts
-//! (T05.2) and the loop runner (SPEC 085) will follow. Frozen set (CON-7): every
-//! change here is a Class C change. T05 lands in parts (ADR-18): this crate now
-//! holds the file format (HYP-1..9), the predicate language, its static checks
-//! and its one evaluator (HYP-10..14), the quantity table (HYP-12) and lint
-//! (HYP-27).
+//! `acn-hyp` — hypothesis files and the falsifier language (SPEC 080); the
+//! verdict command (T05.2b) and the loop runner (SPEC 085) will follow. Frozen set
+//! (CON-7): every change here is a Class C change. T05 lands in parts (ADR-18,
+//! ADR-19): this crate now holds the file format (HYP-1..9), the predicate
+//! language, its static checks and its one evaluator (HYP-10..14), the quantity
+//! table with its formulas and prices (HYP-12), the bootstrap (HYP-13, HYP-15),
+//! evaluation over a slice's data (HYP-11, HYP-14) and lint (HYP-27).
 #![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
 
+pub mod bootstrap;
 pub mod check;
 pub mod eval;
 pub mod file;
 pub mod lint;
 pub mod predicate;
 pub mod quantities;
+pub mod slice;
 
 pub use file::{Hypothesis, load, load_in};
 
