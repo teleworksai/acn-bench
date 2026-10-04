@@ -33,17 +33,17 @@ fn p4_loads_unedited_with_its_predicate_and_guard() {
     let h = acn_hyp::load(&fixture("p4.toml", P4_BLAKE3)).unwrap();
     assert_eq!(h.id, "p4");
     assert_eq!(
-        h.status,
+        h.status(),
         Status::Candidate,
         "the copy lies outside hypotheses/"
     );
     assert_eq!(
-        h.predicate.to_string(),
+        h.predicate().to_string(),
         "(max_over_knobs(abs(effect(cost_per_success))) < noise_floor(cost_per_success, control, ci = 0.95))",
         "a comparison of two slice-level numbers"
     );
     assert_eq!(
-        h.guard.as_ref().unwrap().to_string(),
+        h.guard().unwrap().to_string(),
         "((replicates < 20) or (providers_reported < 2))"
     );
     assert!(!h.params["provider"].pooled);
@@ -58,8 +58,8 @@ fn p4_loads_unedited_with_its_predicate_and_guard() {
     // From its real path it is frozen, recorded in env-hash.json.
     let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../hypotheses/p4.toml");
     let h = acn_hyp::load(&real).unwrap();
-    assert_eq!(h.status, Status::Frozen);
-    assert_eq!(h.hash.to_hex(), P4_BLAKE3);
+    assert_eq!(h.status(), Status::Frozen);
+    assert_eq!(h.hash().to_hex(), P4_BLAKE3);
 }
 
 /// Cites: HYP-16
@@ -67,11 +67,11 @@ fn p4_loads_unedited_with_its_predicate_and_guard() {
 fn p17_loads_unedited_with_its_two_selects_and_at_clause() {
     let h = acn_hyp::load(&fixture("p17-a2a.toml", P17_BLAKE3)).unwrap();
     assert_eq!(h.id, "p17", "the `<id>-<slug>` stem rule");
-    assert_eq!(h.status, Status::Candidate);
+    assert_eq!(h.status(), Status::Candidate);
     assert_eq!(
-        h.predicate.to_string(),
-        "(((network_attributable_share[a2a] - network_attributable_share[control]) < 0.05) at all rtt_ms <= 150)",
-        "two selects, the first fixing `protocol` by its unique value `a2a`"
+        h.predicate().to_string(),
+        "((network_attributable_share(protocol = a2a) - network_attributable_share(control)) < 0.05) at all rtt_ms <= 150",
+        "two selects, the first fixing `protocol` by its unique value `a2a`, normalised to `pname = value`"
     );
     assert_eq!(h.param_of_value("a2a").unwrap().name, "protocol");
     assert!(matches!(

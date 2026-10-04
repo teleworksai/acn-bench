@@ -5,19 +5,64 @@
 
 use std::fmt;
 
-/// The built-in functions of HYP-13.
-pub const BUILTINS: &[&str] = &[
-    "abs",
-    "min",
-    "max",
-    "effect",
-    "rel_effect",
-    "ci_low",
-    "ci_high",
-    "max_over_knobs",
-    "min_over_knobs",
-    "noise_floor",
-];
+/// The built-in functions of HYP-13, and no others.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Builtin {
+    Abs,
+    Min,
+    Max,
+    Effect,
+    RelEffect,
+    CiLow,
+    CiHigh,
+    MaxOverKnobs,
+    MinOverKnobs,
+    NoiseFloor,
+}
+
+impl Builtin {
+    /// Every built-in, in the order HYP-13 lists them.
+    pub const ALL: [Self; 10] = [
+        Self::Abs,
+        Self::Min,
+        Self::Max,
+        Self::Effect,
+        Self::RelEffect,
+        Self::CiLow,
+        Self::CiHigh,
+        Self::MaxOverKnobs,
+        Self::MinOverKnobs,
+        Self::NoiseFloor,
+    ];
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Abs => "abs",
+            Self::Min => "min",
+            Self::Max => "max",
+            Self::Effect => "effect",
+            Self::RelEffect => "rel_effect",
+            Self::CiLow => "ci_low",
+            Self::CiHigh => "ci_high",
+            Self::MaxOverKnobs => "max_over_knobs",
+            Self::MinOverKnobs => "min_over_knobs",
+            Self::NoiseFloor => "noise_floor",
+        }
+    }
+
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|b| b.as_str() == name)
+    }
+}
+
+/// The deepest nesting a predicate may have: deeper is refused, never a stack
+/// overflow (ADR-18).
+pub const MAX_DEPTH: usize = 64;
+
+/// The longest predicate accepted, in bytes (ADR-18).
+pub const MAX_LEN: usize = 2048;
 
 /// HYP-10's reserved words: keywords, counters and the built-in names.
 #[must_use]
@@ -38,7 +83,7 @@ pub fn is_reserved(word: &str) -> bool {
             | "false"
             | "replicates"
             | "providers_reported"
-    ) || BUILTINS.contains(&word)
+    ) || Builtin::from_name(word).is_some()
 }
 
 /// Whether `s` is an `ident` of the grammar: `[a-z_][a-z0-9_]*`.
@@ -160,7 +205,7 @@ pub enum Expr {
     /// A bare `qname`.
     Quantity(String),
     Select(String, Vec<Selector>),
-    Call(String, Vec<Arg>),
+    Call(Builtin, Vec<Arg>),
     Neg(Box<Expr>),
     Arith(ArithOp, Box<Expr>, Box<Expr>),
     Cmp(CmpOp, Box<Expr>, Box<Expr>),
@@ -272,6 +317,16 @@ fn lex(src: &str) -> Result<Vec<(usize, Tok)>, ParseError> {
                 if !v.is_finite() {
                     return err(i, format!("`{text}` is not finite"));
                 }
+                let mantissa = text.split(['e', 'E']).next().unwrap_or(text);
+                if v == 0.0 && mantissa.bytes().any(|c| (b'1'..=b'9').contains(&c)) {
+                    return err(i, format!("`{text}` underflows to zero"));
+                }
+                if j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+                    return err(
+                        j,
+                        format!("`{text}` runs into `{}`; separate them", &src[j..=j]),
+                    );
+                }
                 i = j - 1;
                 Tok::Num(v)
             }
@@ -306,6 +361,7 @@ fn lex(src: &str) -> Result<Vec<(usize, Tok)>, ParseError> {
 struct Parser {
     toks: Vec<(usize, Tok)>,
     pos: usize,
+    depth: usize,
 }
 
 impl Parser {
@@ -350,9 +406,14 @@ impl Parser {
     }
 
     /// expr := or ( "at" ( "all" | "any" ) ( pname cmpop snumber | "cells" ) )?
+    /// The `at` clause applies to the whole predicate, so it is accepted only at
+    /// the top level (ADR-18).
     fn expr(&mut self) -> Result<Expr, ParseError> {
         let e = self.or()?;
         if self.keyword("at") {
+            if self.depth > 0 {
+                return self.fail("`at` applies to the whole predicate; it cannot stand inside parentheses or a call");
+            }
             self.bump();
             let all = match self.bump() {
                 Tok::Ident(s) if s == "all" => true,
@@ -413,7 +474,7 @@ impl Parser {
     fn not(&mut self) -> Result<Expr, ParseError> {
         if self.keyword("not") {
             self.bump();
-            return Ok(Expr::Not(Box::new(self.not()?)));
+            return self.nested(|p| Ok(Expr::Not(Box::new(p.not()?))));
         }
         self.cmp()
     }
@@ -460,30 +521,43 @@ impl Parser {
     fn unary(&mut self) -> Result<Expr, ParseError> {
         if matches!(self.peek(), Tok::Minus) {
             self.bump();
-            return Ok(Expr::Neg(Box::new(self.unary()?)));
+            return self.nested(|p| Ok(Expr::Neg(Box::new(p.unary()?))));
         }
         self.atom()
+    }
+
+    fn nested<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, ParseError>,
+    ) -> Result<T, ParseError> {
+        if self.depth >= MAX_DEPTH {
+            return self.fail(format!("nested deeper than {MAX_DEPTH}"));
+        }
+        self.depth += 1;
+        let r = f(self);
+        self.depth -= 1;
+        r
     }
 
     fn atom(&mut self) -> Result<Expr, ParseError> {
         match self.bump() {
             Tok::Num(v) => Ok(Expr::Num(v)),
-            Tok::LParen => {
-                let e = self.expr()?;
-                self.expect(&Tok::RParen, "`)`")?;
+            Tok::LParen => self.nested(|p| {
+                let e = p.expr()?;
+                p.expect(&Tok::RParen, "`)`")?;
                 Ok(e)
-            }
+            }),
             Tok::Ident(name) => {
                 if matches!(self.peek(), Tok::LParen) {
                     self.bump();
-                    if BUILTINS.contains(&name.as_str()) {
-                        let args = self.list(Self::barg)?;
-                        return Ok(Expr::Call(name, args));
+                    if let Some(b) = Builtin::from_name(&name) {
+                        let args = self.nested(|p| p.list(Self::barg))?;
+                        return Ok(Expr::Call(b, args));
                     }
                     if is_reserved(&name) {
                         return self.fail(format!("`{name}` is reserved and takes no arguments"));
                     }
-                    let sels = self.list(Self::selector)?;
+                    let sels = self.nested(|p| p.list(Self::selector))?;
                     return Ok(Expr::Select(name, sels));
                 }
                 match name.as_str() {
@@ -591,9 +665,16 @@ fn describe(t: &Tok) -> String {
 
 /// Parse a predicate or a guard.
 pub fn parse(src: &str) -> Result<Expr, ParseError> {
+    if src.len() > MAX_LEN {
+        return Err(ParseError {
+            at: MAX_LEN,
+            message: format!("a predicate is at most {MAX_LEN} bytes"),
+        });
+    }
     let mut p = Parser {
         toks: lex(src)?,
         pos: 0,
+        depth: 0,
     };
     let e = p.expr()?;
     if !matches!(p.peek(), Tok::End) {
@@ -616,7 +697,8 @@ impl fmt::Display for Lit {
 }
 
 impl fmt::Display for Expr {
-    /// A fully parenthesised rendering: the golden form of a parse tree.
+    /// A fully parenthesised rendering in the grammar's own syntax: the golden
+    /// form of a parse tree, which parses back to the same tree.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Num(n) => write!(f, "{n}"),
@@ -633,7 +715,7 @@ impl fmt::Display for Expr {
                         Selector::Value(v) => v.clone(),
                     })
                     .collect();
-                write!(f, "{q}[{}]", s.join(", "))
+                write!(f, "{q}({})", s.join(", "))
             }
             Self::Call(name, args) => {
                 let s: Vec<String> = args
@@ -645,7 +727,7 @@ impl fmt::Display for Expr {
                         Arg::Expr(e) => e.to_string(),
                     })
                     .collect();
-                write!(f, "{name}({})", s.join(", "))
+                write!(f, "{}({})", name.as_str(), s.join(", "))
             }
             Self::Neg(e) => write!(f, "(-{e})"),
             Self::Arith(op, l, r) => write!(f, "({l} {} {r})", op.as_str()),
@@ -655,9 +737,10 @@ impl fmt::Display for Expr {
             Self::Not(e) => write!(f, "(not {e})"),
             Self::At(e, all, range) => {
                 let q = if *all { "all" } else { "any" };
+                // Only ever at the top level, so never parenthesised.
                 match range {
-                    AtRange::Cells => write!(f, "({e} at {q} cells)"),
-                    AtRange::Bound(p, op, v) => write!(f, "({e} at {q} {p} {} {v})", op.as_str()),
+                    AtRange::Cells => write!(f, "{e} at {q} cells"),
+                    AtRange::Bound(p, op, v) => write!(f, "{e} at {q} {p} {} {v}", op.as_str()),
                 }
             }
         }

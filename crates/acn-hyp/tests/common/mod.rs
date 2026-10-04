@@ -55,34 +55,49 @@ pub fn candidate(text: &str, stem: &str) -> (Result<Hypothesis, HypError>, tempf
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(format!("{stem}.toml"));
     std::fs::write(&path, text).unwrap();
-    (acn_hyp::load(&path), dir)
+    (acn_hyp::load_in(&path, dir.path()), dir)
 }
 
-/// A temporary workspace root holding `files` (relative path, text) under it,
-/// `specs/README.md` listing `specs/100-x.md`, and an `env-hash.json` that records
-/// every file under `hypotheses/` with its hash.
+/// Write `env-hash.json` under `root` as `cargo xtask env-hash --write` would.
+pub fn record(root: &Path) {
+    let r = acn_trace::env::compute(root).unwrap();
+    let files: Vec<serde_json::Value> = r
+        .files
+        .iter()
+        .map(|f| serde_json::json!({ "path": f.path, "blake3": f.blake3 }))
+        .collect();
+    let json =
+        serde_json::json!({ "env_hash": r.env_hash, "engine_hash": r.engine_hash, "files": files });
+    std::fs::write(root.join("env-hash.json"), json.to_string()).unwrap();
+}
+
+/// A temporary workspace root holding `files` (relative path, text), every
+/// frozen-set directory, `specs/README.md` listing `100-x.md`, and an
+/// `env-hash.json` that records the frozen set as it stands (CON-28).
 pub fn root(files: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let r = dir.path();
-    std::fs::create_dir_all(r.join("hypotheses")).unwrap();
+    for d in acn_trace::env::FROZEN_SET {
+        std::fs::create_dir_all(r.join(d)).unwrap();
+    }
     std::fs::create_dir_all(r.join("specs")).unwrap();
     std::fs::write(
         r.join("specs/README.md"),
         "| 100 | 100-x.md | X | to write |\n",
     )
     .unwrap();
-    let mut recorded = Vec::new();
     for (rel, text) in files {
         let p = r.join(rel);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, text).unwrap();
-        if rel.starts_with("hypotheses/") {
-            recorded.push(serde_json::json!({ "path": rel, "blake3": blake3::hash(text.as_bytes()).to_hex().to_string() }));
-        }
     }
-    let record = serde_json::json!({ "env_hash": "0".repeat(64), "engine_hash": "0".repeat(64), "files": recorded });
-    std::fs::write(r.join("env-hash.json"), record.to_string()).unwrap();
+    record(r);
     dir
+}
+
+/// Load `rel` under `root`, the root found from the root itself.
+pub fn load_at(root: &Path, rel: &str) -> Result<Hypothesis, HypError> {
+    acn_hyp::load_in(&root.join(rel), root)
 }
 
 /// The file made frozen-shaped: 20 replicates and a spec.
@@ -98,7 +113,7 @@ pub fn frozen(text: &str, stem: &str) -> (Result<Hypothesis, HypError>, tempfile
     let rel = format!("hypotheses/{stem}.toml");
     let dir = root(&[(&rel, text)]);
     let path: PathBuf = dir.path().join(&rel);
-    (acn_hyp::load(&path), dir)
+    (acn_hyp::load_in(&path, dir.path()), dir)
 }
 
 /// The error message of a load that must fail.

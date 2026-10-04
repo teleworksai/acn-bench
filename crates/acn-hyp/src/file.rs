@@ -138,18 +138,61 @@ impl Domain {
         }
     }
 
-    /// Whether `v` lies in the domain.
+    /// Whether `v` is a value a run can take: in the domain, and one of the
+    /// levels when the parameter declares levels (a grid runs nothing else).
     #[must_use]
     pub fn admits(&self, v: &predicate::Lit) -> bool {
         use predicate::Lit;
         match (self, v) {
             (Self::Bool, Lit::Bool(_)) => true,
             (Self::Enum(vals), Lit::Ident(s)) => vals.contains(s),
-            (Self::Range { min, max, .. }, Lit::Num(n)) => *min <= *n && *n <= *max,
-            (Self::IntRange { min, max, .. }, Lit::Num(n)) => {
-                n.fract() == 0.0 && (*min as f64) <= *n && *n <= (*max as f64)
+            (Self::Range { min, max, levels }, Lit::Num(n)) => match levels {
+                Some(ls) => ls.contains(n),
+                None => *min <= *n && *n <= *max,
+            },
+            (Self::IntRange { min, max, levels }, Lit::Num(n)) => {
+                as_int(*n).is_some_and(|i| match levels {
+                    Some(ls) => ls.contains(&i),
+                    None => *min <= i && i <= *max,
+                })
             }
             _ => false,
+        }
+    }
+
+    /// Whether some value a run can take satisfies `x op bound` (an `at` bound
+    /// that no cell satisfies makes the predicate vacuous, ADR-18).
+    #[must_use]
+    pub fn satisfiable(&self, op: predicate::CmpOp, bound: f64) -> bool {
+        use predicate::CmpOp;
+        let holds = |x: f64| op.apply(x, bound);
+        match self {
+            Self::Range {
+                levels: Some(ls), ..
+            } => ls.iter().any(|x| holds(*x)),
+            Self::IntRange {
+                levels: Some(ls), ..
+            } => ls.iter().any(|x| holds(*x as f64)),
+            Self::Range { min, max, .. } => match op {
+                CmpOp::Lt => *min < bound,
+                CmpOp::Le => *min <= bound,
+                CmpOp::Gt => *max > bound,
+                CmpOp::Ge => *max >= bound,
+                CmpOp::Eq => *min <= bound && bound <= *max,
+                CmpOp::Ne => !(*min == bound && *max == bound),
+            },
+            Self::IntRange { min, max, .. } => {
+                let (lo, hi) = (*min as f64, *max as f64);
+                match op {
+                    CmpOp::Lt => lo < bound,
+                    CmpOp::Le => lo <= bound,
+                    CmpOp::Gt => hi > bound,
+                    CmpOp::Ge => hi >= bound,
+                    CmpOp::Eq => as_int(bound).is_some_and(|b| *min <= b && b <= *max),
+                    CmpOp::Ne => !(min == max && as_int(bound) == Some(*min)),
+                }
+            }
+            Self::Bool | Self::Enum(_) => false,
         }
     }
 
@@ -158,6 +201,13 @@ impl Domain {
     pub fn is_numeric(&self) -> bool {
         matches!(self, Self::Range { .. } | Self::IntRange { .. })
     }
+}
+
+/// `f` as an exact integer, if it is one in `i64`'s range.
+fn as_int(f: f64) -> Option<i64> {
+    #[allow(clippy::cast_possible_truncation)]
+    let i = f as i64;
+    (f.fract() == 0.0 && (i as f64) == f && f.abs() < 9.2e18).then_some(i)
 }
 
 /// One `[varies]` parameter.
@@ -211,13 +261,14 @@ pub enum Control {
     Missing,
 }
 
-/// A loaded, checked hypothesis file.
+/// A loaded, checked hypothesis file. Only [`load`] and [`load_in`] make one:
+/// its status, hash and checked predicates are private, so no caller can mark a
+/// file frozen or swap a predicate after the checks (CON-7, HYP-3).
 #[derive(Debug, Clone)]
 pub struct Hypothesis {
     pub path: PathBuf,
-    /// BLAKE3 of the file's bytes (HYP-5).
-    pub hash: Digest,
-    pub status: Status,
+    hash: Digest,
+    status: Status,
     pub id: String,
     pub title: String,
     pub spec: Option<String>,
@@ -231,8 +282,8 @@ pub struct Hypothesis {
     pub control_description: String,
     pub control: Control,
     pub design: Design,
-    pub predicate: Expr,
-    pub guard: Option<Expr>,
+    predicate: Expr,
+    guard: Option<Expr>,
     pub expected_outcome: String,
     pub expected_note: Option<String>,
     /// What lint and load report without failing (HYP-7, HYP-8).
@@ -240,6 +291,30 @@ pub struct Hypothesis {
 }
 
 impl Hypothesis {
+    /// BLAKE3 of the file's bytes (HYP-5).
+    #[must_use]
+    pub fn hash(&self) -> Digest {
+        self.hash
+    }
+
+    /// Frozen or candidate, by location and record (HYP-3).
+    #[must_use]
+    pub fn status(&self) -> Status {
+        self.status
+    }
+
+    /// The falsifier, checked, with its selectors normalised to `pname = value`.
+    #[must_use]
+    pub fn predicate(&self) -> &Expr {
+        &self.predicate
+    }
+
+    /// The guard `inconclusive_if`, checked.
+    #[must_use]
+    pub fn guard(&self) -> Option<&Expr> {
+        self.guard.as_ref()
+    }
+
     /// Every quantity `[measures]` lists.
     pub fn measures(&self) -> impl Iterator<Item = &String> {
         self.primary.iter().chain(&self.secondary)
@@ -251,6 +326,15 @@ impl Hypothesis {
         self.params.contains_key("provider")
     }
 
+    /// The number of declared providers, when `provider` is an enum.
+    #[must_use]
+    pub fn provider_count(&self) -> Option<usize> {
+        match &self.params.get("provider")?.domain {
+            Domain::Enum(v) => Some(v.len()),
+            _ => None,
+        }
+    }
+
     /// The parameter that declares enum value `v` (values are unique, HYP-6).
     #[must_use]
     pub fn param_of_value(&self, v: &str) -> Option<&Param> {
@@ -258,57 +342,92 @@ impl Hypothesis {
             .values()
             .find(|p| matches!(&p.domain, Domain::Enum(vals) if vals.iter().any(|x| x == v)))
     }
+
+    pub(crate) fn set_predicates(&mut self, predicate: Expr, guard: Option<Expr>) {
+        self.predicate = predicate;
+        self.guard = guard;
+    }
 }
 
 // ---- loading ---------------------------------------------------------------
 
 /// Where a file was found, which decides its status (HYP-3).
 #[derive(Debug, Clone)]
-pub struct Location {
+pub(crate) struct Location {
     pub path: PathBuf,
     pub status: Status,
     /// The workspace root (CON-28), when there is one.
     pub root: Option<PathBuf>,
+    /// Why a file under `hypotheses/` is nonetheless a candidate.
+    pub note: Option<String>,
 }
 
 fn io(path: &Path) -> impl Fn(std::io::Error) -> HypError + '_ {
     move |e| HypError::new(path, None, e.to_string())
 }
 
+fn env_err(path: &Path) -> impl Fn(acn_trace::env::EnvError) -> HypError + '_ {
+    move |e| HypError::new(path, None, e.to_string())
+}
+
 /// HYP-3: frozen when the file lies under `<root>/hypotheses/` and `env-hash.json`
-/// lists that path with this hash; candidate otherwise.
-pub fn locate(path: &Path, hash: &Digest) -> Result<Location, HypError> {
+/// lists that path with this hash. The root is CON-28's: found from `start`, the
+/// current directory, never from the file. A record that does not match the
+/// frozen set freezes nothing: every file is then a candidate, as a locally
+/// edited copy is (HYP-3, CON-28).
+fn locate(path: &Path, hash: &Digest, start: &Path) -> Result<Location, HypError> {
     let abs = std::fs::canonicalize(path).map_err(io(path))?;
-    let dir = abs.parent().unwrap_or(&abs);
-    let root =
-        acn_trace::env::find_root(dir).map_err(|e| HypError::new(path, None, e.to_string()))?;
+    let root = acn_trace::env::find_root(start).map_err(env_err(path))?;
     let mut status = Status::Candidate;
+    let mut note = None;
     if let Some(root) = &root
         && abs.starts_with(root.join("hypotheses"))
-        && let Some(record) = acn_trace::env::read_record(root)
-            .map_err(|e| HypError::new(path, None, e.to_string()))?
+        && let Some(record) = acn_trace::env::read_record(root).map_err(env_err(path))?
     {
-        let rel = acn_trace::env::rel_path(root, &abs)
-            .map_err(|e| HypError::new(path, None, e.to_string()))?;
-        if record
+        let computed = acn_trace::env::compute(root).map_err(env_err(path))?;
+        let rel = acn_trace::env::rel_path(root, &abs).map_err(env_err(path))?;
+        let listed = record
             .files
             .iter()
-            .any(|f| f.path == rel && f.blake3 == hash.to_hex())
+            .any(|f| f.path == rel && f.blake3 == hash.to_hex());
+        if computed.env_hash != record.env_hash
+            || computed.engine_hash != record.engine_hash
+            || computed.files != record.files
         {
+            note = Some(format!(
+                "{} does not match the frozen set under {}: nothing there is frozen until `cargo xtask env-hash --write` records it (CON-28)",
+                acn_trace::env::RECORD_FILE,
+                root.display()
+            ));
+        } else if listed {
             status = Status::Frozen;
+        } else {
+            note = Some(format!(
+                "{rel} is not recorded in {} (HYP-3)",
+                acn_trace::env::RECORD_FILE
+            ));
         }
     }
     Ok(Location {
         path: abs,
         status,
         root,
+        note,
     })
 }
 
-/// Load a hypothesis file, read-only (HYP-4), and check it (HYP-1..14).
+/// Load a hypothesis file read-only (HYP-4) and check it (HYP-1..14), its status
+/// decided against the workspace root of the current directory (CON-28).
 pub fn load(path: &Path) -> Result<Hypothesis, HypError> {
+    let cwd = std::env::current_dir().map_err(io(path))?;
+    load_in(path, &cwd)
+}
+
+/// [`load`], with the workspace root found from `start` instead of the current
+/// directory.
+pub fn load_in(path: &Path, start: &Path) -> Result<Hypothesis, HypError> {
     let bytes = std::fs::read(path).map_err(io(path))?;
-    let loc = locate(path, &Digest::of(&bytes))?;
+    let loc = locate(path, &Digest::of(&bytes), start)?;
     parse(&bytes, &loc)
 }
 
@@ -316,9 +435,10 @@ fn fail<T>(path: &Path, key: &str, m: String) -> Result<T, HypError> {
     Err(HypError::new(path, Some(key.to_owned()), m))
 }
 
-fn number(v: &toml::Value) -> Option<f64> {
+fn finite_number(v: &toml::Value) -> Option<f64> {
     match v {
-        toml::Value::Float(f) => Some(*f),
+        toml::Value::Float(f) if f.is_finite() => Some(*f),
+        #[allow(clippy::cast_precision_loss)]
         toml::Value::Integer(i) => Some(*i as f64),
         _ => None,
     }
@@ -331,7 +451,7 @@ fn is_hex_digest(s: &str) -> bool {
 }
 
 /// Parse and check a file's bytes found at `loc` (HYP-1..14).
-pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
+pub(crate) fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
     let path = loc.path.as_path();
     let frozen = loc.status == Status::Frozen;
     let text = std::str::from_utf8(bytes).map_err(|e| HypError::new(path, None, e.to_string()))?;
@@ -345,11 +465,59 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
                 e.into_inner().message().to_owned(),
             )
         })?;
-    let mut warnings = Vec::new();
+    let mut warnings: Vec<String> = loc.note.iter().cloned().collect();
+    check_poc(&raw.poc, loc)?;
+    let grid = raw.design.search == "grid";
+    let params = check_varies(path, &raw.varies, grid)?;
+    let (primary, secondary) = check_measures(path, &raw.measures, &params, frozen, &mut warnings)?;
+    let measured: BTreeSet<String> = primary.iter().chain(&secondary).cloned().collect();
+    let control = check_control(path, &raw.control, &params, frozen, &mut warnings)?;
+    let design = check_design(path, &raw.design, &params, &measured, frozen)?;
+    if !matches!(raw.expected.outcome.as_str(), "pass" | "fail") {
+        return fail(path, "expected.outcome", "pass or fail".into());
+    }
+    let predicate = predicate::parse(&raw.falsifier.predicate)
+        .map_err(|e| HypError::new(path, Some("falsifier.predicate".into()), e.to_string()))?;
+    let guard = match &raw.falsifier.inconclusive_if {
+        None => None,
+        Some(g) => Some(predicate::parse(g).map_err(|e| {
+            HypError::new(
+                path,
+                Some("falsifier.inconclusive_if".into()),
+                e.to_string(),
+            )
+        })?),
+    };
+    let h = Hypothesis {
+        path: loc.path.clone(),
+        hash: Digest::of(bytes),
+        status: loc.status,
+        id: raw.poc.id.clone(),
+        title: raw.poc.title.clone(),
+        spec: raw.poc.spec.clone(),
+        report_refs: raw.poc.report_refs.clone().unwrap_or_default(),
+        supersedes: raw.poc.supersedes.clone(),
+        statement: raw.hypothesis.statement.clone(),
+        params,
+        primary,
+        secondary,
+        control_description: raw.control.description.clone(),
+        control,
+        design,
+        predicate,
+        guard,
+        expected_outcome: raw.expected.outcome.clone(),
+        expected_note: raw.expected.note.clone(),
+        warnings,
+    };
+    crate::check::check(h)
+}
 
-    // HYP-2: [poc].
-    let poc = &raw.poc;
-    if poc.id.is_empty() || !predicate::is_ident(&poc.id) {
+/// HYP-2: `[poc]`, the stem rule, `status`, `supersedes`, and a frozen file's spec
+/// and unique id.
+fn check_poc(poc: &RawPoc, loc: &Location) -> Result<(), HypError> {
+    let path = loc.path.as_path();
+    if !predicate::is_ident(&poc.id) {
         return fail(path, "poc.id", format!("`{}` is not an identifier", poc.id));
     }
     let stem = path
@@ -390,184 +558,63 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
             );
         }
     }
-    if frozen {
+    if loc.status == Status::Frozen {
         let Some(spec) = &poc.spec else {
             return fail(path, "poc.spec", "a frozen file names its POC spec".into());
         };
-        if let Some(root) = &loc.root
-            && !root.join(spec).is_file()
-        {
-            let file = Path::new(spec)
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or_default();
-            let listed = std::fs::read_to_string(root.join("specs/README.md"))
-                .is_ok_and(|readme| !file.is_empty() && readme.contains(file));
-            if !listed {
+        // `specs/<name>.md`: one component, no `..`, nothing absolute.
+        let name = spec.strip_prefix("specs/").filter(|n| {
+            n.ends_with(".md") && n.len() > 3 && !n.contains(['/', '\\']) && !n.starts_with('.')
+        });
+        let Some(name) = name else {
+            return fail(
+                path,
+                "poc.spec",
+                format!("`{spec}` is not `specs/<name>.md`"),
+            );
+        };
+        if let Some(root) = &loc.root {
+            let exists = root.join(spec).is_file();
+            let listed =
+                std::fs::read_to_string(root.join("specs/README.md")).is_ok_and(|readme| {
+                    readme
+                        .lines()
+                        .flat_map(|l| l.split('|'))
+                        .any(|cell| cell.trim() == name)
+                });
+            if !exists && !listed {
                 return fail(
                     path,
                     "poc.spec",
                     format!("`{spec}` neither exists nor is listed in specs/README.md"),
                 );
             }
-        }
-        if let Some(root) = &loc.root {
             unique_id(root, path, &poc.id)?;
         }
     }
+    Ok(())
+}
 
-    // HYP-6: [varies].
+/// HYP-6: `[varies]`.
+fn check_varies(
+    path: &Path,
+    raw: &BTreeMap<String, RawParam>,
+    grid: bool,
+) -> Result<BTreeMap<String, Param>, HypError> {
     let mut params = BTreeMap::new();
     let mut values_seen: BTreeMap<String, String> = BTreeMap::new();
-    let grid = raw.design.search == "grid";
-    for (name, p) in &raw.varies {
+    for (name, p) in raw {
         let key = format!("varies.{name}");
         if is_reserved(name) {
             return fail(path, &key, format!("`{name}` is a reserved word (HYP-10)"));
         }
-        let none_of = |fields: &[(&str, bool)]| -> Result<(), HypError> {
-            for (f, present) in fields {
-                if *present {
-                    return fail(
-                        path,
-                        &key,
-                        format!("a `{}` parameter takes no `{f}`", p.kind),
-                    );
-                }
-            }
-            Ok(())
-        };
-        let levels_given = p.levels.is_some();
-        let domain = match p.kind.as_str() {
-            "bool" => {
-                none_of(&[
-                    ("values", p.values.is_some()),
-                    ("min", p.min.is_some()),
-                    ("max", p.max.is_some()),
-                    ("levels", levels_given),
-                ])?;
-                Domain::Bool
-            }
-            "enum" => {
-                none_of(&[
-                    ("min", p.min.is_some()),
-                    ("max", p.max.is_some()),
-                    ("levels", levels_given),
-                ])?;
-                let Some(values) = p.values.clone().filter(|v| !v.is_empty()) else {
-                    return fail(
-                        path,
-                        &key,
-                        "an enum lists its `values`, at least one".into(),
-                    );
-                };
-                for v in &values {
-                    if is_reserved(v) {
-                        return fail(path, &key, format!("the value `{v}` is a reserved word"));
-                    }
-                    if let Some(other) = values_seen.insert(v.clone(), name.clone()) {
-                        return fail(
-                            path,
-                            &key,
-                            format!(
-                                "the value `{v}` is also a value of `{other}`; enum values are unique across parameters"
-                            ),
-                        );
-                    }
-                }
-                Domain::Enum(values)
-            }
-            "range" | "int_range" => {
-                none_of(&[("values", p.values.is_some())])?;
-                let int = p.kind == "int_range";
-                let read = |v: &Option<toml::Value>, f: &str| -> Result<f64, HypError> {
-                    let Some(v) = v else {
-                        return fail(path, &key, format!("a `{}` states `{f}`", p.kind));
-                    };
-                    match (int, v) {
-                        (true, toml::Value::Integer(i)) => Ok(*i as f64),
-                        (false, v) => number(v).filter(|x| x.is_finite()).map_or_else(
-                            || fail(path, &key, format!("`{f}` is not a finite number")),
-                            Ok,
-                        ),
-                        _ => fail(path, &key, format!("`{f}` of an int_range is an integer")),
-                    }
-                };
-                let (min, max) = (read(&p.min, "min")?, read(&p.max, "max")?);
-                if min > max {
-                    return fail(path, &key, format!("min {min} exceeds max {max}"));
-                }
-                let levels = match &p.levels {
-                    None => None,
-                    Some(ls) => {
-                        if ls.is_empty() {
-                            return fail(path, &key, "`levels` is empty".into());
-                        }
-                        let mut out = Vec::new();
-                        for l in ls {
-                            let v = match (int, l) {
-                                (true, toml::Value::Integer(i)) => *i as f64,
-                                (true, _) => {
-                                    return fail(
-                                        path,
-                                        &key,
-                                        "an int_range's levels are integers".into(),
-                                    );
-                                }
-                                (false, l) => number(l).filter(|x| x.is_finite()).map_or_else(
-                                    || fail(path, &key, "a level is not a finite number".into()),
-                                    Ok,
-                                )?,
-                            };
-                            if v < min || v > max {
-                                return fail(
-                                    path,
-                                    &key,
-                                    format!("the level {v} lies outside [{min}, {max}]"),
-                                );
-                            }
-                            if out.contains(&v) {
-                                return fail(path, &key, format!("the level {v} is listed twice"));
-                            }
-                            out.push(v);
-                        }
-                        Some(out)
-                    }
-                };
-                if grid && levels.is_none() {
-                    return fail(
-                        path,
-                        &key,
-                        "a grid search needs `levels` on every range (HYP-6)".into(),
-                    );
-                }
-                if int {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let i = |f: f64| f as i64;
-                    Domain::IntRange {
-                        min: i(min),
-                        max: i(max),
-                        levels: levels.map(|v| v.into_iter().map(i).collect()),
-                    }
-                } else {
-                    Domain::Range { min, max, levels }
-                }
-            }
-            k => {
-                return fail(
-                    path,
-                    &key,
-                    format!("kind `{k}` is not bool, enum, range or int_range"),
-                );
-            }
-        };
-        if p.pooled == Some(false)
-            && !matches!(domain, Domain::Bool | Domain::Enum(_))
-            && !levels_given
-        {
-            return fail(path,
+        let domain = check_param(path, &key, name, p, grid, &mut values_seen)?;
+        let finite = domain.size().is_some();
+        if (p.pooled == Some(false) || name == "provider") && !finite {
+            return fail(
+                path,
                 &key,
-                "`pooled = false` needs a bool, an enum or `levels`, so the slices are a finite, declared set".into(),
+                "a non-pooled parameter needs a bool, an enum or `levels`, so the slices are a finite, declared set".into(),
             );
         }
         // CON-26: `provider` is never pooled.
@@ -581,10 +628,182 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
             },
         );
     }
+    Ok(params)
+}
 
-    // HYP-7: [measures].
-    let primary = raw.measures.primary.clone();
-    let secondary = raw.measures.secondary.clone().unwrap_or_default();
+fn check_param(
+    path: &Path,
+    key: &str,
+    name: &str,
+    p: &RawParam,
+    grid: bool,
+    values_seen: &mut BTreeMap<String, String>,
+) -> Result<Domain, HypError> {
+    let none_of = |fields: &[(&str, bool)]| -> Result<(), HypError> {
+        for (f, present) in fields {
+            if *present {
+                return fail(
+                    path,
+                    key,
+                    format!("a `{}` parameter takes no `{f}`", p.kind),
+                );
+            }
+        }
+        Ok(())
+    };
+    match p.kind.as_str() {
+        "bool" => {
+            none_of(&[
+                ("values", p.values.is_some()),
+                ("min", p.min.is_some()),
+                ("max", p.max.is_some()),
+                ("levels", p.levels.is_some()),
+            ])?;
+            Ok(Domain::Bool)
+        }
+        "enum" => {
+            none_of(&[
+                ("min", p.min.is_some()),
+                ("max", p.max.is_some()),
+                ("levels", p.levels.is_some()),
+            ])?;
+            let Some(values) = p.values.clone().filter(|v| !v.is_empty()) else {
+                return fail(path, key, "an enum lists its `values`, at least one".into());
+            };
+            for v in &values {
+                if is_reserved(v) {
+                    return fail(path, key, format!("the value `{v}` is a reserved word"));
+                }
+                if let Some(other) = values_seen.insert(v.clone(), name.to_owned()) {
+                    return fail(
+                        path,
+                        key,
+                        format!(
+                            "the value `{v}` is also a value of `{other}`; enum values are unique across parameters"
+                        ),
+                    );
+                }
+            }
+            Ok(Domain::Enum(values))
+        }
+        "range" => {
+            none_of(&[("values", p.values.is_some())])?;
+            let read = |v: &Option<toml::Value>, f: &str| -> Result<f64, HypError> {
+                v.as_ref().and_then(finite_number).map_or_else(
+                    || fail(path, key, format!("`{f}` is not a finite number")),
+                    Ok,
+                )
+            };
+            let (min, max) = (read(&p.min, "min")?, read(&p.max, "max")?);
+            if min > max {
+                return fail(path, key, format!("min {min} exceeds max {max}"));
+            }
+            let levels = match &p.levels {
+                None => None,
+                Some(ls) => {
+                    let mut out: Vec<f64> = Vec::new();
+                    for l in ls {
+                        let v = finite_number(l).map_or_else(
+                            || fail(path, key, "a level is not a finite number".into()),
+                            Ok,
+                        )?;
+                        level_ok(
+                            path,
+                            key,
+                            v >= min && v <= max,
+                            out.contains(&v),
+                            &format!("{v}"),
+                        )?;
+                        out.push(v);
+                    }
+                    Some(nonempty(path, key, out)?)
+                }
+            };
+            if grid && levels.is_none() {
+                return fail(
+                    path,
+                    key,
+                    "a grid search needs `levels` on every range (HYP-6)".into(),
+                );
+            }
+            Ok(Domain::Range { min, max, levels })
+        }
+        "int_range" => {
+            none_of(&[("values", p.values.is_some())])?;
+            let read = |v: &Option<toml::Value>, f: &str| -> Result<i64, HypError> {
+                match v {
+                    Some(toml::Value::Integer(i)) => Ok(*i),
+                    _ => fail(path, key, format!("`{f}` of an int_range is an integer")),
+                }
+            };
+            let (min, max) = (read(&p.min, "min")?, read(&p.max, "max")?);
+            if min > max {
+                return fail(path, key, format!("min {min} exceeds max {max}"));
+            }
+            let levels = match &p.levels {
+                None => None,
+                Some(ls) => {
+                    let mut out: Vec<i64> = Vec::new();
+                    for l in ls {
+                        let toml::Value::Integer(v) = l else {
+                            return fail(path, key, "an int_range's levels are integers".into());
+                        };
+                        level_ok(
+                            path,
+                            key,
+                            *v >= min && *v <= max,
+                            out.contains(v),
+                            &format!("{v}"),
+                        )?;
+                        out.push(*v);
+                    }
+                    Some(nonempty(path, key, out)?)
+                }
+            };
+            if grid && levels.is_none() {
+                return fail(
+                    path,
+                    key,
+                    "a grid search needs `levels` on every range (HYP-6)".into(),
+                );
+            }
+            Ok(Domain::IntRange { min, max, levels })
+        }
+        k => fail(
+            path,
+            key,
+            format!("kind `{k}` is not bool, enum, range or int_range"),
+        ),
+    }
+}
+
+fn level_ok(path: &Path, key: &str, inside: bool, twice: bool, v: &str) -> Result<(), HypError> {
+    if !inside {
+        return fail(path, key, format!("the level {v} lies outside [min, max]"));
+    }
+    if twice {
+        return fail(path, key, format!("the level {v} is listed twice"));
+    }
+    Ok(())
+}
+
+fn nonempty<T>(path: &Path, key: &str, v: Vec<T>) -> Result<Vec<T>, HypError> {
+    if v.is_empty() {
+        return fail(path, key, "`levels` is empty".into());
+    }
+    Ok(v)
+}
+
+/// HYP-7: `[measures]`.
+fn check_measures(
+    path: &Path,
+    m: &RawMeasures,
+    params: &BTreeMap<String, Param>,
+    frozen: bool,
+    warnings: &mut Vec<String>,
+) -> Result<(Vec<String>, Vec<String>), HypError> {
+    let primary = m.primary.clone();
+    let secondary = m.secondary.clone().unwrap_or_default();
     if primary.is_empty() {
         return fail(
             path,
@@ -592,10 +811,14 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
             "lists at least one quantity".into(),
         );
     }
-    let mut measured = BTreeSet::new();
+    let mut seen = BTreeSet::new();
     for q in primary.iter().chain(&secondary) {
-        if is_reserved(q) {
-            return fail(path, "measures", format!("`{q}` is a reserved word"));
+        if is_reserved(q) || !predicate::is_ident(q) {
+            return fail(
+                path,
+                "measures",
+                format!("`{q}` is a reserved word or not an identifier"),
+            );
         }
         if params.contains_key(q) {
             return fail(
@@ -604,7 +827,7 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
                 format!("`{q}` is a parameter as well as a quantity"),
             );
         }
-        if !measured.insert(q.clone()) {
+        if !seen.insert(q.clone()) {
             return fail(path, "measures", format!("`{q}` is listed twice"));
         }
         if crate::quantities::get(q).is_none() {
@@ -620,23 +843,37 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
             ));
         }
     }
+    Ok((primary, secondary))
+}
 
-    // HYP-8: [control].
-    let c = &raw.control;
-    let control = match (&c.config, &c.workload) {
-        (Some(_), Some(_)) => {
-            return fail(
-                path,
-                "control",
-                "carries `config` or `workload`, not both".into(),
-            );
-        }
+/// HYP-8: `[control]`.
+fn check_control(
+    path: &Path,
+    c: &RawControl,
+    params: &BTreeMap<String, Param>,
+    frozen: bool,
+    warnings: &mut Vec<String>,
+) -> Result<Control, HypError> {
+    match (&c.config, &c.workload) {
+        (Some(_), Some(_)) => fail(
+            path,
+            "control",
+            "carries `config` or `workload`, not both".into(),
+        ),
         (Some(cfg), None) => {
             if c.inherits.is_some() {
                 return fail(
                     path,
                     "control.inherits",
                     "belongs to a `workload` control".into(),
+                );
+            }
+            if cfg.is_empty() {
+                return fail(
+                    path,
+                    "control.config",
+                    "assigns at least one parameter; an empty config is the treatment itself"
+                        .into(),
                 );
             }
             let mut out = BTreeMap::new();
@@ -655,7 +892,7 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
                 let lit = match v {
                     toml::Value::Boolean(b) => predicate::Lit::Bool(*b),
                     toml::Value::String(s) => predicate::Lit::Ident(s.clone()),
-                    v => match number(v) {
+                    v => match finite_number(v) {
                         Some(n) => predicate::Lit::Num(n),
                         None => return fail(path, &key, "not a value of the parameter".into()),
                     },
@@ -669,24 +906,22 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
                 }
                 out.insert(k.clone(), lit);
             }
-            Control::Config(out)
+            Ok(Control::Config(out))
         }
         (None, Some(mode)) => {
-            if let Some(inh) = &c.inherits {
-                for k in inh {
-                    if !params.contains_key(k) {
-                        return fail(
-                            path,
-                            "control.inherits",
-                            format!("`{k}` is not a [varies] parameter"),
-                        );
-                    }
+            for k in c.inherits.iter().flatten() {
+                if !params.contains_key(k) {
+                    return fail(
+                        path,
+                        "control.inherits",
+                        format!("`{k}` is not a [varies] parameter"),
+                    );
                 }
             }
-            Control::Workload {
+            Ok(Control::Workload {
                 mode: mode.clone(),
                 inherits: c.inherits.clone(),
-            }
+            })
         }
         (None, None) => {
             if frozen {
@@ -697,12 +932,19 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
                 );
             }
             warnings.push("no control: every verdict is inconclusive (HYP-8, CON-18)".into());
-            Control::Missing
+            Ok(Control::Missing)
         }
-    };
+    }
+}
 
-    // HYP-9: [design].
-    let d = &raw.design;
+/// HYP-9: `[design]`.
+fn check_design(
+    path: &Path,
+    d: &RawDesign,
+    params: &BTreeMap<String, Param>,
+    measured: &BTreeSet<String>,
+    frozen: bool,
+) -> Result<Design, HypError> {
     if !matches!(d.search.as_str(), "grid" | "bisect" | "random") {
         return fail(
             path,
@@ -766,28 +1008,30 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
             );
         }
     }
-    let provider_count = params.get("provider").and_then(|p| match &p.domain {
-        Domain::Enum(v) => Some(v.len()),
+    let providers: Option<&Vec<String>> = params.get("provider").and_then(|p| match &p.domain {
+        Domain::Enum(v) => Some(v),
         _ => None,
     });
     let min_providers_for_verdict = match d.min_providers_for_verdict {
         None => None,
         Some(m) => {
-            let Some(n) = provider_count else {
+            let Some(n) = providers.map(Vec::len) else {
                 return fail(
                     path,
                     "design.min_providers_for_verdict",
                     "needs an enum `provider` parameter".into(),
                 );
             };
-            if m < 1 || m as usize > n {
-                return fail(
-                    path,
-                    "design.min_providers_for_verdict",
-                    format!("lies between 1 and the {n} declared providers"),
-                );
+            match u32::try_from(m) {
+                Ok(m) if m >= 1 && (m as usize) <= n => Some(m),
+                _ => {
+                    return fail(
+                        path,
+                        "design.min_providers_for_verdict",
+                        format!("lies between 1 and the {n} declared providers"),
+                    );
+                }
             }
-            Some(m as u32)
         }
     };
     let mut sim_live_tolerance = BTreeMap::new();
@@ -797,23 +1041,24 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
             return fail(path, &key, format!("`{q}` is not a [measures] quantity"));
         }
         let t = match v {
-            toml::Value::Table(t) => {
-                let abs = t.get("abs").and_then(number);
-                if t.len() != 1 || abs.is_none() {
-                    return fail(path, &key, "a table tolerance is `{ abs = x }`".into());
+            toml::Value::Table(t) => match (t.len(), t.get("abs").and_then(finite_number)) {
+                (1, Some(abs)) => Tolerance::Absolute(abs),
+                _ => {
+                    return fail(
+                        path,
+                        &key,
+                        "a table tolerance is exactly `{ abs = x }`".into(),
+                    );
                 }
-                Tolerance::Absolute(abs.unwrap_or_default())
-            }
-            v => match number(v) {
+            },
+            v => match finite_number(v) {
                 Some(x) if x <= 0.5 => Tolerance::Relative(x),
                 Some(_) => return fail(path, &key, "a relative tolerance is at most 0.5".into()),
                 None => return fail(path, &key, "a number or `{ abs = x }`".into()),
             },
         };
-        let x = match t {
-            Tolerance::Relative(x) | Tolerance::Absolute(x) => x,
-        };
-        if !(x.is_finite() && x > 0.0) {
+        let (Tolerance::Relative(x) | Tolerance::Absolute(x)) = t;
+        if x <= 0.0 {
             return fail(
                 path,
                 &key,
@@ -834,11 +1079,10 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
                     );
                 }
             }
-            if let Some(Param {
-                domain: Domain::Enum(providers),
-                ..
-            }) = params.get("provider")
-                && let Some(k) = p.models.keys().find(|k| !providers.contains(k))
+            if let Some(k) = p
+                .models
+                .keys()
+                .find(|k| providers.is_none_or(|ps| !ps.contains(k)))
             {
                 return fail(
                     path,
@@ -853,84 +1097,58 @@ pub fn parse(bytes: &[u8], loc: &Location) -> Result<Hypothesis, HypError> {
             })
         }
     };
-
-    // HYP-9: [expected].
-    if !matches!(raw.expected.outcome.as_str(), "pass" | "fail") {
-        return fail(path, "expected.outcome", "pass or fail".into());
-    }
-
-    // HYP-10..14: the predicates, typed against the file.
-    let predicate = predicate::parse(&raw.falsifier.predicate)
-        .map_err(|e| HypError::new(path, Some("falsifier.predicate".into()), e.to_string()))?;
-    let guard = match &raw.falsifier.inconclusive_if {
-        None => None,
-        Some(g) => Some(predicate::parse(g).map_err(|e| {
-            HypError::new(
-                path,
-                Some("falsifier.inconclusive_if".into()),
-                e.to_string(),
-            )
-        })?),
-    };
-
-    let h = Hypothesis {
-        path: loc.path.clone(),
-        hash: Digest::of(bytes),
-        status: loc.status,
-        id: poc.id.clone(),
-        title: poc.title.clone(),
-        spec: poc.spec.clone(),
-        report_refs: poc.report_refs.clone().unwrap_or_default(),
-        supersedes: poc.supersedes.clone(),
-        statement: raw.hypothesis.statement.clone(),
-        params,
-        primary,
-        secondary,
-        control_description: c.description.clone(),
-        control,
-        design: Design {
-            search: d.search.clone(),
-            replicates,
-            twin_required: d.twin_required,
-            seed,
-            backends,
-            min_providers_for_verdict,
-            sim_live_tolerance,
-            pins,
-        },
-        predicate,
-        guard,
-        expected_outcome: raw.expected.outcome.clone(),
-        expected_note: raw.expected.note.clone(),
-        warnings,
-    };
-    crate::check::check(h)
+    Ok(Design {
+        search: d.search.clone(),
+        replicates,
+        twin_required: d.twin_required,
+        seed,
+        backends,
+        min_providers_for_verdict,
+        sim_live_tolerance,
+        pins,
+    })
 }
 
-/// HYP-2: an `id` is unique across `hypotheses/`.
+/// HYP-2: an `id` is unique across `hypotheses/`, subdirectories included. A file
+/// there that cannot be read or parsed is an error: it might hold the same id.
 fn unique_id(root: &Path, path: &Path, id: &str) -> Result<(), HypError> {
     let dir = root.join("hypotheses");
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Ok(());
-    };
-    let me = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    for e in entries.flatten() {
-        let p = e.path();
-        if p.extension().is_none_or(|x| x != "toml")
-            || std::fs::canonicalize(&p).unwrap_or_else(|_| p.clone()) == me
-        {
-            continue;
-        }
-        let other = std::fs::read_to_string(&p)
-            .ok()
-            .and_then(|t| toml::from_str::<toml::Table>(&t).ok())
-            .and_then(|t| t.get("poc")?.get("id")?.as_str().map(str::to_owned));
-        if other.as_deref() == Some(id) {
-            return Err(HypError::new(
-                path,
-                Some("poc.id".into()),
-                format!("`{id}` is also the id of {}", p.display()),
-            ));
+    let me = std::fs::canonicalize(path).map_err(io(path))?;
+    let mut stack = vec![dir];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).map_err(io(&d))? {
+            let p = e.map_err(io(&d))?.path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            if p.extension().is_none_or(|x| x != "toml")
+                || std::fs::canonicalize(&p).map_err(io(&p))? == me
+            {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).map_err(io(&p))?;
+            let table: toml::Table = toml::from_str(&text).map_err(|e| {
+                HypError::new(
+                    path,
+                    Some("poc.id".into()),
+                    format!(
+                        "cannot check that `{id}` is unique: {} does not parse: {e}",
+                        p.display()
+                    ),
+                )
+            })?;
+            let other = table
+                .get("poc")
+                .and_then(|t| t.get("id"))
+                .and_then(toml::Value::as_str);
+            if other == Some(id) {
+                return fail(
+                    path,
+                    "poc.id",
+                    format!("`{id}` is also the id of {}", p.display()),
+                );
+            }
         }
     }
     Ok(())
