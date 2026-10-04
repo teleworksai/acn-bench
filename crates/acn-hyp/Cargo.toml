@@ -11,7 +11,9 @@ description = "hypothesis registry, verdicts and the loop runner (SPEC 080, 085;
 workspace = true
 
 [dependencies]
-acn-trace.workspace = true
+acn-trace = { workspace = true, features = ["io"] }
+arrow-array.workspace = true
+serde_json.workspace = true
 rand_chacha.workspace = true
 rand_core.workspace = true
 serde.workspace = true

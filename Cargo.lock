@@ -82,6 +82,7 @@ name = "acn-hyp"
 version = "0.1.0"
 dependencies = [
  "acn-trace",
+ "arrow-array",
  "blake3",
  "rand_chacha 0.10.0",
  "rand_core 0.10.1",

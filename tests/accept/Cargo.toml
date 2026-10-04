@@ -40,3 +40,7 @@ path = "harness_sim.rs"
 [[test]]
 name = "hyp_lint"
 path = "hyp_lint.rs"
+
+[[test]]
+name = "hyp_verdict"
+path = "hyp_verdict.rs"
