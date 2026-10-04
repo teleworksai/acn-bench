@@ -3,6 +3,8 @@
 //! indices. Everything here is a pure function of the hypothesis hash and the
 //! per-replicate values, so the same inputs give the same bounds on every run.
 
+use std::num::NonZeroU64;
+
 use acn_trace::identity::{self, Digest, IdentityError, Preimage};
 use rand_chacha::ChaCha20Rng;
 use rand_core::Rng as _;
@@ -48,11 +50,11 @@ pub fn stream_name(slice_key: &str, cell_key: &str, quantity: &str, function: Fu
     )
 }
 
-/// A uniform integer in `0..n`, `n > 0`: Lemire's multiply-shift on one 64-bit
-/// draw, with rejection of the biased low products (ADR-19). CON-5(a) pins its
-/// output by golden vector.
-pub fn below(rng: &mut ChaCha20Rng, n: u64) -> u64 {
-    debug_assert!(n > 0);
+/// A uniform integer in `0..n`: Lemire's multiply-shift on one 64-bit draw, with
+/// rejection of the biased low products (ADR-19). CON-5(a) pins its output by
+/// golden vector.
+pub fn below(rng: &mut ChaCha20Rng, n: NonZeroU64) -> u64 {
+    let n = n.get();
     let threshold = n.wrapping_neg() % n;
     loop {
         let m = u128::from(rng.next_u64()) * u128::from(n);
@@ -70,53 +72,66 @@ pub fn below(rng: &mut ChaCha20Rng, n: u64) -> u64 {
 /// right in double precision, and `b − 1 − k` (HYP-15).
 #[must_use]
 pub fn percentile_indices(b: usize, ci: f64) -> (usize, usize) {
-    #[allow(clippy::cast_precision_loss)] // b is 10 000
-    let k = (b as f64 * (1.0 - ci) / 2.0).round_ties_even();
+    let k = (as_f64(b) * (1.0 - ci) / 2.0).round_ties_even();
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // 0 ≤ k ≤ b/2
     let k = k as usize;
     (k, b.saturating_sub(1).saturating_sub(k))
 }
 
-/// The bounds at `ci` of a sorted set of resampled statistics.
+/// The bounds at `ci` of a sorted set of resampled statistics; `None` when the
+/// indices cross (a level so small that `k > b − 1 − k`, ADR-19), which load
+/// already refuses.
 #[must_use]
 pub fn bounds(sorted: &[f64], ci: f64) -> Option<(f64, f64)> {
     let (lo, hi) = percentile_indices(sorted.len(), ci);
+    if lo > hi {
+        return None;
+    }
     Some((*sorted.get(lo)?, *sorted.get(hi)?))
 }
 
-fn mean_of(values: &[f64], idx: &[usize]) -> f64 {
-    let mut sum = 0.0;
-    for i in idx {
-        sum += values[*i];
-    }
-    #[allow(clippy::cast_precision_loss)]
-    let n = idx.len() as f64;
-    sum / n
+/// `n` as a double; replicate and resample counts are far below 2^53.
+#[allow(clippy::cast_precision_loss)]
+pub(crate) fn as_f64(n: usize) -> f64 {
+    n as f64
 }
 
-fn draw(rng: &mut ChaCha20Rng, n: usize, out: &mut Vec<usize>) {
-    out.clear();
-    for _ in 0..n {
-        #[allow(clippy::cast_possible_truncation)] // below(n) < n, a usize
-        out.push(below(rng, n as u64) as usize);
+fn mean_of(values: &[f64], idx: &[usize]) -> Option<f64> {
+    let mut sum = 0.0;
+    for i in idx {
+        sum += values.get(*i)?;
     }
+    Some(sum / as_f64(idx.len()))
+}
+
+fn draw(rng: &mut ChaCha20Rng, n: NonZeroU64, count: usize, out: &mut Vec<usize>) -> Option<()> {
+    out.clear();
+    for _ in 0..count {
+        out.push(usize::try_from(below(rng, n)).ok()?);
+    }
+    Some(())
+}
+
+fn nonzero(n: usize) -> Option<NonZeroU64> {
+    NonZeroU64::new(u64::try_from(n).ok()?)
 }
 
 /// The `B` sorted statistics of `effect`: treatment and control resampled as
 /// pairs by replicate index, each resample the mean of the drawn treatment values
 /// minus the mean of the drawn control values (HYP-15). `None` when the arms
-/// differ in length or are empty.
+/// differ in length or are empty, or a statistic is not finite.
 #[must_use]
 pub fn effect_stats(treatment: &[f64], control: &[f64], mut rng: ChaCha20Rng) -> Option<Vec<f64>> {
     let n = treatment.len();
-    if n == 0 || control.len() != n {
+    if control.len() != n {
         return None;
     }
+    let nz = nonzero(n)?;
     let mut idx = Vec::with_capacity(n);
     let mut stats = Vec::with_capacity(B);
     for _ in 0..B {
-        draw(&mut rng, n, &mut idx);
-        stats.push(mean_of(treatment, &idx) - mean_of(control, &idx));
+        draw(&mut rng, nz, n, &mut idx)?;
+        stats.push(mean_of(treatment, &idx)? - mean_of(control, &idx)?);
     }
     sort(stats)
 }
@@ -124,26 +139,29 @@ pub fn effect_stats(treatment: &[f64], control: &[f64], mut rng: ChaCha20Rng) ->
 /// The `B` sorted statistics behind `noise_floor` for one control arm: the
 /// replicates with even and odd index are resampled independently, `n/2` draws
 /// each, the even half first, and each resample is `mean(even) − mean(odd)`
-/// (HYP-13). `None` when `values` is empty or of odd length.
+/// (HYP-13). `None` when `values` is empty or of odd length, or a statistic is
+/// not finite.
 #[must_use]
 pub fn split_half_stats(values: &[f64], mut rng: ChaCha20Rng) -> Option<Vec<f64>> {
-    if values.is_empty() || values.len() % 2 != 0 {
+    if values.len() % 2 != 0 {
         return None;
     }
     let even: Vec<f64> = values.iter().step_by(2).copied().collect();
     let odd: Vec<f64> = values.iter().skip(1).step_by(2).copied().collect();
     let h = even.len();
+    let nz = nonzero(h)?;
     let (mut ie, mut io) = (Vec::with_capacity(h), Vec::with_capacity(h));
     let mut stats = Vec::with_capacity(B);
     for _ in 0..B {
-        draw(&mut rng, h, &mut ie);
-        draw(&mut rng, h, &mut io);
-        stats.push(mean_of(&even, &ie) - mean_of(&odd, &io));
+        draw(&mut rng, nz, h, &mut ie)?;
+        draw(&mut rng, nz, h, &mut io)?;
+        stats.push(mean_of(&even, &ie)? - mean_of(&odd, &io)?);
     }
     sort(stats)
 }
 
-/// Half the width of the interval at `ci` of split-half statistics.
+/// Half the width of the interval at `ci` of split-half statistics; never
+/// negative, since the bounds are ordered.
 #[must_use]
 pub fn half_width(sorted: &[f64], ci: f64) -> Option<f64> {
     bounds(sorted, ci).map(|(lo, hi)| (hi - lo) / 2.0)

@@ -235,6 +235,13 @@ fn every_quantity_has_a_formula_over_one_replicates_rows() {
     assert_eq!(value("ttft_p99_ms", &r), Some(400.0));
     assert_eq!(value("input_tokens_per_turn", &r), Some(4000.0 / 3.0));
     assert_eq!(value("compactions_per_session", &r), Some(0.5));
+    let mut both = replicate("anthropic");
+    both.turns[0].compaction = "read_cost_threshold".into();
+    assert_eq!(
+        value("compactions_per_session", &both),
+        Some(1.0),
+        "every kind of compaction counts"
+    );
     // Anthropic weights 1, 0.1, 1.25, 5: uncached 0 + 200 + 100 + 800 = 1100,
     // read 1900 · 0.1, write 1000 · 1.25, output 200 · 5; over 2 successes.
     let cost = 1100.0 + 190.0 + 1250.0 + 1000.0;
@@ -251,8 +258,24 @@ fn a_formula_is_undefined_where_its_data_are_missing_and_never_a_partial_total()
     r.calls[1].input_tokens = None;
     assert_eq!(value("input_tokens_per_turn", &r), None, "a partial sum");
     assert_eq!(value("cost_per_success", &r), None, "a partial cost");
-    // The ratio is defined over the calls that report both counts.
-    assert_eq!(value("cached_token_ratio", &r), Some(900.0 / 2800.0));
+    assert_eq!(
+        value("cached_token_ratio", &r),
+        None,
+        "a call is never dropped"
+    );
+    let mut r = replicate("openai");
+    r.calls[2].cache_read_tokens = None;
+    assert_eq!(
+        value("cached_token_ratio", &r),
+        None,
+        "an unreported cache count"
+    );
+    // A call that never produced a token is not dropped from the percentile:
+    // dropping it would make a treatment that times out look faster.
+    let mut r = replicate("anthropic");
+    r.calls[3].ttft_ns = None;
+    assert_eq!(value("ttft_p50_ms", &r), None);
+    assert_eq!(value("ttft_p99_ms", &r), None);
     assert_eq!(
         value("cost_per_success", &replicate("vllm")),
         None,
@@ -304,7 +327,7 @@ fn an_arm_is_the_mean_over_replicates_of_the_per_replicate_values() {
     let arm = Arm {
         replicates: vec![vals(&one(5, 10)), vals(&one(250, 1000))],
     };
-    assert_eq!(arm.mean("cached_token_ratio", 2), Some(0.375));
+    assert_eq!(arm.mean("cached_token_ratio"), Some(0.375));
 }
 
 /// Cites: HYP-12
@@ -333,4 +356,8 @@ fn the_price_table_names_each_provider_once_in_input_token_units() {
     // p4's provider values: the two with list prices have rows.
     assert!(prices("anthropic").is_some() && prices("openai").is_some());
     assert!(prices("vllm").is_none() && prices("sglang").is_none());
+    assert!(
+        prices("anthropic-bedrock").is_none() && prices("").is_none(),
+        "exact names only"
+    );
 }

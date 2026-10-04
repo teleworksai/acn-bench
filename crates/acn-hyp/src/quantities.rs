@@ -6,7 +6,8 @@
 //! ([`Replicate`]); the table is also what files resolve their names against and
 //! what `cargo xtask docs-inventory` renders. A sum over values that may be absent
 //! is undefined when any term is absent, as in the views (`views.toml`): a partial
-//! total never passes for a complete one.
+//! total never passes for a complete one, and a call is never dropped from a
+//! replicate for lacking a value (HYP-11's survivorship rule, ADR-19).
 
 /// One quantity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,19 +26,19 @@ pub const QUANTITIES: &[Quantity] = &[
     Quantity {
         name: "cached_token_ratio",
         unit: "ratio",
-        formula: "sum(call.cache_read_tokens) / sum(call.input_tokens), over the replicate's calls with both present; undefined when there are none or the denominator is 0",
+        formula: "sum(call.cache_read_tokens) / sum(call.input_tokens), over the replicate's calls; undefined when any call lacks either count, or the denominator is 0",
         source: "SPEC 010 Appendix A `c.cached_token_ratio`",
     },
     Quantity {
         name: "ttft_p50_ms",
         unit: "ms",
-        formula: "the nearest-rank 50th percentile (rank ceil(0.5 n)) of call.ttft_ns / 1e6, over the replicate's n calls with a ttft; undefined when n = 0",
+        formula: "the nearest-rank 50th percentile (rank ceil(0.5 n)) of call.ttft_ns / 1e6, over the replicate's n calls; undefined when n = 0 or any call has no ttft (a call that never produced a token is not dropped, HYP-11)",
         source: "SPEC 010 Appendix A `h.ttft`",
     },
     Quantity {
         name: "ttft_p99_ms",
         unit: "ms",
-        formula: "the nearest-rank 99th percentile (rank ceil(0.99 n)) of call.ttft_ns / 1e6, over the replicate's n calls with a ttft; undefined when n = 0",
+        formula: "the nearest-rank 99th percentile (rank ceil(0.99 n)) of call.ttft_ns / 1e6, over the replicate's n calls; undefined when n = 0 or any call has no ttft (a call that never produced a token is not dropped, HYP-11)",
         source: "SPEC 010 Appendix A `h.ttft`",
     },
     Quantity {
@@ -146,9 +147,7 @@ fn f(v: i64) -> f64 {
 }
 
 fn count(n: usize) -> f64 {
-    #[allow(clippy::cast_precision_loss)]
-    let v = n as f64;
-    v
+    crate::bootstrap::as_f64(n)
 }
 
 fn ratio(num: f64, den: f64) -> Option<f64> {
@@ -173,18 +172,20 @@ pub fn value(name: &str, r: &Replicate) -> Option<f64> {
     match name {
         "cached_token_ratio" => {
             let (mut read, mut input) = (0.0, 0.0);
-            let mut any = false;
             for c in &r.calls {
-                if let (Some(rd), Some(i)) = (c.cache_read_tokens, c.input_tokens) {
-                    read += f(rd);
-                    input += f(i);
-                    any = true;
-                }
+                read += f(c.cache_read_tokens?);
+                input += f(c.input_tokens?);
             }
-            if any { ratio(read, input) } else { None }
+            ratio(read, input)
         }
-        "ttft_p50_ms" => nearest_rank(r.calls.iter().filter_map(|c| c.ttft_ns).collect(), 50),
-        "ttft_p99_ms" => nearest_rank(r.calls.iter().filter_map(|c| c.ttft_ns).collect(), 99),
+        "ttft_p50_ms" => nearest_rank(
+            r.calls.iter().map(|c| c.ttft_ns).collect::<Option<_>>()?,
+            50,
+        ),
+        "ttft_p99_ms" => nearest_rank(
+            r.calls.iter().map(|c| c.ttft_ns).collect::<Option<_>>()?,
+            99,
+        ),
         "cost_per_success" => {
             let p = prices(&r.price_key)?;
             let mut cost = 0.0;

@@ -155,7 +155,18 @@ impl Ctx<'_> {
     fn ci(f: Builtin, a: Option<&Arg>) -> Result<(), String> {
         match a {
             None => Ok(()),
-            Some(Arg::Ci(c)) if *c > 0.0 && *c < 1.0 => Ok(()),
+            Some(Arg::Ci(c)) if *c > 0.0 && *c < 1.0 => {
+                // HYP-15's indices cross for a level this small: the lower bound
+                // would lie above the upper one (ADR-19).
+                let (lo, hi) = crate::bootstrap::percentile_indices(crate::bootstrap::B, *c);
+                if lo > hi {
+                    Err(format!(
+                        "`ci = {c}` is too small: HYP-15's lower bound index {lo} would lie above the upper one {hi}"
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
             Some(Arg::Ci(c)) => Err(format!("`ci = {c}` must lie strictly between 0 and 1")),
             Some(_) => Err(format!(
                 "`{}`'s last argument is `ci = <level>`",
