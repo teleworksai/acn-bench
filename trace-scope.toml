@@ -29,13 +29,12 @@ ids = [
 [[implemented]]
 spec = "080"
 ids = [
-  "HYP-1", "HYP-2", "HYP-3", "HYP-5", "HYP-6", "HYP-7", "HYP-8", "HYP-9", "HYP-10",
-  "HYP-11", "HYP-12", "HYP-13", "HYP-14", "HYP-15", "HYP-16", "HYP-20", "HYP-21",
-  "HYP-22", "HYP-23", "HYP-24", "HYP-27", "HYP-28",
+  "HYP-1", "HYP-2", "HYP-3", "HYP-4", "HYP-5", "HYP-6", "HYP-7", "HYP-8", "HYP-9",
+  "HYP-10", "HYP-11", "HYP-12", "HYP-13", "HYP-14", "HYP-15", "HYP-16", "HYP-20",
+  "HYP-21", "HYP-22", "HYP-23", "HYP-24", "HYP-25", "HYP-26", "HYP-27", "HYP-28",
 ]
-# T05 lands in parts (ADR-18, ADR-19, ADR-20). T05.3 adds the read-only and
-# `hypothesis_changed` rules (HYP-4), no relax option (HYP-25) and the freeze PR's
-# shape (HYP-26).
+# T05 landed in parts (ADR-18 to ADR-21). HYP-4's `acn loop` half and HYP-25's
+# evidence page are SPEC 085's: the loop calls `Hypothesis::check_unchanged`.
 
 [[implemented]]
 spec = "040"

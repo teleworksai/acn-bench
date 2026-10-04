@@ -1,6 +1,6 @@
 {
-  "env_hash": "9c6dc9dbdf12c331869c833a7d098336d4c68ed11f1d4317fdaa04bea2a3aa0b",
-  "engine_hash": "b663b61880f5e354c0636e20688df69f6ef8b52765d7f3b03d6cf44499ec4720",
+  "env_hash": "d19cd8c3b5e036dbc446c3b081b7e17a7392cf5fb9767c096267d32b8d383c71",
+  "engine_hash": "9bdaad37213bca2e633bc9384441ad4c0b494f69a6bd621cdf6ec485ab980f6c",
   "files": [
     {
       "path": "crates/acn-attrib/src/core/mod.rs",
@@ -8,7 +8,7 @@
     },
     {
       "path": "crates/acn-hyp/Cargo.toml",
-      "blake3": "18b1eebcfa5ae294342c7d77ab92952b679c6eeb2681d69a331ee57a9d40b4a4"
+      "blake3": "ad266649d40a42be9d612b018c1551cb723a1972ee4ca91c7e8c9a1194881f0f"
     },
     {
       "path": "crates/acn-hyp/src/bootstrap.rs",
@@ -24,7 +24,7 @@
     },
     {
       "path": "crates/acn-hyp/src/file.rs",
-      "blake3": "f88881ec4f491024c2ed3c2d0dcc5cb8eccdadf55932448d0b5dae67c6423ba9"
+      "blake3": "a09494930a032e81c6640d8f63a525166cc11a85addb33851fabb745857c696f"
     },
     {
       "path": "crates/acn-hyp/src/json.rs",
@@ -32,7 +32,7 @@
     },
     {
       "path": "crates/acn-hyp/src/lib.rs",
-      "blake3": "9dc9a045d7ba8174b2cc974a41a20910806bf7547fe70c946d581e9698228ce5"
+      "blake3": "0ebe9a8fbc1d5dc1709c2bbc834ff81a9aaced85c2f16cccaa6fa5b20755b6f1"
     },
     {
       "path": "crates/acn-hyp/src/lint.rs",
@@ -87,12 +87,20 @@
       "blake3": "6342651e8e5d3d0ff153b5f1865778926b908f61622f20bf482d86836c1c734d"
     },
     {
+      "path": "crates/acn-hyp/tests/freeze.rs",
+      "blake3": "2db3614edfe4c5082d04963c6eca775fc48c8b42e9904d86581400b783daee00"
+    },
+    {
       "path": "crates/acn-hyp/tests/predicate_parse.rs",
       "blake3": "f63c5a825fa6bf8c064d93621e32402ce107b2b48f5e41c7b06d7af388c1fd72"
     },
     {
       "path": "crates/acn-hyp/tests/quantities.rs",
       "blake3": "b3c541f69207d14cc8a3803e3ee1bfa9bcb33ffc75e95067a95f0737e519996e"
+    },
+    {
+      "path": "crates/acn-hyp/tests/readonly.rs",
+      "blake3": "26de7ce73b5fab31c90ad2376a731c1fc3cdbd6e010a549437487510fef6a877"
     },
     {
       "path": "crates/acn-hyp/tests/verdict_determinism.rs",

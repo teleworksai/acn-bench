@@ -290,7 +290,36 @@ pub struct Hypothesis {
     pub warnings: Vec<String>,
 }
 
+/// The error a loop or a verdict aborts with when a hypothesis file changed
+/// under it (HYP-4, LOOP-13).
+pub const HYPOTHESIS_CHANGED: &str = "hypothesis_changed";
+
 impl Hypothesis {
+    /// HYP-4: read the file again, read-only, and fail with
+    /// [`HYPOTHESIS_CHANGED`] if its bytes no longer have the hash it was loaded
+    /// with (or it cannot be read). A loop calls this before every step it takes
+    /// on the file's behalf (LOOP-13), and `acn hyp verdict` before it writes.
+    pub fn check_unchanged(&self) -> Result<(), HypError> {
+        let now = std::fs::read(&self.path).map(|b| Digest::of(&b));
+        match now {
+            Ok(d) if d == self.hash => Ok(()),
+            Ok(d) => Err(HypError::new(
+                &self.path,
+                None,
+                format!(
+                    "{HYPOTHESIS_CHANGED}: the file's hash is now {} where it was {} (HYP-4)",
+                    d.to_hex(),
+                    self.hash.to_hex()
+                ),
+            )),
+            Err(e) => Err(HypError::new(
+                &self.path,
+                None,
+                format!("{HYPOTHESIS_CHANGED}: the file can no longer be read: {e} (HYP-4)"),
+            )),
+        }
+    }
+
     /// BLAKE3 of the file's bytes (HYP-5).
     #[must_use]
     pub fn hash(&self) -> Digest {

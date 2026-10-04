@@ -499,6 +499,8 @@ fn hyp_verdict(file: &std::path::Path, dirs: &[PathBuf], runs_dir: &std::path::P
             .collect::<Result<Vec<_>, _>>()?;
         let v = acn_hyp::verdict::verdict(&h, bundles, build_info::engine_hash()?)?;
         let object: Value = serde_json::from_str(&v.text())?;
+        // HYP-4: the verdict is the file's as it was read; abort if it moved.
+        h.check_unchanged()?;
         let path = acn_hyp::verdict::write(runs_dir, &v)?;
         Ok(json!({
             "ok": true,

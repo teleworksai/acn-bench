@@ -8,6 +8,8 @@
 //! - CON-12: removing an entry from `trace-scope.toml` needs the `spec-change` label.
 //! - LOOP-20: `.github/CODEOWNERS` must assign an owner to every protected
 //!   path, under GitHub's last-match-wins rule.
+//! - HYP-26: a hypothesis file added or changed under `hypotheses/` must load as
+//!   frozen, lint clean, and carry `[design].pins` if it runs on `real-api`.
 //!
 //! Everything here fails closed: an unresolvable or ambiguous base, a root that
 //! is not the repository top level, a path that escapes the root, and any
@@ -455,6 +457,61 @@ fn scope_entries(text: &str) -> Result<BTreeSet<String>> {
     Ok(out)
 }
 
+// -------------------------------------------------------------------- freeze
+
+const HYPOTHESES_DIR: &str = "hypotheses";
+
+/// HYP-26: the shape of a freeze. Every hypothesis file the PR adds or changes
+/// under `hypotheses/` must load (HYP-1) as frozen, which it is only once this
+/// PR's `env-hash.json` records it (HYP-3); must lint clean (HYP-27); and, when
+/// `real-api` is among its backends, must carry `[design].pins`. The POC spec it
+/// names and its `[poc].status` are checked by the load itself (HYP-2, HYP-3).
+/// A removed file is a frozen-set change, which CON-7 already covers.
+fn freeze_findings(root: &Path, changed: &[String]) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for p in changed
+        .iter()
+        .filter(|p| is_under(p, HYPOTHESES_DIR) && fold(p).ends_with(".toml"))
+    {
+        let abs = root.join(p);
+        if !abs.is_file() {
+            continue;
+        }
+        let mut problems = Vec::new();
+        match acn_hyp::load_in(&abs, root) {
+            Err(e) => problems.push(format!("it does not load: {e}")),
+            Ok(h) => {
+                if h.status() != acn_hyp::Status::Frozen {
+                    problems.push(format!(
+                        "it loads as a candidate: record it with `cargo xtask env-hash --write` in this PR (HYP-3){}",
+                        h.warnings
+                            .iter()
+                            .map(|w| format!("; {w}"))
+                            .collect::<String>()
+                    ));
+                }
+                if h.design.backends.iter().any(|b| b == "real-api") && h.design.pins.is_none() {
+                    problems.push(
+                        "a real-api hypothesis is frozen with its [design].pins (HYP-26, HYP-23)"
+                            .to_owned(),
+                    );
+                }
+                let r = acn_hyp::lint::lint_in(&abs, root);
+                problems.extend(r.errors.iter().map(|e| format!("lint: {e}")));
+            }
+        }
+        if !problems.is_empty() {
+            out.push(Finding {
+                rule: "HYP-26",
+                label: ENV_CHANGE,
+                paths: vec![p.clone()],
+                message: problems.join("; "),
+            });
+        }
+    }
+    out
+}
+
 // ----------------------------------------------------------------------- run
 
 /// Run the check.
@@ -571,6 +628,8 @@ pub fn run(root: &Path, changes: Changes, labels: &[String]) -> Result<Report> {
             message,
         });
     }
+
+    violations.extend(freeze_findings(root, &changed));
 
     let missing = codeowners_missing(root)?;
     for v in &violations {

@@ -93,6 +93,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "xtask",
 ]
 
 [[package]]
