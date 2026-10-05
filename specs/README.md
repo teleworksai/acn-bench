@@ -14,7 +14,7 @@
 | 085 | 085-feedback-loop.md | LOOP | draft v0.2 (layered, verifiable loop; L1 runner, report and evidence chain made implementable; implemented by T05b) |
 | 090 | 090-attribution.md | ATR | to write (T15) |
 | 095 | 095-gates.md | GATE | to write (T07) |
-| 100 | 100-p4-harness-discipline.md | P4 | to write (T06) |
+| 100 | 100-p4-harness-discipline.md | P4 | draft v0.1 (POC 4 protocol: workloads, providers and mock profiles, the L1 run of record, the mock acceptance suite, live-run prerequisites; implemented by T06) |
 | 110 | 110-p1a-sensitivity-atlas.md | P1A | to write (T20) |
 | 111 | 111-p1b-tail-anatomy.md | P1B | to write (T21) |
 | 120 | 120-p11-wire-redundancy.md | P11 | to write (T22) |

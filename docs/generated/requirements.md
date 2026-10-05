@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 6 · IDs: 159 · MUSTs: 154 · implemented: 125 · cited: 142
+Specs: 7 · IDs: 170 · MUSTs: 164 · implemented: 125 · cited: 142
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -165,3 +165,14 @@ Specs: 6 · IDs: 159 · MUSTs: 154 · implemented: 125 · cited: 142
 | LOOP-21 | `085-feedback-loop.md` | 3 | MUST | no | — |
 | LOOP-30 | `085-feedback-loop.md` | 4 | MUST | no | — |
 | LOOP-31 | `085-feedback-loop.md` | 4 | MUST | no | — |
+| P4-1 | `100-p4-harness-discipline.md` | 2 | MUST | no | — |
+| P4-2 | `100-p4-harness-discipline.md` | 2 | MUST | no | — |
+| P4-3 | `100-p4-harness-discipline.md` | 2 | MUST | no | — |
+| P4-4 | `100-p4-harness-discipline.md` | 2 | MUST | no | — |
+| P4-5 | `100-p4-harness-discipline.md` | 3 | MUST | no | — |
+| P4-6 | `100-p4-harness-discipline.md` | 3 | — | no | — |
+| P4-7 | `100-p4-harness-discipline.md` | 3 | MUST | no | — |
+| P4-8 | `100-p4-harness-discipline.md` | 4 | MUST | no | — |
+| P4-9 | `100-p4-harness-discipline.md` | 5 | MUST | no | — |
+| P4-10 | `100-p4-harness-discipline.md` | 5 | MUST | no | — |
+| P4-11 | `100-p4-harness-discipline.md` | 5 | MUST | no | — |
