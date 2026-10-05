@@ -251,7 +251,11 @@ fn fan_out_spawns_width_children_that_run_together_and_answer_as_one_result() {
         .map(|(_, b)| b)
         .filter(|b| b["tool_choice"]["type"] == "allowed_tools")
         .collect();
-    assert!(!children.is_empty());
+    assert_eq!(
+        children.len(),
+        4,
+        "two children, two calls each, all restricted"
+    );
     for b in children {
         assert_eq!(
             b["tool_choice"],
@@ -265,18 +269,22 @@ fn fan_out_spawns_width_children_that_run_together_and_answer_as_one_result() {
             .map(|t| t["function"]["name"].as_str().unwrap())
             .collect();
         assert_eq!(names, ["delegate", "read_file"], "the parent's tools");
-        let first_user = b["messages"]
+        let last_user = b["messages"]
             .as_array()
             .unwrap()
             .iter()
             .rfind(|m| m["role"] == "user")
             .unwrap();
         assert!(
-            first_user["content"]
+            last_user["content"]
                 .as_str()
                 .unwrap()
-                .ends_with("\nUse only these tools: read_file."),
-            "{first_user}"
+                .ends_with("(child 1 of 2)\nUse only these tools: read_file.")
+                || last_user["content"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("(child 2 of 2)\nUse only these tools: read_file."),
+            "{last_user}"
         );
     }
     // Under per_child, no restriction is sent.
@@ -444,12 +452,19 @@ fn a_forked_child_executes_only_its_own_tools_whatever_the_model_asks() {
     use acn_harness::knobs::{Fanout, Knobs};
     use acn_harness::wire::Backend;
     use common::{Scripted, chat_reply, ok, scripted_with};
-    // The parent delegates; each child asks for `delegate` (outside its spec)
-    // before answering, in whatever order the children's calls arrive.
+    // The parent presents `grep` too; the child's specification lists only
+    // `read_file`, so `grep` is outside it though it is no subagent tool.
+    let workload = smoke().replace(
+        "tools = [\"delegate\", \"read_file\"]",
+        "tools = [\"delegate\", \"read_file\", \"grep\"]",
+    );
+    assert_ne!(workload, smoke());
+    // The parent delegates; the children ask for `grep` twice between them and
+    // answer twice, whichever order their calls arrive in.
     let env = Scripted::new(vec![
         ok(&chat_reply(None, &[("p", "delegate")])),
-        ok(&chat_reply(None, &[("c1", "delegate")])),
-        ok(&chat_reply(None, &[("c2", "delegate")])),
+        ok(&chat_reply(None, &[("g1", "grep")])),
+        ok(&chat_reply(None, &[("g2", "grep")])),
         ok(&chat_reply(Some("child done"), &[])),
         ok(&chat_reply(Some("child done"), &[])),
         ok(&chat_reply(Some("done"), &[])),
@@ -458,33 +473,37 @@ fn a_forked_child_executes_only_its_own_tools_whatever_the_model_asks() {
         fanout_prompting: Fanout::ForkFromPrefix,
         ..Knobs::default()
     };
-    let (trace, result) = scripted_with(&env, &smoke(), 1, Backend::Openai, knobs);
+    let (trace, result) = scripted_with(&env, &workload, 1, Backend::Openai, knobs);
     result.unwrap();
-    let delegate: Vec<_> = spans(&trace, "execute_tool")
+    let refused: Vec<_> = spans(&trace, "execute_tool")
         .into_iter()
-        .filter(|s| text(s, "gen_ai.tool.name") == Some("delegate"))
+        .filter(|s| text(s, "gen_ai.tool.name") == Some("grep"))
         .collect();
-    let spawned = delegate
-        .iter()
-        .filter(|s| text(s, "acn.tool.class") == Some("subagent"))
-        .count();
-    let refused = delegate
-        .iter()
-        .filter(|s| text(s, "acn.tool.class") == Some("other"))
-        .count();
-    assert_eq!(spawned, 1, "the parent's call spawns");
+    assert_eq!(refused.len(), 2);
     assert!(
-        refused >= 1,
-        "a child's call to a tool outside its spec is refused"
+        refused
+            .iter()
+            .all(|s| text(s, "acn.tool.class") == Some("other")),
+        "a tool outside the child's specification is not run"
     );
-    assert_eq!(spawned + refused, delegate.len());
-    // On `openai` the children's requests carry the restriction.
-    let restricted = env
+    let bodies: Vec<serde_json::Value> = env
         .bodies
         .borrow()
         .iter()
-        .map(|b| serde_json::from_slice::<serde_json::Value>(b).unwrap())
+        .map(|b| serde_json::from_slice(b).unwrap())
+        .collect();
+    assert!(
+        bodies.iter().any(|b| b["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["content"] == "error: tool 'grep' is not available here")),
+        "the refusal's exact result (HAR-14)"
+    );
+    // On `openai` every child request carries the restriction: four of them.
+    let restricted = bodies
+        .iter()
         .filter(|b| b["tool_choice"]["type"] == "allowed_tools")
         .count();
-    assert!(restricted >= 2);
+    assert_eq!(restricted, 4);
 }

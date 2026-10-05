@@ -17,7 +17,7 @@ use serde_json::Value;
 
 use crate::HarnessError;
 use crate::context::{
-    Context, Dialect, Msg, Sampling, ToolCall, ToolChoice, ToolDef, common_prefix,
+    Context, Dialect, Encoding, Msg, Sampling, ToolCall, ToolChoice, ToolDef, common_prefix,
 };
 use crate::env::{Env, join_all};
 use crate::knobs::{Backfill, Compaction, Fanout, Knobs};
@@ -323,13 +323,13 @@ impl<E: Env> Replicate<'_, E> {
     fn compared(&self, ctx: &Context) -> Result<Vec<u8>, HarnessError> {
         match &self.setup.counting {
             Counting::Tokens(profile) => {
+                // The mock's prompt bytes read only the tools and messages
+                // (MLM-10): neither breakpoints nor a tool choice matter here.
                 let json = ctx.encode(
-                    Dialect::ChatCompletions,
+                    Encoding::plain(Dialect::ChatCompletions),
                     &self.setup.model,
                     self.sampling(1),
                     crate::knobs::Placement::None,
-                    false,
-                    false,
                 );
                 acn_mockllm::prompt::prompt(&json, profile)
                     .map(|p| p.bytes)
@@ -364,12 +364,10 @@ impl<E: Env> Replicate<'_, E> {
         let s = self.setup;
         let sampling = self.sampling(max_tokens);
         let body = serde_json::to_vec(&ctx.encode(
-            s.backend.dialect(),
+            s.backend.encoding(),
             &s.model,
             sampling,
             s.knobs.cache_breakpoint_placement,
-            s.backend.marks_breakpoints(),
-            s.backend.restricts_tools(),
         ))
         .map_err(|e| HarnessError::Internal(e.to_string()))?;
         let compared = self.compared(&ctx)?;
@@ -610,7 +608,7 @@ impl<E: Env> Replicate<'_, E> {
             }
             None => (
                 "other".to_owned(),
-                format!("error: tool `{}` is not available here", call.name),
+                format!("error: tool '{}' is not available here", call.name),
             ),
         };
         let mut span = self
@@ -757,7 +755,8 @@ impl<E: Env> Replicate<'_, E> {
                 });
                 // HAR-4: the same tools, so the same prefix; no tool call, so a
                 // text summary.
-                cctx.tool_choice = (!cctx.tools.is_empty()).then_some(ToolChoice::Forbid);
+                // `encode` drops it when the context has no tools.
+                cctx.tool_choice = Some(ToolChoice::Forbid);
                 let c = self
                     .call(
                         lin,
@@ -810,6 +809,9 @@ impl<E: Env> Replicate<'_, E> {
                 };
             }
             for tc in &reply.tool_calls {
+                // `turn` runs the main lineage only, which has no `allowed` set:
+                // its tools are what it may call. A forked child runs in `child`,
+                // where `run_tool` checks `allowed` (HAR-14).
                 // The checker counts only tools the lineage has (HAR-3).
                 if lin.tools.contains(&tc.name) {
                     called.insert(tc.name.clone());

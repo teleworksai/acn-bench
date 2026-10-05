@@ -9,7 +9,7 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use acn_harness::context::{Context, Dialect, Msg, Sampling, ToolDef};
+use acn_harness::context::{Context, Dialect, Encoding, Msg, Sampling, ToolDef};
 use acn_harness::knobs::{Domain, Knobs, Placement};
 use acn_harness::run::typed_vary;
 use acn_trace::identity::Value as P;
@@ -383,10 +383,30 @@ fn breakpoints_go_where_the_placement_says_and_only_where_they_are_read() {
             Placement::RollingTail,
         ] {
             assert_eq!(
-                count_marks(&ctx.encode(d, "m", sampling, p, false, false)),
+                count_marks(&ctx.encode(
+                    Encoding {
+                        dialect: d,
+                        marks_breakpoints: false,
+                        restricts_tools: false
+                    },
+                    "m",
+                    sampling,
+                    p
+                )),
                 0
             );
-            assert!(count_marks(&ctx.encode(d, "m", sampling, p, true, false)) > 0);
+            assert!(
+                count_marks(&ctx.encode(
+                    Encoding {
+                        dialect: d,
+                        marks_breakpoints: true,
+                        restricts_tools: false
+                    },
+                    "m",
+                    sampling,
+                    p
+                )) > 0
+            );
         }
     }
 }
@@ -517,8 +537,17 @@ fn only_anthropic_and_the_mock_are_ever_sent_a_breakpoint() {
         ]
         .iter()
         .map(|p| {
-            ctx.encode(b.dialect(), "m", sampling, *p, b.marks_breakpoints(), false)
-                .to_string()
+            ctx.encode(
+                Encoding {
+                    dialect: b.dialect(),
+                    marks_breakpoints: b.marks_breakpoints(),
+                    restricts_tools: false,
+                },
+                "m",
+                sampling,
+                *p,
+            )
+            .to_string()
         })
         .collect();
         if !marks {
@@ -689,4 +718,115 @@ fn shared_prefix_tokens_is_the_common_prefix_of_the_two_requests() {
     }
     assert_eq!(acn_harness::agent::scaled(50, 100, 200), 25);
     assert_eq!(acn_harness::agent::scaled(3, 7, 0), 0);
+}
+
+/// The child requests of a session: those whose last user message is a
+/// child's instruction.
+fn child_bodies(r: &common::Ran) -> Vec<&serde_json::Value> {
+    r.bodies
+        .iter()
+        .map(|(_, b)| b)
+        .filter(|b| last_user(b).contains("(child "))
+        .collect()
+}
+
+fn last_user(b: &serde_json::Value) -> String {
+    b["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rfind(|m| m["role"] == "user")
+        .unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// Cites: HAR-14, HAR-21
+#[test]
+fn a_forked_child_says_which_tools_it_may_call_on_every_backend() {
+    use acn_harness::knobs::{Fanout, Knobs};
+    use acn_harness::wire::Backend;
+    use common::{Scripted, chat_reply, ok, scripted_with};
+    // On the mock, in a real session: two children, two calls each.
+    let r = session(Spec {
+        task: 1,
+        vary: &[("fanout_prompting", "fork_from_prefix")],
+        ..Spec::default()
+    });
+    r.result.as_ref().unwrap();
+    let children = child_bodies(&r);
+    assert_eq!(children.len(), 4);
+    for b in &children {
+        assert!(last_user(b).ends_with(" of 2)\nUse only these tools: read_file."));
+        assert_eq!(b["tool_choice"]["type"], "allowed_tools");
+    }
+    // On the other chat-completions backends, against a scripted provider:
+    // the line always, the restriction only where the backend takes it.
+    for backend in [Backend::Openai, Backend::Vllm, Backend::Sglang] {
+        let env = Scripted::new(vec![
+            ok(&chat_reply(None, &[("p", "delegate")])),
+            ok(&chat_reply(Some("child done"), &[])),
+            ok(&chat_reply(Some("child done"), &[])),
+            ok(&chat_reply(Some("done"), &[])),
+        ]);
+        let knobs = Knobs {
+            fanout_prompting: Fanout::ForkFromPrefix,
+            ..Knobs::default()
+        };
+        let (_, result) = scripted_with(&env, &common::smoke(), 1, backend, knobs);
+        result.unwrap();
+        let bodies: Vec<serde_json::Value> = env
+            .bodies
+            .borrow()
+            .iter()
+            .map(|b| serde_json::from_slice(b).unwrap())
+            .collect();
+        let children: Vec<&serde_json::Value> = bodies
+            .iter()
+            .filter(|b| last_user(b).contains("(child "))
+            .collect();
+        assert_eq!(children.len(), 2, "{}", backend.as_str());
+        for b in children {
+            assert!(
+                last_user(b).ends_with(" of 2)\nUse only these tools: read_file."),
+                "{}",
+                backend.as_str()
+            );
+            assert_eq!(
+                b["tool_choice"]["type"] == "allowed_tools",
+                backend.restricts_tools(),
+                "{}: {}",
+                backend.as_str(),
+                b["tool_choice"]
+            );
+        }
+    }
+    // A child with no tools may call none (HAR-14, HAR-4's form).
+    let r = session(Spec {
+        workload: common::smoke().replace("tools = [\"read_file\"]", "tools = []"),
+        task: 1,
+        vary: &[("fanout_prompting", "fork_from_prefix")],
+        ..Spec::default()
+    });
+    r.result.as_ref().unwrap();
+    let children = child_bodies(&r);
+    assert!(!children.is_empty());
+    for b in children {
+        assert!(
+            last_user(b).ends_with(" of 2)\nUse no tools."),
+            "{}",
+            last_user(b)
+        );
+        assert_eq!(b["tool_choice"], "none");
+    }
+    // Under per_child, neither the line nor a tool choice.
+    let r = session(Spec {
+        task: 1,
+        ..Spec::default()
+    });
+    for b in child_bodies(&r) {
+        assert!(!last_user(b).contains("Use "), "{}", last_user(b));
+        assert!(b.get("tool_choice").is_none());
+    }
 }

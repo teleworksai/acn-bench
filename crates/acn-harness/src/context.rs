@@ -69,6 +69,27 @@ pub struct ToolDef {
     pub parameters: Value,
 }
 
+/// What a backend's requests look like: its dialect, and whether they carry
+/// breakpoints (HAR-16) and an allowed-tools restriction (HAR-14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Encoding {
+    pub dialect: Dialect,
+    pub marks_breakpoints: bool,
+    pub restricts_tools: bool,
+}
+
+impl Encoding {
+    /// `dialect` with neither breakpoints nor a restriction.
+    #[must_use]
+    pub fn plain(dialect: Dialect) -> Self {
+        Self {
+            dialect,
+            marks_breakpoints: false,
+            restricts_tools: false,
+        }
+    }
+}
+
 /// What a call allows the model to call (HAR-4, HAR-14).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolChoice {
@@ -119,20 +140,23 @@ impl Context {
         out.into_bytes()
     }
 
-    /// The request body in `dialect`, marking breakpoints by `placement` when
-    /// `mark` (HAR-16: only on the Messages dialect and on the mock), and sending
-    /// an allowed-tools restriction only when `subset` (HAR-14: `openai` and the
-    /// mock).
+    /// The request body in `enc`'s dialect, marking breakpoints by `placement`
+    /// where the backend takes them (HAR-16). A tool choice is written only when
+    /// the context has tools: `Forbid` always, `Allowed` only where the backend
+    /// takes an allowed-tools restriction (HAR-4, HAR-14).
     #[must_use]
     pub fn encode(
         &self,
-        dialect: Dialect,
+        enc: Encoding,
         model: &str,
         sampling: Sampling,
         placement: Placement,
-        mark: bool,
-        subset: bool,
     ) -> Value {
+        let Encoding {
+            dialect,
+            marks_breakpoints: mark,
+            restricts_tools: subset,
+        } = enc;
         let placement = if mark { placement } else { Placement::None };
         let mut body = match dialect {
             Dialect::ChatCompletions => self.chat_completions(model, sampling, placement),
@@ -145,10 +169,12 @@ impl Context {
                 (ToolChoice::Forbid, Dialect::ChatCompletions) => Some(json!("none")),
                 (ToolChoice::Forbid, Dialect::Messages) => Some(json!({ "type": "none" })),
                 (ToolChoice::Allowed(names), Dialect::ChatCompletions) if subset => {
-                    Some(json!({ "type": "allowed_tools", "allowed_tools": {
-                        "mode": "auto",
-                        "tools": names.iter().map(|n| json!({ "type": "function", "function": { "name": n } })).collect::<Vec<_>>(),
-                    } }))
+                    let tools: Vec<Value> = names
+                        .iter()
+                        .map(|n| json!({ "type": "function", "function": { "name": n } }))
+                        .collect();
+                    Some(json!({ "type": "allowed_tools",
+                        "allowed_tools": { "mode": "auto", "tools": tools } }))
                 }
                 // No subset restriction on this backend: the instruction line
                 // carries it (HAR-14).

@@ -8,7 +8,7 @@ mod common;
 
 use acn_harness::HarnessError;
 use acn_harness::agent::Opts;
-use acn_harness::context::{Context, Dialect, Msg, Sampling, ToolCall, ToolDef};
+use acn_harness::context::{Context, Dialect, Encoding, Msg, Sampling, ToolCall, ToolDef};
 use acn_harness::knobs::Placement;
 use acn_harness::wire::{Backend, Exchange, assemble};
 use acn_trace::identity::Mode;
@@ -55,12 +55,14 @@ const SAMPLING: Sampling = Sampling {
 #[test]
 fn both_dialects_encode_a_golden_context_deterministically() {
     let cc = golden().encode(
-        Dialect::ChatCompletions,
+        Encoding {
+            dialect: Dialect::ChatCompletions,
+            marks_breakpoints: true,
+            restricts_tools: false,
+        },
         "m",
         SAMPLING,
         Placement::RollingTail,
-        true,
-        false,
     );
     assert_eq!(
         cc.to_string(),
@@ -77,12 +79,14 @@ fn both_dialects_encode_a_golden_context_deterministically() {
         "keys sorted, no whitespace: the bytes are a function of the context"
     );
     let msgs = golden().encode(
-        Dialect::Messages,
+        Encoding {
+            dialect: Dialect::Messages,
+            marks_breakpoints: true,
+            restricts_tools: false,
+        },
         "m",
         SAMPLING,
         Placement::SystemAndTools,
-        true,
-        false,
     );
     assert_eq!(
         msgs,
@@ -500,12 +504,14 @@ fn an_empty_reply_is_never_sent_back_empty() {
         ],
     };
     let m = ctx.encode(
-        Dialect::Messages,
+        Encoding {
+            dialect: Dialect::Messages,
+            marks_breakpoints: false,
+            restricts_tools: false,
+        },
         "m",
         SAMPLING,
         Placement::None,
-        false,
-        false,
     );
     assert_eq!(
         m["messages"],
@@ -515,12 +521,14 @@ fn an_empty_reply_is_never_sent_back_empty() {
         "no empty text block: the user turns merge"
     );
     let c = ctx.encode(
-        Dialect::ChatCompletions,
+        Encoding {
+            dialect: Dialect::ChatCompletions,
+            marks_breakpoints: false,
+            restricts_tools: false,
+        },
         "m",
         SAMPLING,
         Placement::None,
-        false,
-        false,
     );
     assert_eq!(
         c["messages"][2],
@@ -617,7 +625,16 @@ fn a_tool_choice_is_written_in_each_dialects_form_and_only_where_it_applies() {
         ..golden()
     };
     let enc = |ctx: &Context, d: Dialect, subset: bool| {
-        ctx.encode(d, "m", SAMPLING, Placement::None, false, subset)
+        ctx.encode(
+            Encoding {
+                dialect: d,
+                marks_breakpoints: false,
+                restricts_tools: subset,
+            },
+            "m",
+            SAMPLING,
+            Placement::None,
+        )
     };
     // HAR-4: none, in each dialect's form.
     let forbid = with(Some(ToolChoice::Forbid));

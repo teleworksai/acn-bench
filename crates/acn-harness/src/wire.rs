@@ -77,6 +77,16 @@ impl Backend {
         matches!(self, Self::Mockllm | Self::Openai)
     }
 
+    /// How this backend's requests are encoded.
+    #[must_use]
+    pub fn encoding(self) -> crate::context::Encoding {
+        crate::context::Encoding {
+            dialect: self.dialect(),
+            marks_breakpoints: self.marks_breakpoints(),
+            restricts_tools: self.restricts_tools(),
+        }
+    }
+
     /// The request path under the endpoint.
     #[must_use]
     pub fn path(self) -> &'static str {

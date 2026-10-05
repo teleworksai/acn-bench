@@ -76,7 +76,7 @@ It is made only once P4-12 holds. Its loop report, its final verdict and the `ac
 
 The SPEC 040 and SPEC 030 changes that settle these conditions are T06b2's (issues #24, #25 and #26). Two differences between the mock and the providers remain, and the run of record and any live comparison MUST state them with the knob effects they touch:
 - **`compaction_trigger`.** On `anthropic`, a compaction call's change of tool choice may invalidate cached message blocks the mock still reads (HAR-4).
-- **`fanout_prompting`.** Forked children are restricted by `allowed_tools` on `openai` and the mock, but only by their instruction on `anthropic`, `vllm` and `sglang` (HAR-14).
+- **`fanout_prompting`.** Forked children are restricted by `allowed_tools` on `openai` and the mock, but only by their instruction on `anthropic`, `vllm` and `sglang` (HAR-14). The fork arm's children also carry an instruction line the per-child arm's do not, and a refused child call on those backends spends one of the child's calls, which a live run counts.
 
 ## 4. The acceptance suite
 
