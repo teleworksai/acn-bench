@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 6 · IDs: 158 · MUSTs: 152 · implemented: 116 · cited: 133
+Specs: 6 · IDs: 159 · MUSTs: 153 · implemented: 116 · cited: 133
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -160,6 +160,7 @@ Specs: 6 · IDs: 158 · MUSTs: 152 · implemented: 116 · cited: 133
 | LOOP-12 | `085-feedback-loop.md` | 2 | — | no | — |
 | LOOP-13 | `085-feedback-loop.md` | 2 | MUST | no | — |
 | LOOP-14 | `085-feedback-loop.md` | 2 | MUST | no | — |
+| LOOP-15 | `085-feedback-loop.md` | 2 | MUST | no | — |
 | LOOP-20 | `085-feedback-loop.md` | 3 | MUST | no | `crates/xtask/src/pr_check.rs` `overlap_is_an_over_approximation`<br>`crates/xtask/src/pr_check.rs` `owners_and_lines`<br>`crates/xtask/tests/pr_check.rs` `codeowners_must_cover_every_protected_path`<br>`crates/xtask/tests/pr_check.rs` `self_host_codeowners_covers_the_protected_paths`<br>`crates/xtask/tests/pr_check.rs` `codeowners_coverage_follows_last_match_wins_and_needs_a_real_owner`<br>`crates/xtask/tests/pr_check.rs` `the_gate_records_and_codeowners_itself_are_protected`<br>`crates/xtask/tests/pr_check.rs` `every_enforcement_point_needs_an_owner`<br>`crates/xtask/tests/pr_check.rs` `codeowners_lines_github_would_not_honour_do_not_count` |
 | LOOP-21 | `085-feedback-loop.md` | 3 | MUST | no | — |
 | LOOP-30 | `085-feedback-loop.md` | 4 | MUST | no | — |
