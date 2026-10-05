@@ -121,7 +121,7 @@ pub fn frozen(text: &str, stem: &str) -> (Result<Hypothesis, HypError>, tempfile
 /// The error message of a load that must fail.
 pub fn err(r: Result<Hypothesis, HypError>) -> String {
     match r {
-        Ok(h) => panic!("loaded {}, expected an error", h.path.display()),
+        Ok(h) => panic!("loaded {}, expected an error", h.path().display()),
         Err(e) => e.to_string(),
     }
 }

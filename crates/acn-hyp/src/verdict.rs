@@ -41,6 +41,9 @@ pub enum VerdictError {
     /// An invariant of the engine failed: a bug, never data.
     #[error("internal: {0}")]
     Internal(String),
+    /// The hypothesis file changed after it was loaded (HYP-4).
+    #[error(transparent)]
+    HypothesisChanged(#[from] crate::HypothesisChanged),
 }
 
 type Result<T> = std::result::Result<T, VerdictError>;
@@ -457,6 +460,27 @@ fn check_bundle<'a>(cx: &Context<'_>, b: &'a BundleData) -> Result<Info<'a>> {
     {
         return refuse(format!(
             "{name}: vary.provider = {p} but the backend is {} (HYP-20)",
+            m.backend
+        ));
+    }
+    // HYP-9: `[design].backends` names the ways of providing inference the
+    // hypothesis is about; a file that names none is about the mock only
+    // (ADR-21). A real-provider bundle against a mock-only file is refused, so a
+    // file cannot leave out `real-api` to escape its pins (HYP-23, HYP-26).
+    let kind = if m.backend == MOCK_BACKEND {
+        "mockllm"
+    } else {
+        "real-api"
+    };
+    let declared = &h.design.backends;
+    let allowed = if declared.is_empty() {
+        kind == "mockllm"
+    } else {
+        declared.iter().any(|d| d == kind)
+    };
+    if !allowed {
+        return refuse(format!(
+            "{name}: backend `{}` is {kind}, which [design].backends does not name (HYP-9; none named means mockllm only)",
             m.backend
         ));
     }
@@ -1716,20 +1740,66 @@ fn slice_json(h: &Hypothesis, s: &SliceVerdict, twin: bool) -> J {
 
 // ---- writing (HYP-20, HYP-4) -------------------------------------------------
 
+/// Judge, then write: the one call that turns a loaded hypothesis and its
+/// bundles into `verdict.json`. HYP-4: the file is read again before the write,
+/// and a file that changed since it was loaded aborts the write with
+/// `hypothesis_changed`, so a verdict always belongs to the bytes it was judged
+/// against.
+pub fn judge_and_write(
+    h: &Hypothesis,
+    bundles: Vec<BundleData>,
+    engine_hash: Digest,
+    runs_dir: &Path,
+) -> Result<(Verdict, PathBuf)> {
+    let v = verdict(h, bundles, engine_hash)?;
+    h.check_unchanged()?;
+    let path = write(runs_dir, &v)?;
+    Ok((v, path))
+}
+
+/// HYP-4: where verdicts may go. `runs_dir` is named `runs`, is a real
+/// directory (never a symbolic link), and, when a workspace root (CON-28) holds
+/// it, is that root's own `runs/`: so neither `hypotheses/runs` nor any other
+/// directory named `runs` inside a workspace receives a verdict.
+fn check_runs_dir(runs_dir: &Path) -> Result<()> {
+    let refuse_it = |why: &str| {
+        refuse(format!(
+            "{} is not a `runs` directory verdicts may be written to: {why} (HYP-4)",
+            runs_dir.display()
+        ))
+    };
+    if runs_dir.file_name().and_then(|n| n.to_str()) != Some("runs") {
+        return refuse_it("its name is not `runs`");
+    }
+    if std::fs::symlink_metadata(runs_dir).is_ok_and(|m| !m.is_dir()) {
+        return refuse_it("it is not a directory");
+    }
+    let parent = match runs_dir.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let parent = std::fs::canonicalize(&parent).map_err(|e| VerdictError::Io {
+        path: parent.clone(),
+        message: e.to_string(),
+    })?;
+    match acn_trace::env::find_root(&parent).map_err(internal)? {
+        Some(root) if root != parent => refuse_it(&format!(
+            "it lies inside the workspace {} but is not its own runs/",
+            root.display()
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Write `runs_dir/verdicts/<verdict_id>/verdict.json`.
-/// - HYP-4: `runs_dir` must be a directory named `runs`; nothing is written
-///   anywhere else.
+/// - HYP-4: `runs_dir` is checked as `check_runs_dir` says, and neither
+///   `verdicts/` nor the verdict's directory may be a symbolic link.
 /// - HYP-20: an existing `verdict.json` is never overwritten.
 /// - Atomic: the bytes go to a sibling temporary file that is then linked into
 ///   place (which fails if the target exists), so a crash leaves no partial
 ///   verdict and never blocks a later attempt.
 pub fn write(runs_dir: &Path, v: &Verdict) -> Result<PathBuf> {
-    if runs_dir.file_name().and_then(|n| n.to_str()) != Some("runs") {
-        return refuse(format!(
-            "{} is not a `runs` directory: acn hyp writes under runs/ only (HYP-4)",
-            runs_dir.display()
-        ));
-    }
+    check_runs_dir(runs_dir)?;
     let io = |path: &Path| {
         let path = path.to_path_buf();
         move |e: std::io::Error| VerdictError::Io {
@@ -1737,8 +1807,23 @@ pub fn write(runs_dir: &Path, v: &Verdict) -> Result<PathBuf> {
             message: e.to_string(),
         }
     };
-    let dir = runs_dir.join("verdicts").join(v.verdict_id.to_hex());
-    std::fs::create_dir_all(&dir).map_err(io(&dir))?;
+    // Each level is created, then checked not to be a symbolic link, before
+    // anything is created beneath it.
+    let verdicts = runs_dir.join("verdicts");
+    let dir = verdicts.join(v.verdict_id.to_hex());
+    for d in [runs_dir, verdicts.as_path(), dir.as_path()] {
+        if let Err(e) = std::fs::create_dir(d)
+            && e.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            return Err(io(d)(e));
+        }
+        if !std::fs::symlink_metadata(d).map_err(io(d))?.is_dir() {
+            return refuse(format!(
+                "{} is not a directory, or is a symbolic link (HYP-4)",
+                d.display()
+            ));
+        }
+    }
     let path = dir.join("verdict.json");
     if path.exists() {
         return Err(VerdictError::Exists(dir));

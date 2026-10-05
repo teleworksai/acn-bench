@@ -53,16 +53,14 @@ fn write(root: &Path, rel: &str, body: &str) {
     fs::write(p, body).expect("write");
 }
 
-/// The labels the label rules ask for. HYP-26's freeze-shape findings are about
-/// a hypothesis file's content, not its label, and `acn-hyp`'s `freeze.rs` tests
-/// them; the placeholder files these tests commit would always trip them.
+/// The labels the violations ask for. Content rules (HYP-26) ask for none, so
+/// they are not counted here; the `hyp26_*` tests below check them directly.
 fn rules(v: &serde_json::Value) -> Vec<String> {
     v["violations"]
         .as_array()
         .expect("violations")
         .iter()
-        .filter(|x| x["rule"] != "HYP-26")
-        .map(|x| x["label"].as_str().expect("label").to_owned())
+        .filter_map(|x| x["label"].as_str().map(str::to_owned))
         .collect()
 }
 

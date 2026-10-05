@@ -8,8 +8,9 @@
 //! - CON-12: removing an entry from `trace-scope.toml` needs the `spec-change` label.
 //! - LOOP-20: `.github/CODEOWNERS` must assign an owner to every protected
 //!   path, under GitHub's last-match-wins rule.
-//! - HYP-26: a hypothesis file added or changed under `hypotheses/` must load as
-//!   frozen, lint clean, and carry `[design].pins` if it runs on `real-api`.
+//! - HYP-26: a file added or changed under `hypotheses/` must be a `<id>.toml`
+//!   hypothesis that loads as frozen, lints clean, and carries `[design].pins`
+//!   if it runs on `real-api`; in `--base` mode, as the head commit has it.
 //!
 //! Everything here fails closed: an unresolvable or ambiguous base, a root that
 //! is not the repository top level, a path that escapes the root, and any
@@ -35,11 +36,13 @@ const ENV_CHANGE: &str = "env-change";
 /// GitHub ignores a CODEOWNERS file larger than 3 MB.
 const MAX_CODEOWNERS_BYTES: u64 = 3 * 1024 * 1024;
 
-/// A label rule that the PR violates (or, as an advisory, would violate after M0).
+/// A rule the PR violates (or, as an advisory, would violate after M0).
 #[derive(Debug, Serialize)]
 pub struct Finding {
     pub rule: &'static str,
-    pub label: &'static str,
+    /// The label that satisfies the rule; `None` for a rule about content, which
+    /// no label can satisfy (HYP-26).
+    pub label: Option<&'static str>,
     pub paths: Vec<String>,
     pub message: String,
 }
@@ -461,36 +464,82 @@ fn scope_entries(text: &str) -> Result<BTreeSet<String>> {
 
 const HYPOTHESES_DIR: &str = "hypotheses";
 
-/// HYP-26: the shape of a freeze. Every hypothesis file the PR adds or changes
-/// under `hypotheses/` must load (HYP-1) as frozen, which it is only once this
-/// PR's `env-hash.json` records it (HYP-3); must lint clean (HYP-27); and, when
-/// `real-api` is among its backends, must carry `[design].pins`. The POC spec it
-/// names and its `[poc].status` are checked by the load itself (HYP-2, HYP-3).
-/// A removed file is a frozen-set change, which CON-7 already covers.
-fn freeze_findings(root: &Path, changed: &[String]) -> Vec<Finding> {
+/// HYP-26: the shape of a freeze. Every file the PR adds or changes under
+/// `hypotheses/` must be a hypothesis file `<id>.toml` (HYP-1) that loads, which
+/// already enforces its named POC spec and a consistent `[poc].status` (HYP-2,
+/// HYP-3); loads as frozen, which it is only once this PR's `env-hash.json`
+/// records it (HYP-3); lints clean (HYP-27); and, when `real-api` is among its
+/// backends, carries `[design].pins`. In `--base` mode the files and the record
+/// are judged as the PR's head commit has them: a working tree that differs is
+/// itself a finding. A removed file is a frozen-set change, which CON-7 covers.
+/// No label satisfies these findings.
+fn freeze_findings(root: &Path, changed: &[String], head: Option<&str>) -> Result<Vec<Finding>> {
     let mut out = Vec::new();
-    for p in changed
+    let finding = |p: &str, problems: Vec<String>| Finding {
+        rule: "HYP-26",
+        label: None,
+        paths: vec![p.to_owned()],
+        message: problems.join("; "),
+    };
+    let hyp: Vec<&String> = changed
         .iter()
-        .filter(|p| is_under(p, HYPOTHESES_DIR) && fold(p).ends_with(".toml"))
-    {
+        .filter(|p| is_under(p, HYPOTHESES_DIR))
+        .collect();
+    if hyp.is_empty() {
+        return Ok(out);
+    }
+    let differs = |p: &str| -> Result<bool> {
+        let Some(sha) = head else { return Ok(false) };
+        let disk = std::fs::read(root.join(p))
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).into_owned());
+        Ok(disk != show_at(root, sha, p)?)
+    };
+    if differs(RECORD_FILE)? {
+        out.push(finding(
+            RECORD_FILE,
+            vec![
+                "the working tree's record differs from the head commit's: commit it, then check"
+                    .to_owned(),
+            ],
+        ));
+    }
+    for p in hyp {
         let abs = root.join(p);
-        if !abs.is_file() {
+        if std::fs::symlink_metadata(&abs).is_err() {
             continue;
         }
         let mut problems = Vec::new();
+        if differs(p)? {
+            problems.push(
+                "the working tree differs from the head commit: commit it, then check".to_owned(),
+            );
+        }
+        if !p.ends_with(".toml") {
+            problems.push(format!(
+                "only hypothesis files named `<id>.toml` belong under {HYPOTHESES_DIR}/ (HYP-1, HYP-26)"
+            ));
+            out.push(finding(p, problems));
+            continue;
+        }
         match acn_hyp::load_in(&abs, root) {
-            Err(e) => problems.push(format!("it does not load: {e}")),
+            Err(e) => problems.push(format!(
+                "it does not load: {}{}",
+                e.key.map(|k| format!("{k}: ")).unwrap_or_default(),
+                e.message
+            )),
             Ok(h) => {
                 if h.status() != acn_hyp::Status::Frozen {
                     problems.push(format!(
                         "it loads as a candidate: record it with `cargo xtask env-hash --write` in this PR (HYP-3){}",
-                        h.warnings
+                        h.warnings()
                             .iter()
                             .map(|w| format!("; {w}"))
                             .collect::<String>()
                     ));
                 }
-                if h.design.backends.iter().any(|b| b == "real-api") && h.design.pins.is_none() {
+                if h.design().backends.iter().any(|b| b == "real-api") && h.design().pins.is_none()
+                {
                     problems.push(
                         "a real-api hypothesis is frozen with its [design].pins (HYP-26, HYP-23)"
                             .to_owned(),
@@ -501,15 +550,10 @@ fn freeze_findings(root: &Path, changed: &[String]) -> Vec<Finding> {
             }
         }
         if !problems.is_empty() {
-            out.push(Finding {
-                rule: "HYP-26",
-                label: ENV_CHANGE,
-                paths: vec![p.clone()],
-                message: problems.join("; "),
-            });
+            out.push(finding(p, problems));
         }
     }
-    out
+    Ok(out)
 }
 
 // ----------------------------------------------------------------------- run
@@ -584,7 +628,7 @@ pub fn run(root: &Path, changes: Changes, labels: &[String]) -> Result<Report> {
     if !spec_paths.is_empty() && !has(SPEC_CHANGE) {
         violations.push(Finding {
             rule: "CON-14",
-            label: SPEC_CHANGE,
+            label: Some(SPEC_CHANGE),
             paths: spec_paths,
             message: format!(
                 "{SPECS_DIR}/ changed: label the PR `{SPEC_CHANGE}` and state the rationale and the IDs added, changed or retired"
@@ -595,7 +639,7 @@ pub fn run(root: &Path, changes: Changes, labels: &[String]) -> Result<Report> {
     if !scope_removed.is_empty() && !has(SPEC_CHANGE) {
         violations.push(Finding {
             rule: "CON-12",
-            label: SPEC_CHANGE,
+            label: Some(SPEC_CHANGE),
             paths: scope_removed,
             message: format!(
                 "{SCOPE_FILE} no longer lists these entries, so their tests stop being required: label the PR `{SPEC_CHANGE}` and say why the requirement is no longer implemented"
@@ -623,20 +667,21 @@ pub fn run(root: &Path, changes: Changes, labels: &[String]) -> Result<Report> {
         };
         list.push(Finding {
             rule: "CON-7",
-            label: ENV_CHANGE,
+            label: Some(ENV_CHANGE),
             paths: frozen_paths,
             message,
         });
     }
 
-    violations.extend(freeze_findings(root, &changed));
+    let head = commits.as_ref().map(|(_, c)| c.head_sha.clone());
+    violations.extend(freeze_findings(root, &changed, head.as_deref())?);
 
     let missing = codeowners_missing(root)?;
     for v in &violations {
-        tracing::error!(rule = v.rule, label = v.label, "{}", v.message);
+        tracing::error!(rule = v.rule, label = ?v.label, "{}", v.message);
     }
     for a in &advisories {
-        tracing::warn!(rule = a.rule, label = a.label, "{}", a.message);
+        tracing::warn!(rule = a.rule, label = ?a.label, "{}", a.message);
     }
     for m in &missing {
         tracing::error!(pattern = %m, "the last CODEOWNERS entry that can match this protected path is not the exact entry with valid owners (LOOP-20)");

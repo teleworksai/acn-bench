@@ -22,8 +22,6 @@ thiserror.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
-# HYP-26's freeze test drives the gates that enforce it (env-hash, pr-check).
-xtask = { path = "../xtask" }
 blake3.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

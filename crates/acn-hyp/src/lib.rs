@@ -7,8 +7,8 @@
 //! HYP-15), evaluation over a slice's data (HYP-11, HYP-14), bundles read into a
 //! verdict and `verdict.json` (HYP-20..24, HYP-28), lint (HYP-27), and the
 //! read-only rules (HYP-4, HYP-25): it opens hypothesis files only to read them,
-//! writes nothing but verdicts under `runs/`, and detects a file that changed
-//! under it.
+//! writes only under the workspace's `runs/`, and only in `verdict::write` (as
+//! xtask's `workspace.rs` checks), and detects a file that changed under it.
 #![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
@@ -25,7 +25,7 @@ pub mod read;
 pub mod slice;
 pub mod verdict;
 
-pub use file::{HYPOTHESIS_CHANGED, Hypothesis, load, load_in};
+pub use file::{HYPOTHESIS_CHANGED, Hypothesis, HypothesisChanged, load, load_in};
 
 /// A hypothesis file's status (HYP-3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

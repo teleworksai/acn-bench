@@ -133,7 +133,7 @@ pub fn bundle(h: &Hypothesis, s: &Spec) -> BundleData {
         scenario_hash: s.scenario.clone(),
         workload_hash: s.workload.clone(),
         hypothesis: ManifestHypothesis {
-            id: h.id.clone(),
+            id: h.id().to_owned(),
             status: s
                 .status
                 .clone()
