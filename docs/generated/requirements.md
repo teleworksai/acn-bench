@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 6 · IDs: 159 · MUSTs: 153 · implemented: 116 · cited: 133
+Specs: 6 · IDs: 159 · MUSTs: 154 · implemented: 116 · cited: 133
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -155,7 +155,7 @@ Specs: 6 · IDs: 159 · MUSTs: 153 · implemented: 116 · cited: 133
 | LOOP-2 | `085-feedback-loop.md` | 1 | MUST | no | — |
 | LOOP-3 | `085-feedback-loop.md` | 1 | MUST | no | — |
 | LOOP-4 | `085-feedback-loop.md` | 1 | MUST | no | — |
-| LOOP-10 | `085-feedback-loop.md` | 2 | — | no | — |
+| LOOP-10 | `085-feedback-loop.md` | 2 | MUST | no | — |
 | LOOP-11 | `085-feedback-loop.md` | 2 | MUST | no | — |
 | LOOP-12 | `085-feedback-loop.md` | 2 | — | no | — |
 | LOOP-13 | `085-feedback-loop.md` | 2 | MUST | no | — |
