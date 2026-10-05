@@ -11,6 +11,7 @@ description = "Repository automation: trace-check (CON-12), docs-inventory, env-
 workspace = true
 
 [dependencies]
+acn-emu = { path = "../acn-emu" }
 acn-hyp = { path = "../acn-hyp" }
 acn-trace.workspace = true
 blake3.workspace = true

@@ -1,0 +1,37 @@
+# Provenance of the measured trace in this directory (SPEC 020 EMU-61, CON-21).
+
+[source]
+title = "5G-IANA: Nokia Testbed – Drivetest results for UL & DL Throughput and RTT with a OnePlus9 UE"
+url = "https://zenodo.org/records/12664724"
+identifier = "doi:10.5281/zenodo.12664724"
+
+[licence]
+spdx = "CC-BY-4.0"
+attribution = "Markus Wimmer, Nokia (Germany), for the 5G-IANA project: \"5G-IANA: Nokia Testbed – Drivetest results for UL & DL Throughput and RTT with a OnePlus9 UE\", published on Zenodo in 2024, https://doi.org/10.5281/zenodo.12664724, licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Converted (fields dropped, units changed, times made relative) by acn-bench."
+
+[collection]
+date = "2023-01-29"
+device = "OnePlus 9 handset (the record's UE)"
+technology = "5G NR (the record does not say NSA or SA)"
+network = "testbed"
+location_class = "roads around a testbed site in southern Germany"
+mobility = "drive"
+method = "A drive-test app on the handset ran a test about every 26 s for about 86 minutes: a ping series, summarised as average, minimum, maximum and standard deviation of the round-trip time and the percentage lost, and a downlink and an uplink throughput test. The record states neither the ping target, the probe count, nor the test durations."
+
+[conversion]
+tool = "cargo xtask import-5g-iana"
+tool_path = "crates/xtask/src/import_5g_iana.rs"
+tool_blake3 = "231b12b2f8a38421b6fc825d9d895530c6b38f47c0900103dade1d2538eab4b4"
+dropped = [
+    "coordinates of every test (EMU-63: never coordinates)",
+    "the cell identifier in every placemark name (EMU-63: no identifiers)",
+    "wall-clock TIME, replaced by t_s, seconds since the first kept test (EMU-63)",
+    "TEST DL MAX and TEST UL MAX, the peak throughput within a test (EMU-62 holds the test's mean)",
+    "the first placemark, which ran throughput tests but no ping test, so has no loss (EMU-62 needs one)",
+    "the record's DL and UL files, not read: they hold the same placemarks and fields as the PING file and differ from it only in colour styling",
+    "the KML styling (colours, icons), which encodes nothing beyond the fields above",
+]
+
+[[conversion.sources]]
+name = "2023.01.29_OnePlus9-2_datatest_PING.kml"
+blake3 = "c278e9a23e01b8184af353c582b363ff4ac3a21f6b742f65acdf8035f417bc1d"

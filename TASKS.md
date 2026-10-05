@@ -67,6 +67,8 @@ T08 first trace      → lab/trace-capture graduates minimally: capture format +
                        scenarios/measured/ (Class C from M0). Do not wait for M4.
                        ADR-29: the first trace is the published 5G-IANA drive test
                        (Zenodo 12664724, CC BY 4.0) until our own capture exists.
+                       Done (ADR-30): SPEC 020 §6 (EMU-60..65), acn_emu::trace::load,
+                       `cargo xtask import-5g-iana`, scenarios/measured/5g-iana-2023-01-29.
 T07 M0 gate          → SPEC 095 §M0 acceptance; docs/gates/M0.md; human sign-off.
 L-M0 exploration     → starts day one, in parallel with T01:
                        (a) lab/turn-transport — quinn prototype: one QUIC stream per

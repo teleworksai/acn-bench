@@ -4,8 +4,8 @@ You are implementing **acn-bench**, a Rust workspace that builds the ACN experim
 
 ## The loop (every substrate task)
 
-1. **Restate the requirement IDs** you will satisfy (e.g. `EMU-3, EMU-4, TRC-2`).
-2. **Write the tests first.** Unit tests in the crate, integration tests under `tests/`, acceptance tests under `tests/accept/`. Each test function carries a doc comment `/// Cites: EMU-3, EMU-4`. `cargo xtask trace-check` fails CI if an implemented MUST has no citing test (CON-12).
+1. **Restate the requirement IDs** you will satisfy (e.g. `EMU-60, EMU-61, TRC-2`).
+2. **Write the tests first.** Unit tests in the crate, integration tests under `tests/`, acceptance tests under `tests/accept/`. Each test function carries a doc comment `/// Cites: EMU-60, EMU-61`. `cargo xtask trace-check` fails CI if an implemented MUST has no citing test (CON-12).
 3. **Implement until the tests pass.** No `unsafe` (CON-19). Library code returns `Result`; no `unwrap`/`expect`/`panic!` outside tests and `main` (clippy enforces).
 4. **Run all gates** (below), then open a PR whose description lists the requirement IDs. One spec concern per PR.
 

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
-use xtask::{docs_inventory, env_hash, logging, pr_check, trace_check, workspace};
+use xtask::{docs_inventory, env_hash, import_5g_iana, logging, pr_check, trace_check, workspace};
 
 #[derive(Parser)]
 #[command(
@@ -55,6 +55,19 @@ enum Cmd {
         /// cannot pose as two labels. This is what CI passes.
         #[arg(long)]
         labels_json: Option<String>,
+    },
+    /// EMU-65: convert the 5G-IANA PING.kml into a measured trace's trace.toml;
+    /// --check refuses unless the committed trace.toml is exactly the output.
+    #[command(name = "import-5g-iana")]
+    Import5gIana {
+        /// The PING.kml of Zenodo record 12664724.
+        #[arg(long)]
+        ping: PathBuf,
+        /// The trace directory (default: scenarios/measured/5g-iana-2023-01-29).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -119,6 +132,10 @@ fn run() -> Value {
                 None => split(&labels),
             };
             to_json(pr_check::run(&root, changes, &labels))
+        }
+        Cmd::Import5gIana { ping, dir, check } => {
+            let dir = dir.unwrap_or_else(|| root.join("scenarios/measured/5g-iana-2023-01-29"));
+            to_json(import_5g_iana::run(&root, &ping, &dir, check))
         }
     }
 }
