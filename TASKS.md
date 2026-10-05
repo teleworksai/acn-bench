@@ -71,8 +71,9 @@ T08 first trace      → lab/trace-capture graduates minimally: capture format +
                        `cargo xtask import-5g-iana`, scenarios/measured/5g-iana-2023-01-29.
 T07 M0 gate          → SPEC 095 §M0 acceptance; docs/gates/M0.md; human sign-off.
                        Drafted (ADR-31): SPEC 095 §1–§2, tests/accept/gates.rs,
-                       docs/gates/M0.md with GATE-14 (live providers) deferred by
-                       ADR-29 to M1. Closes only by the maintainer's merge.
+                       docs/gates/M0.md with GATE-14 (live providers, T06c/T06d)
+                       deferred by ADR-29, due at M1 (ADR-31). Closes only by the
+                       maintainer's merge.
 L-M0 exploration     → starts day one, in parallel with T01:
                        (a) lab/turn-transport — quinn prototype: one QUIC stream per
                            turn, declared deadline, resume-after-gap without re-prefill,

@@ -171,19 +171,19 @@ Specs: 9 · IDs: 190 · MUSTs: 177 · implemented: 150 · cited: 167
 | LOOP-21 | `085-feedback-loop.md` | 3 | MUST | no | — |
 | LOOP-30 | `085-feedback-loop.md` | 4 | MUST | no | — |
 | LOOP-31 | `085-feedback-loop.md` | 4 | MUST | no | — |
-| GATE-1 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `spec_095_writes_gate_m0`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found` |
-| GATE-2 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found` |
-| GATE-3 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found` |
-| GATE-4 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found` |
-| GATE-5 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found` |
-| GATE-6 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `spec_095_writes_gate_m0`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found` |
-| GATE-10 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095` |
-| GATE-11 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095` |
-| GATE-12 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095` |
-| GATE-13 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095` |
-| GATE-14 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095` |
-| GATE-15 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095` |
-| GATE-16 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095` |
+| GATE-1 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found_alone` |
+| GATE-2 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found_alone` |
+| GATE-3 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found_alone` |
+| GATE-4 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found_alone` |
+| GATE-5 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found_alone` |
+| GATE-6 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found_alone` |
+| GATE-10 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
+| GATE-11 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
+| GATE-12 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
+| GATE-13 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
+| GATE-14 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
+| GATE-15 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
+| GATE-16 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
 | P4-1 | `100-p4-harness-discipline.md` | 2 | MUST | yes | `crates/acn-hyp/tests/existing_files.rs` `p4_names_the_spec_100_providers_and_workloads_and_pins_them_when_pinned`<br>`tests/accept/p4.rs` `the_p4_workloads_meet_the_spec`<br>`tests/accept/p4.rs` `the_run_of_record_is_accepted_at_its_budget_and_refused_below_it` |
 | P4-2 | `100-p4-harness-discipline.md` | 2 | MUST | yes | `tests/accept/p4.rs` `the_p4_workloads_meet_the_spec` |
 | P4-3 | `100-p4-harness-discipline.md` | 2 | MUST | yes | `tests/accept/p4.rs` `the_p4_workloads_meet_the_spec`<br>`tests/accept/p4.rs` `every_knob_changes_the_requests_of_some_p4_workload` |

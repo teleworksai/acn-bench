@@ -23,9 +23,11 @@ acn-mockllm = { path = "../../crates/acn-mockllm" }
 acn-trace = { workspace = true, features = ["io"] }
 
 [dev-dependencies]
+acn-emu = { path = "../../crates/acn-emu" }
 blake3.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+toml.workspace = true
 
 [[test]]
 name = "trace_determinism"
