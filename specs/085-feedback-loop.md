@@ -60,7 +60,7 @@ A map MUST name every value of its parameter and nothing else.
   - `bisect` is not specified yet (§6 question 2), and a file whose `search` is `bisect` is refused.
 - (c) **Verdict trajectory.** After every k-th batch, with k = ⌈budget / 50⌉, and after the last batch, the verdict of HYP-20..24 MUST be computed over every bundle of the batches run so far, by the same `acn-hyp` function `acn hyp verdict` uses (HYP-20). Its value and reasons are appended to the trajectory, and the batches between record none.
   - The verdict's cost grows with the bundles it reads, so a verdict after every batch makes a loop's cost quadratic in its grid.
-  - k depends on the budget alone, which every input of `loop_id` fixes, so the trajectory is part of what a report regenerates (LOOP-14).
+  - k depends on the budget alone. The budget is an input of `loop_id`, so k is fixed before the loop starts, and the trajectory is part of what a report regenerates (LOOP-14).
   - A budget of 50 or fewer keeps a verdict after every batch.
 
   These intermediate verdicts are not written; the final verdict is written once, under `runs/verdicts/` (HYP-20). Two loops can end on the same bundle set:
@@ -112,7 +112,7 @@ The loop runner MUST NOT write anything outside `runs/`.
   - `layer` (`"L1"`) and the `loop_id`;
   - the inputs: the hypothesis path and every workload path relative to the workspace root, with their hashes, the model map, the strategy and the budget;
   - the run seed, `engine_hash` and `build_hash`;
-  - per batch, the cell, the run_ids of its bundles and, where LOOP-10(c) computes one, the verdict after it;
+  - per batch, the cell, the run_ids of its bundles and, where LOOP-10(c) computes one, the verdict after it and its reasons, both `null` otherwise;
   - why the loop stopped;
   - the verdict_id of the final verdict.
 

@@ -19,5 +19,5 @@ SPEC 100 §7 question 4 recommended thinning the trajectory.
 - **`loop_run::trajectory_step(budget)`** is public, and its known answers are tested: 50 → 1, 51 → 2, 1 548 → 31.
 
 ## Consequences
-- POC 4's run of record makes 50 intermediate verdicts and one final verdict instead of 1 536.
+- POC 4's run of record (k = 31, 1 536 batches) makes 49 intermediate verdicts and one final verdict instead of 1 536.
 - A loop's aborts on a refused verdict (LOOP-10(f)) are detected at the next judged batch rather than at once. The bundles made in between stay, as any abort's do.

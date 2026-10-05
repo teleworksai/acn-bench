@@ -1045,6 +1045,13 @@ pub fn trajectory_step(budget: u64) -> usize {
     usize::try_from(budget.div_ceil(TRAJECTORY_POINTS).max(1)).unwrap_or(usize::MAX)
 }
 
+/// Whether batch `n` (1-based) of a loop that ran `count` batches carries a
+/// verdict (LOOP-10(c)): every k-th, and the last.
+#[must_use]
+pub fn judged(n: usize, count: usize, k: usize) -> bool {
+    n == count || (k > 0 && n % k == 0)
+}
+
 /// The verdict over `bundles`, by the one function `acn hyp verdict` uses
 /// (HYP-20); never written here, and never a stop rule (LOOP-10(c), (d)).
 fn judge(s: &Setup<'_>, bundles: &[BundleData]) -> Result<Verdict, LoopError> {

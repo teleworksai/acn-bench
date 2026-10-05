@@ -847,15 +847,36 @@ fn the_rendering_says_when_no_effect_is_defined() {
     );
 }
 
-/// Cites: LOOP-10, LOOP-11
+/// Cites: LOOP-10
 #[test]
-fn the_trajectory_is_judged_every_kth_batch_and_after_the_last() {
+fn which_batches_are_judged() {
     // k = ⌈budget / 50⌉: every batch up to 50, then every second, …
     for (budget, k) in [(2, 1), (50, 1), (51, 2), (100, 2), (101, 3), (1548, 31)] {
         assert_eq!(loop_run::trajectory_step(budget), k, "budget {budget}");
     }
-    // A random loop over many cells, with a budget of 59: k = 2, and each
-    // batch costs 2, so 29 batches: the last is judged though 29 is odd.
+    let pattern = |count: usize, k: usize| -> Vec<usize> {
+        (1..=count)
+            .filter(|n| loop_run::judged(*n, count, k))
+            .collect()
+    };
+    assert_eq!(pattern(5, 2), [2, 4, 5], "an odd count: the last too");
+    assert_eq!(
+        pattern(6, 2),
+        [2, 4, 6],
+        "the last is already a multiple of k"
+    );
+    assert_eq!(pattern(1, 3), [1], "one batch, k above it");
+    assert_eq!(pattern(2, 5), [2], "k above the count: the last only");
+    assert_eq!(pattern(3, 1), [1, 2, 3], "k = 1: every batch");
+}
+
+/// Cites: LOOP-10, LOOP-11, LOOP-14
+#[test]
+fn the_trajectory_is_judged_every_kth_batch_and_after_the_last() {
+    // A random loop over many cells with a budget of 51, the smallest with
+    // k = 2. How many batches fit is fixed by the seed (a reused control makes
+    // a batch cost 1), so the count is pinned, and the pattern checked against
+    // `judged`.
     let text = TWO
         .replace(
             "tool_order_stable = { kind = \"bool\" }",
@@ -864,22 +885,19 @@ fn the_trajectory_is_judged_every_kth_batch_and_after_the_last() {
         .replace("search = \"grid\"", "search = \"random\"");
     let dir = dir_with(&text);
     let d = dir.path();
-    let c = run_loop(d, args(59), &mut Exec::new(d)).unwrap();
+    let c = run_loop(d, args(51), &mut Exec::new(d)).unwrap();
     assert_eq!(c.stop, Stop::Budget);
     let r = report(&c);
     let batches = r["batches"].as_array().unwrap();
-    let last = batches.len();
-    assert!(
-        last > 2 && last % 2 == 1,
-        "{last} batches: an odd count tests the last"
-    );
+    let count = batches.len();
+    assert_eq!(count, KNOWN_BATCHES, "the seed's batch count");
     for (i, b) in batches.iter().enumerate() {
-        let judged = (i + 1) % 2 == 0 || i + 1 == last;
+        let judged = loop_run::judged(i + 1, count, 2);
         assert_eq!(!b["verdict"].is_null(), judged, "batch {}", i + 1);
         assert_eq!(!b["reasons"].is_null(), judged, "batch {}", i + 1);
     }
     assert_eq!(
-        batches[last - 1]["verdict"],
+        batches[count - 1]["verdict"],
         r["verdict"],
         "the last is the final verdict"
     );
@@ -894,3 +912,5 @@ fn the_trajectory_is_judged_every_kth_batch_and_after_the_last() {
             .identical()
     );
 }
+
+const KNOWN_BATCHES: usize = 25;
