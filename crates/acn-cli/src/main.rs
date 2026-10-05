@@ -406,7 +406,7 @@ fn harness_run(a: &HarnessRun) -> Value {
 fn hyp_structure(h: &acn_hyp::Hypothesis) -> Value {
     use acn_hyp::file::{Control, Domain, Tolerance};
     let params: serde_json::Map<String, Value> = h
-        .params
+        .params()
         .values()
         .map(|p| {
             let domain = match &p.domain {
@@ -431,14 +431,14 @@ fn hyp_structure(h: &acn_hyp::Hypothesis) -> Value {
             .map(|q| json!({ "name": q, "unit": unit(q) }))
             .collect()
     };
-    let control = match &h.control {
+    let control = match &h.control() {
         Control::Config(c) => json!({
             "config": c.iter().map(|(k, v)| (k.clone(), json!(v.to_string()))).collect::<serde_json::Map<_, _>>()
         }),
         Control::Workload { mode, inherits } => json!({ "workload": mode, "inherits": inherits }),
         Control::Missing => Value::Null,
     };
-    let d = &h.design;
+    let d = &h.design();
     let tolerance: serde_json::Map<String, Value> = d
         .sim_live_tolerance
         .iter()
@@ -452,7 +452,7 @@ fn hyp_structure(h: &acn_hyp::Hypothesis) -> Value {
         .collect();
     json!({
         "params": params,
-        "measures": { "primary": measures(&h.primary), "secondary": measures(&h.secondary) },
+        "measures": { "primary": measures(h.primary()), "secondary": measures(h.secondary()) },
         "control": control,
         "design": {
             "search": d.search, "replicates": d.replicates, "twin_required": d.twin_required,
@@ -460,7 +460,7 @@ fn hyp_structure(h: &acn_hyp::Hypothesis) -> Value {
             "min_providers_for_verdict": d.min_providers_for_verdict,
             "sim_live_tolerance": tolerance, "pinned": d.pins.is_some(),
         },
-        "expected": h.expected_outcome,
+        "expected": h.expected_outcome(),
     })
 }
 
@@ -497,9 +497,10 @@ fn hyp_verdict(file: &std::path::Path, dirs: &[PathBuf], runs_dir: &std::path::P
             .iter()
             .map(|d| acn_hyp::read::read(d))
             .collect::<Result<Vec<_>, _>>()?;
-        let v = acn_hyp::verdict::verdict(&h, bundles, build_info::engine_hash()?)?;
+        // HYP-4: judged, then the file re-read before the write.
+        let (v, path) =
+            acn_hyp::verdict::judge_and_write(&h, bundles, build_info::engine_hash()?, runs_dir)?;
         let object: Value = serde_json::from_str(&v.text())?;
-        let path = acn_hyp::verdict::write(runs_dir, &v)?;
         Ok(json!({
             "ok": true,
             "verdict_id": v.verdict_id.to_hex(),
@@ -637,4 +638,46 @@ fn main() {
             .is_ok()
     };
     std::process::exit(if ok && written { 0 } else { 1 });
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // CON-19: tests are exempt
+    use super::Cli;
+    use clap::CommandFactory as _;
+
+    /// Every argument of a subcommand, hidden or not: its id and its long and
+    /// short names. (clap's `env` feature is off, so none reads the environment.)
+    fn args(cmd: &clap::Command) -> Vec<String> {
+        let mut v: Vec<String> = cmd
+            .get_arguments()
+            .filter(|a| a.get_id() != "help")
+            .map(|a| {
+                format!(
+                    "{}|{}|{}",
+                    a.get_id(),
+                    a.get_long().unwrap_or(""),
+                    a.get_short().map(String::from).unwrap_or_default(),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Cites: HYP-25
+    #[test]
+    fn acn_hyp_offers_no_option_to_relax_a_hypothesis() {
+        let cli = Cli::command();
+        let hyp = cli.find_subcommand("hyp").unwrap();
+        let subs: Vec<&str> = hyp.get_subcommands().map(clap::Command::get_name).collect();
+        assert_eq!(subs, ["lint", "verdict"], "hidden subcommands included");
+        assert_eq!(args(hyp), Vec::<String>::new());
+        assert_eq!(args(hyp.find_subcommand("lint").unwrap()), ["file||"]);
+        assert_eq!(
+            args(hyp.find_subcommand("verdict").unwrap()),
+            ["bundles||", "hypothesis|hypothesis|", "runs_dir|runs-dir|"],
+            "the file, the bundles and where the verdict goes: nothing that changes it"
+        );
+    }
 }

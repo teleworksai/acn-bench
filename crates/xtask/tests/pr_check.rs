@@ -53,12 +53,14 @@ fn write(root: &Path, rel: &str, body: &str) {
     fs::write(p, body).expect("write");
 }
 
+/// The labels the violations ask for. Content rules (HYP-26) ask for none, so
+/// they are not counted here; the `hyp26_*` tests below check them directly.
 fn rules(v: &serde_json::Value) -> Vec<String> {
     v["violations"]
         .as_array()
         .expect("violations")
         .iter()
-        .map(|x| x["label"].as_str().expect("label").to_owned())
+        .filter_map(|x| x["label"].as_str().map(str::to_owned))
         .collect()
 }
 

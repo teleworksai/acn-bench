@@ -258,7 +258,7 @@ fn replicates_beyond_the_design_are_ignored_and_listed() {
     assert_ne!(v.verdict_id, plain.verdict_id);
 }
 
-/// Cites: HYP-20, HYP-6, HYP-9
+/// Cites: HYP-20, HYP-6, HYP-9, HYP-23
 #[test]
 fn every_refusal_of_hyp_20() {
     let h = load(BASE);
@@ -321,15 +321,52 @@ fn every_refusal_of_hyp_20() {
     let mut b = set(&h, &big);
     b.push(b[0].clone());
     assert!(refused(&h, b).contains("given twice"));
-    // Mock and real backends.
-    let b = with(&|s| {
-        if s.name == "c-fast" {
-            s.backend("openai", "gpt")
-        } else {
-            s
-        }
-    });
-    assert!(refused(&h, b).contains("mixes mockllm and real"));
+    // Mock and real backends, in a file that names both.
+    let both = load(&BASE.replace(
+        "twin_required = false",
+        "twin_required = false\nbackends = [\"mockllm\", \"real-api\"]",
+    ));
+    let b = slice_set(
+        &both,
+        4,
+        &[],
+        "",
+        &|s| {
+            if s.name == "c-fast" {
+                s.backend("openai", "gpt")
+            } else {
+                s
+            }
+        },
+        &big,
+    );
+    assert!(refused(&both, b).contains("mixes mockllm and real"));
+    // A real-provider bundle against a file that names no `real-api` (none
+    // named means the mock only), so leaving `backends` out cannot escape the
+    // pins of HYP-26 or the `unpinned-inputs` label of HYP-23.
+    let real = slice_set(&h, 4, &[], "", &|s| s.backend("openai", "gpt"), &big);
+    assert!(refused(&h, real).contains("does not name"));
+    let mock_only = load(&BASE.replace(
+        "twin_required = false",
+        "twin_required = false\nbackends = [\"mockllm\"]",
+    ));
+    let real = slice_set(
+        &mock_only,
+        4,
+        &[],
+        "",
+        &|s| s.backend("openai", "gpt"),
+        &big,
+    );
+    assert!(refused(&mock_only, real).contains("does not name"));
+    let real_only = load(&BASE.replace(
+        "twin_required = false",
+        "twin_required = false\nbackends = [\"real-api\"]",
+    ));
+    assert!(
+        refused(&real_only, set(&real_only, &big)).contains("does not name"),
+        "a mock bundle too"
+    );
     // A treatment and its control on different scenarios, or workloads.
     let b = with(&|mut s| {
         if s.name == "c-slow" {

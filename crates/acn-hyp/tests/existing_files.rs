@@ -31,7 +31,7 @@ fn fixture(name: &str, pinned: &str) -> PathBuf {
 #[test]
 fn p4_loads_unedited_with_its_predicate_and_guard() {
     let h = acn_hyp::load(&fixture("p4.toml", P4_BLAKE3)).unwrap();
-    assert_eq!(h.id, "p4");
+    assert_eq!(h.id(), "p4");
     assert_eq!(
         h.status(),
         Status::Candidate,
@@ -46,14 +46,14 @@ fn p4_loads_unedited_with_its_predicate_and_guard() {
         h.guard().unwrap().to_string(),
         "((replicates < 20) or (providers_reported < 2))"
     );
-    assert!(!h.params["provider"].pooled);
-    assert_eq!(h.design.min_providers_for_verdict, Some(2));
+    assert!(!h.params()["provider"].pooled);
+    assert_eq!(h.design().min_providers_for_verdict, Some(2));
     assert!(
-        h.design.pins.is_none(),
+        h.design().pins.is_none(),
         "unpinned: its verdicts are labelled until pins are added (HYP-23)"
     );
-    assert!(matches!(h.control, Control::Config(ref c) if c.len() == 6));
-    assert!(h.warnings.is_empty(), "{:?}", h.warnings);
+    assert!(matches!(h.control(), Control::Config(c) if c.len() == 6));
+    assert!(h.warnings().is_empty(), "{:?}", h.warnings());
 
     // From its real path it is frozen, recorded in env-hash.json.
     let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../hypotheses/p4.toml");
@@ -66,7 +66,7 @@ fn p4_loads_unedited_with_its_predicate_and_guard() {
 #[test]
 fn p17_loads_unedited_with_its_two_selects_and_at_clause() {
     let h = acn_hyp::load(&fixture("p17-a2a.toml", P17_BLAKE3)).unwrap();
-    assert_eq!(h.id, "p17", "the `<id>-<slug>` stem rule");
+    assert_eq!(h.id(), "p17", "the `<id>-<slug>` stem rule");
     assert_eq!(h.status(), Status::Candidate);
     assert_eq!(
         h.predicate().to_string(),
@@ -75,16 +75,16 @@ fn p17_loads_unedited_with_its_two_selects_and_at_clause() {
     );
     assert_eq!(h.param_of_value("a2a").unwrap().name, "protocol");
     assert!(matches!(
-        h.params["rtt_ms"].domain,
+        h.params()["rtt_ms"].domain,
         Domain::Range { levels: None, .. }
     ));
     // The candidate allowances of HYP-7, HYP-8 and HYP-9.
-    assert!(matches!(h.control, Control::Missing));
+    assert!(matches!(h.control(), Control::Missing));
     assert!(
-        h.warnings
+        h.warnings()
             .iter()
             .any(|w| w.contains("network_attributable_share"))
     );
-    assert_eq!(h.design.search, "bisect");
-    assert_eq!(h.design.replicates, 10);
+    assert_eq!(h.design().search, "bisect");
+    assert_eq!(h.design().replicates, 10);
 }

@@ -1265,3 +1265,173 @@ fn the_docs_install_the_cargo_deny_version_that_ci_pins() {
         assert!(readme.contains(c), "README layout omits {c}");
     }
 }
+
+/// HYP-4: CI jobs hold no write access to the repository. Every workflow sets a
+/// top-level `permissions` mapping with `contents: read`, and every permission
+/// granted, at the top level or by a job, is `read` or `none`.
+fn read_only_permissions(p: &Yaml, what: &str) {
+    let Yaml::Hash(h) = p else {
+        panic!("{what}: permissions must be a mapping of scopes, not {p:?}");
+    };
+    for (scope, level) in h {
+        let level = level.as_str().unwrap_or_default();
+        assert!(
+            level == "read" || level == "none",
+            "{what}: `{}: {level}` grants write access",
+            scope.as_str().unwrap_or_default()
+        );
+    }
+}
+
+/// Cites: HYP-4
+#[test]
+fn ci_jobs_hold_no_write_access_to_the_repository() {
+    for rel in [".github/workflows/ci.yml", ".github/workflows/pr-check.yml"] {
+        let w = workflow(rel);
+        let top = &w["permissions"];
+        read_only_permissions(top, rel);
+        assert_eq!(top["contents"].as_str(), Some("read"), "{rel}");
+        for (name, job) in w["jobs"].as_hash().expect("jobs") {
+            if !job["permissions"].is_badvalue() {
+                read_only_permissions(&job["permissions"], &format!("{rel} job {name:?}"));
+            }
+        }
+    }
+    // The checker itself refuses what it must refuse.
+    let bad = parse_yaml("permissions:\n  contents: write\n", "bad");
+    assert!(
+        std::panic::catch_unwind(|| read_only_permissions(&bad["permissions"], "bad")).is_err()
+    );
+    let all = parse_yaml("permissions: write-all\n", "all");
+    assert!(
+        std::panic::catch_unwind(|| read_only_permissions(&all["permissions"], "all")).is_err()
+    );
+}
+
+/// Calls that create, change or remove a file, matched on the last segments of
+/// a path (`fs::write`, `std::fs::write`, an imported `write` from `std::fs`)
+/// or on a type that writes (`OpenOptions`, `File::create`).
+const WRITERS: &[&[&str]] = &[
+    &["fs", "write"],
+    &["fs", "copy"],
+    &["fs", "create_dir"],
+    &["fs", "create_dir_all"],
+    &["fs", "remove_file"],
+    &["fs", "remove_dir"],
+    &["fs", "remove_dir_all"],
+    &["fs", "rename"],
+    &["fs", "hard_link"],
+    &["fs", "soft_link"],
+    &["fs", "set_permissions"],
+    &["File", "create"],
+    &["File", "create_new"],
+    &["File", "options"],
+    &["OpenOptions"],
+    &["symlink"],
+    &["Command"],
+];
+
+/// Every use of a writer in a file, by the function it sits in.
+struct WriterUses {
+    fns: Vec<String>,
+    found: Vec<(String, String)>,
+}
+
+impl<'a> syn::visit::Visit<'a> for WriterUses {
+    fn visit_item_fn(&mut self, f: &'a syn::ItemFn) {
+        self.fns.push(f.sig.ident.to_string());
+        syn::visit::visit_item_fn(self, f);
+        self.fns.pop();
+    }
+    fn visit_impl_item_fn(&mut self, f: &'a syn::ImplItemFn) {
+        self.fns.push(f.sig.ident.to_string());
+        syn::visit::visit_impl_item_fn(self, f);
+        self.fns.pop();
+    }
+    fn visit_path(&mut self, p: &'a syn::Path) {
+        let segs: Vec<String> = p.segments.iter().map(|s| s.ident.to_string()).collect();
+        for w in WRITERS {
+            let hit = segs
+                .windows(w.len())
+                .any(|win| win.iter().zip(w.iter()).all(|(a, b)| a == b));
+            if hit {
+                let at = self.fns.last().cloned().unwrap_or_else(|| "<item>".into());
+                self.found.push((at, segs.join("::")));
+            }
+        }
+        syn::visit::visit_path(self, p);
+    }
+    fn visit_use_tree(&mut self, t: &'a syn::UseTree) {
+        // `use std::fs::{self, write}` brings a writer in under its bare name.
+        if let syn::UseTree::Path(p) = t
+            && p.ident == "fs"
+        {
+            let mut names = Vec::new();
+            collect_use_names(&p.tree, &mut names);
+            for n in names {
+                if WRITERS
+                    .iter()
+                    .any(|w| w.len() == 2 && w[0] == "fs" && w[1] == n)
+                {
+                    self.found.push(("<use>".into(), format!("fs::{n}")));
+                }
+            }
+        }
+        syn::visit::visit_use_tree(self, t);
+    }
+}
+
+fn collect_use_names(t: &syn::UseTree, out: &mut Vec<String>) {
+    match t {
+        syn::UseTree::Name(n) => out.push(n.ident.to_string()),
+        syn::UseTree::Rename(r) => out.push(r.ident.to_string()),
+        syn::UseTree::Group(g) => g.items.iter().for_each(|i| collect_use_names(i, out)),
+        syn::UseTree::Path(p) => collect_use_names(&p.tree, out),
+        syn::UseTree::Glob(_) => out.push("*".into()),
+    }
+}
+
+/// Cites: HYP-4
+#[test]
+fn acn_hyp_writes_files_only_in_verdict_write() {
+    let src = repo_root().join("crates/acn-hyp/src");
+    let mut found = Vec::new();
+    for e in fs::read_dir(&src).expect("src") {
+        let p = e.expect("entry").path();
+        let file = syn::parse_file(&fs::read_to_string(&p).expect("read")).expect("parse");
+        let mut v = WriterUses {
+            fns: Vec::new(),
+            found: Vec::new(),
+        };
+        syn::visit::Visit::visit_file(&mut v, &file);
+        let name = p.file_name().expect("name").to_string_lossy().into_owned();
+        found.extend(v.found.into_iter().map(|(f, w)| format!("{name}:{f}:{w}")));
+    }
+    found.sort();
+    found.dedup();
+    let outside: Vec<&String> = found
+        .iter()
+        .filter(|f| !f.starts_with("verdict.rs:write:"))
+        .collect();
+    assert!(
+        outside.is_empty(),
+        "only verdict::write may write a file (HYP-4): {outside:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|f| f.starts_with("verdict.rs:write:std::fs::create_dir")),
+        "{found:?}"
+    );
+    // The scan sees through the usual disguises.
+    let probe = syn::parse_file(
+        "use std::fs::{self, write as w}; fn f() { let _ = std::fs::copy(a, b); std::fs::File::options(); }",
+    )
+    .expect("probe");
+    let mut v = WriterUses {
+        fns: Vec::new(),
+        found: Vec::new(),
+    };
+    syn::visit::Visit::visit_file(&mut v, &probe);
+    assert_eq!(v.found.len(), 3, "{:?}", v.found);
+}

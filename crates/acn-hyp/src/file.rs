@@ -261,36 +261,159 @@ pub enum Control {
     Missing,
 }
 
-/// A loaded, checked hypothesis file. Only [`load`] and [`load_in`] make one:
-/// its status, hash and checked predicates are private, so no caller can mark a
-/// file frozen or swap a predicate after the checks (CON-7, HYP-3).
+/// A loaded, checked hypothesis file. Only [`load`] and [`load_in`] make one,
+/// and every field is private to this crate: outside it a hypothesis is read
+/// through its accessors and cannot be changed, so nothing can mark a file
+/// frozen, swap a predicate, or edit the design a verdict reads after the checks
+/// and away from the hashed bytes (CON-7, HYP-3, HYP-25).
 #[derive(Debug, Clone)]
 pub struct Hypothesis {
-    pub path: PathBuf,
+    pub(crate) path: PathBuf,
     hash: Digest,
     status: Status,
-    pub id: String,
-    pub title: String,
-    pub spec: Option<String>,
-    pub report_refs: Vec<String>,
-    pub supersedes: Option<String>,
-    pub statement: String,
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) spec: Option<String>,
+    pub(crate) report_refs: Vec<String>,
+    pub(crate) supersedes: Option<String>,
+    pub(crate) statement: String,
     /// By name.
-    pub params: BTreeMap<String, Param>,
-    pub primary: Vec<String>,
-    pub secondary: Vec<String>,
-    pub control_description: String,
-    pub control: Control,
-    pub design: Design,
+    pub(crate) params: BTreeMap<String, Param>,
+    pub(crate) primary: Vec<String>,
+    pub(crate) secondary: Vec<String>,
+    pub(crate) control_description: String,
+    pub(crate) control: Control,
+    pub(crate) design: Design,
     predicate: Expr,
     guard: Option<Expr>,
-    pub expected_outcome: String,
-    pub expected_note: Option<String>,
+    pub(crate) expected_outcome: String,
+    pub(crate) expected_note: Option<String>,
     /// What lint and load report without failing (HYP-7, HYP-8).
-    pub warnings: Vec<String>,
+    pub(crate) warnings: Vec<String>,
+}
+
+/// The code a loop or a verdict aborts with when a hypothesis file changed
+/// under it (HYP-4, LOOP-13).
+pub const HYPOTHESIS_CHANGED: &str = "hypothesis_changed";
+
+/// A hypothesis file whose bytes are no longer those it was loaded from (HYP-4).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{HYPOTHESIS_CHANGED}: {}: {reason}; it was loaded with hash {} (HYP-4)", path.display(), was.to_hex())]
+pub struct HypothesisChanged {
+    pub path: PathBuf,
+    /// The hash it was loaded with.
+    pub was: Digest,
+    /// Its hash now, if it can still be read.
+    pub now: Option<Digest>,
+    pub reason: String,
 }
 
 impl Hypothesis {
+    /// HYP-4: read the file again, read-only, and fail with [`HypothesisChanged`]
+    /// if its bytes no longer have the hash it was loaded with, or it cannot be
+    /// read. A loop calls this before every step it takes on the file's behalf
+    /// (LOOP-13); [`crate::verdict::judge_and_write`] calls it before it writes.
+    pub fn check_unchanged(&self) -> Result<(), HypothesisChanged> {
+        let changed = |now: Option<Digest>, reason: String| HypothesisChanged {
+            path: self.path.clone(),
+            was: self.hash,
+            now,
+            reason,
+        };
+        match std::fs::read(&self.path).map(|b| Digest::of(&b)) {
+            Ok(d) if d == self.hash => Ok(()),
+            Ok(d) => Err(changed(Some(d), "its bytes changed".into())),
+            Err(e) => Err(changed(None, format!("it can no longer be read: {e}"))),
+        }
+    }
+
+    /// The file, canonical.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// `[poc].id`.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// `[poc].spec`.
+    #[must_use]
+    pub fn spec(&self) -> Option<&str> {
+        self.spec.as_deref()
+    }
+
+    #[must_use]
+    pub fn report_refs(&self) -> &[String] {
+        &self.report_refs
+    }
+
+    #[must_use]
+    pub fn supersedes(&self) -> Option<&str> {
+        self.supersedes.as_deref()
+    }
+
+    /// `[hypothesis].statement`.
+    #[must_use]
+    pub fn statement(&self) -> &str {
+        &self.statement
+    }
+
+    /// The `[varies]` parameters, by name.
+    #[must_use]
+    pub fn params(&self) -> &BTreeMap<String, Param> {
+        &self.params
+    }
+
+    #[must_use]
+    pub fn primary(&self) -> &[String] {
+        &self.primary
+    }
+
+    #[must_use]
+    pub fn secondary(&self) -> &[String] {
+        &self.secondary
+    }
+
+    #[must_use]
+    pub fn control_description(&self) -> &str {
+        &self.control_description
+    }
+
+    #[must_use]
+    pub fn control(&self) -> &Control {
+        &self.control
+    }
+
+    #[must_use]
+    pub fn design(&self) -> &Design {
+        &self.design
+    }
+
+    /// `[expected].outcome`.
+    #[must_use]
+    pub fn expected_outcome(&self) -> &str {
+        &self.expected_outcome
+    }
+
+    #[must_use]
+    pub fn expected_note(&self) -> Option<&str> {
+        self.expected_note.as_deref()
+    }
+
+    /// What load reports without failing (HYP-7, HYP-8).
+    #[must_use]
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
     /// BLAKE3 of the file's bytes (HYP-5).
     #[must_use]
     pub fn hash(&self) -> Digest {
@@ -426,6 +549,15 @@ pub fn load(path: &Path) -> Result<Hypothesis, HypError> {
 /// [`load`], with the workspace root found from `start` instead of the current
 /// directory.
 pub fn load_in(path: &Path, start: &Path) -> Result<Hypothesis, HypError> {
+    // HYP-1: a hypothesis file is TOML, named `<stem>.toml`; anything else under
+    // `hypotheses/` would otherwise be recorded and loaded as frozen unchecked.
+    if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+        return Err(HypError::new(
+            path,
+            None,
+            "a hypothesis file is named `<id>.toml` or `<id>-<slug>.toml` (HYP-1, HYP-2)".into(),
+        ));
+    }
     let bytes = std::fs::read(path).map_err(io(path))?;
     let loc = locate(path, &Digest::of(&bytes), start)?;
     parse(&bytes, &loc)

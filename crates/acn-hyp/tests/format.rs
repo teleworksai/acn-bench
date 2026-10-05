@@ -14,7 +14,7 @@ use common::{BASE, candidate, err, frozen, frozen_text, load_at, root, with_pred
 #[test]
 fn every_table_rejects_unknown_keys_and_names_the_key_path() {
     let (h, _d) = candidate(BASE, "t1");
-    assert_eq!(h.unwrap().id, "t1");
+    assert_eq!(h.unwrap().id(), "t1");
     let add = |after: &str, line: &str| BASE.replace(after, &format!("{after}\n{line}"));
     for (bad, key) in [
         (add("title = \"a test\"", "x = 1"), "poc.x"),
@@ -138,7 +138,7 @@ fn status_is_decided_by_location_and_by_a_record_that_matches() {
     let copy = load_at(dir.path(), "hypotheses/t1-old.toml").unwrap();
     assert_eq!(copy.status(), Status::Candidate);
     assert!(
-        copy.warnings
+        copy.warnings()
             .iter()
             .any(|w| w.contains("does not match the frozen set"))
     );
@@ -240,7 +240,7 @@ fn domains_are_declared_finite_unique_and_unreserved() {
         "r = { kind = \"range\", min = 0, max = 2.5, levels = [0, 1.5] }",
     )));
     assert_eq!(
-        h.params["r"].domain,
+        h.params()["r"].domain,
         Domain::Range {
             min: 0.0,
             max: 2.5,
@@ -252,7 +252,7 @@ fn domains_are_declared_finite_unique_and_unreserved() {
         "r = { kind = \"int_range\", min = 9007199254740993, max = 9007199254740995, levels = [9007199254740993] }",
     ));
     assert_eq!(
-        h.params["r"].domain,
+        h.params()["r"].domain,
         Domain::IntRange {
             min: 9007199254740993,
             max: 9007199254740995,
@@ -345,14 +345,14 @@ fn pooled_false_takes_effect_and_needs_a_finite_set_of_values() {
     let h = candidate(&varies("r = { kind = \"bool\", pooled = false }"), "t1")
         .0
         .unwrap();
-    assert!(!h.params["r"].pooled);
-    assert!(h.params["knob"].pooled);
+    assert!(!h.params()["r"].pooled);
+    assert!(h.params()["knob"].pooled);
     for line in [
         "r = { kind = \"range\", min = 0, max = 4, levels = [1, 2], pooled = false }",
         "r = { kind = \"int_range\", min = 0, max = 4, levels = [1, 2], pooled = false }",
     ] {
         assert!(
-            !candidate(&varies(line), "t1").0.unwrap().params["r"].pooled,
+            !candidate(&varies(line), "t1").0.unwrap().params()["r"].pooled,
             "{line}"
         );
     }
@@ -371,7 +371,7 @@ fn pooled_false_takes_effect_and_needs_a_finite_set_of_values() {
     )
     .0
     .unwrap();
-    assert!(!h.params["provider"].pooled);
+    assert!(!h.params()["provider"].pooled);
     let e = err(candidate(
         &random(varies("provider = { kind = \"range\", min = 0, max = 1 }")),
         "t1",
@@ -408,7 +408,7 @@ fn every_measured_quantity_resolves_in_a_frozen_file_and_warns_in_a_candidate() 
     );
     let h = candidate(&unknown, "t1").0.unwrap();
     assert!(
-        h.warnings
+        h.warnings()
             .iter()
             .any(|w| w.contains("`widgets` is not in the quantity table"))
     );
@@ -430,13 +430,13 @@ fn every_measured_quantity_resolves_in_a_frozen_file_and_warns_in_a_candidate() 
 #[test]
 fn a_control_is_a_nonempty_config_within_domains_or_a_workload() {
     let h = candidate(BASE, "t1").0.unwrap();
-    assert!(matches!(&h.control, Control::Config(c) if c.len() == 1));
+    assert!(matches!(&h.control(), Control::Config(c) if c.len() == 1));
     let wl = BASE.replace(
         "config = { knob = false }",
         "workload = \"plain_rpc\"\ninherits = [\"mode\"]",
     );
     assert!(matches!(
-        candidate(&wl, "t1").0.unwrap().control,
+        candidate(&wl, "t1").0.unwrap().control(),
         Control::Workload { .. }
     ));
     for (bad, needle) in [
@@ -485,7 +485,7 @@ fn a_control_is_a_nonempty_config_within_domains_or_a_workload() {
         candidate(&none, "t1")
             .0
             .unwrap()
-            .warnings
+            .warnings()
             .iter()
             .any(|w| w.contains("no control"))
     );
@@ -502,7 +502,7 @@ fn the_design_rules_hold_and_a_frozen_file_is_stricter() {
             &format!("twin_required = false\n{line}"),
         )
     };
-    assert_eq!(candidate(BASE, "t1").0.unwrap().design.replicates, 4);
+    assert_eq!(candidate(BASE, "t1").0.unwrap().design().replicates, 4);
     for (bad, needle) in [
         (d("search = \"grid\"", "search = \"anneal\""), "is not grid"),
         (d("replicates = 4", "replicates = 5"), "even integer"),
@@ -557,11 +557,11 @@ fn the_design_rules_hold_and_a_frozen_file_is_stricter() {
     );
     let h = candidate(&twin, "t1").0.unwrap();
     assert_eq!(
-        h.design.sim_live_tolerance["ttft_p50_ms"],
+        h.design().sim_live_tolerance["ttft_p50_ms"],
         Tolerance::Absolute(3.0)
     );
     assert_eq!(
-        candidate(&t("seed = 9"), "t1").0.unwrap().design.seed,
+        candidate(&t("seed = 9"), "t1").0.unwrap().design().seed,
         Some(9)
     );
     // Frozen: grid, at least 20 replicates, no seed of its own.
@@ -594,7 +594,7 @@ fn the_design_rules_hold_and_a_frozen_file_is_stricter() {
         candidate(&mp(2), "t1")
             .0
             .unwrap()
-            .design
+            .design()
             .min_providers_for_verdict,
         Some(2)
     );
@@ -615,8 +615,9 @@ fn the_design_rules_hold_and_a_frozen_file_is_stricter() {
         candidate(&pins, "t1")
             .0
             .unwrap()
-            .design
+            .design()
             .pins
+            .clone()
             .unwrap()
             .models["a"],
         "m-1"
