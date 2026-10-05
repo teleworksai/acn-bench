@@ -54,3 +54,7 @@ path = "evidence_chain.rs"
 [[test]]
 name = "p4"
 path = "p4.rs"
+
+[[test]]
+name = "gates"
+path = "gates.rs"
