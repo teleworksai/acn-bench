@@ -311,7 +311,7 @@ pub fn verdict_id(hypothesis_hash: &Digest, bundles: &[(Digest, Digest)]) -> Res
 
 /// Every value a finite parameter takes, in declaration order; load guarantees
 /// that every non-pooled parameter, and every parameter of a grid, has one.
-fn values_of(name: &str, d: &Domain) -> Result<Vec<Value>> {
+pub(crate) fn values_of(name: &str, d: &Domain) -> Result<Vec<Value>> {
     let v = match d {
         Domain::Bool => Some(vec![Value::Bool(false), Value::Bool(true)]),
         Domain::Enum(v) => Some(v.iter().map(|s| Value::Enum(s.clone())).collect()),
@@ -357,7 +357,7 @@ fn lit_value(d: &Domain, l: &Lit) -> Option<Value> {
 }
 
 /// Every assignment of `params`' values, in order.
-fn product(params: &[(String, Vec<Value>)]) -> Vec<Cell> {
+pub(crate) fn product(params: &[(String, Vec<Value>)]) -> Vec<Cell> {
     let mut out = vec![Cell::new()];
     for (name, vals) in params {
         let mut next = Vec::with_capacity(out.len() * vals.len());
@@ -619,7 +619,7 @@ fn check_set(infos: &[Info<'_>]) -> Result<SetInfo> {
 
 // ---- the control's configuration (HYP-8) ----------------------------------
 
-struct Controls<'h> {
+pub(crate) struct Controls<'h> {
     h: &'h Hypothesis,
     kind: ControlKind,
     /// A workload control's inherited parameters, with the non-pooled ones.
@@ -627,7 +627,7 @@ struct Controls<'h> {
 }
 
 impl<'h> Controls<'h> {
-    fn new(h: &'h Hypothesis, non_pooled: &BTreeSet<String>) -> Self {
+    pub(crate) fn new(h: &'h Hypothesis, non_pooled: &BTreeSet<String>) -> Self {
         let (kind, mut keyed_by) = match &h.control {
             Control::Workload { inherits, .. } => (
                 ControlKind::Workload,
@@ -650,7 +650,7 @@ impl<'h> Controls<'h> {
 
     /// The configuration of the control a treatment cell maps to; `None` when
     /// the file has no control.
-    fn of_treatment(&self, c: &Cell) -> Option<Cell> {
+    pub(crate) fn of_treatment(&self, c: &Cell) -> Option<Cell> {
         match &self.h.control {
             Control::Config(cfg) => {
                 let mut e = c.clone();
@@ -1454,7 +1454,7 @@ pub fn verdict(
 
 // ---- verdict.json (HYP-15, HYP-28) -------------------------------------------
 
-fn reasons_json(r: &[Reason]) -> J {
+pub(crate) fn reasons_json(r: &[Reason]) -> J {
     J::Arr(
         r.iter()
             .map(|r| {
@@ -1472,7 +1472,7 @@ fn labels_json(l: &BTreeSet<Label>) -> J {
     J::Arr(names.into_iter().map(J::str).collect())
 }
 
-fn cell_json(c: &Cell) -> J {
+pub(crate) fn cell_json(c: &Cell) -> J {
     J::obj(c.iter().map(|(k, v)| (k.clone(), J::str(v.text()))))
 }
 
@@ -1761,7 +1761,7 @@ pub fn judge_and_write(
 /// directory (never a symbolic link), and, when a workspace root (CON-28) holds
 /// it, is that root's own `runs/`: so neither `hypotheses/runs` nor any other
 /// directory named `runs` inside a workspace receives a verdict.
-fn check_runs_dir(runs_dir: &Path) -> Result<()> {
+pub(crate) fn check_runs_dir(runs_dir: &Path) -> Result<()> {
     let refuse_it = |why: &str| {
         refuse(format!(
             "{} is not a `runs` directory verdicts may be written to: {why} (HYP-4)",

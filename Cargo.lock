@@ -82,6 +82,8 @@ dependencies = [
 name = "acn-hyp"
 version = "0.1.0"
 dependencies = [
+ "acn-harness",
+ "acn-mockllm",
  "acn-trace",
  "arrow-array",
  "blake3",

@@ -43,6 +43,9 @@ T05b loop runner     → SPEC 085 (LOOP): `acn loop run` (L1: grid/bisect/random
                        (LOOP-1..4, LOOP-10, LOOP-11, LOOP-13..15; `bisect` deferred,
                        `--from-report` regeneration). `loop twin` and `loop promote`
                        land with T11b and T30 respectively. First use: POC 4 knob grid.
+                       Lands in two parts (ADR-23): T05b.1 `loop run`, `--from-report`,
+                       direction (LOOP-3, 10, 11, 13..15); T05b.2 `evidence verify`
+                       and the gates (LOOP-1, 2, 4).
 T06 POC 4 spec+suite → SPEC 100 (P4) *(to write)*: protocol, knob grid, replicate
                        count, control (default config), falsifier (effect < noise floor),
                        expected outcome, **per provider**. tests/accept/p4.rs on mockllm

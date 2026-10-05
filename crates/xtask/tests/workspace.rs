@@ -1391,9 +1391,9 @@ fn collect_use_names(t: &syn::UseTree, out: &mut Vec<String>) {
     }
 }
 
-/// Cites: HYP-4
+/// Cites: HYP-4, LOOP-3
 #[test]
-fn acn_hyp_writes_files_only_in_verdict_write() {
+fn acn_hyp_writes_files_only_in_verdict_write_and_loop_out() {
     let src = repo_root().join("crates/acn-hyp/src");
     let mut found = Vec::new();
     for e in fs::read_dir(&src).expect("src") {
@@ -1409,18 +1409,26 @@ fn acn_hyp_writes_files_only_in_verdict_write() {
     }
     found.sort();
     found.dedup();
+    // `verdict::write`, and the loop runner's own writer module (LOOP-11,
+    // LOOP-14), which checks `runs/` the same way.
     let outside: Vec<&String> = found
         .iter()
-        .filter(|f| !f.starts_with("verdict.rs:write:"))
+        .filter(|f| !f.starts_with("verdict.rs:write:") && !f.starts_with("loop_out.rs:"))
         .collect();
     assert!(
         outside.is_empty(),
-        "only verdict::write may write a file (HYP-4): {outside:?}"
+        "only verdict::write and loop_out may write a file (HYP-4): {outside:?}"
     );
     assert!(
         found
             .iter()
             .any(|f| f.starts_with("verdict.rs:write:std::fs::create_dir")),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|f| f.starts_with("loop_out.rs:write_new:std::fs::OpenOptions")),
         "{found:?}"
     );
     // The scan sees through the usual disguises.

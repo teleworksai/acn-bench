@@ -22,6 +22,7 @@ real-api = ["acn-harness/real-api"]
 [dependencies]
 acn-harness = { path = "../acn-harness" }
 acn-hyp = { path = "../acn-hyp" }
+acn-mockllm = { path = "../acn-mockllm" }
 acn-trace = { workspace = true, features = ["io"] }
 anyhow.workspace = true
 clap.workspace = true
@@ -39,5 +40,4 @@ toml.workspace = true
 
 [dev-dependencies]
 acn-emu = { path = "../acn-emu" }
-acn-mockllm = { path = "../acn-mockllm" }
 tempfile.workspace = true
