@@ -1,6 +1,6 @@
 # SPEC 100 — POC 4: harness cache discipline as a controlled variable
 
-**Status:** Draft v0.1 (October 2026). **Inherits:** SPEC 000, 010, 030, 040, 080, 085. **Prefix:** P4. **Hypothesis:** `hypotheses/p4.toml` (frozen). **Crates:** none of its own; it is run by `acn-harness` (SPEC 040), `acn-hyp` (SPEC 080, 085) and `acn-cli`, with its suite in `tests/accept/p4.rs`.
+**Status:** Draft v0.1 (October 2026; the P4-8(c) fixture is named for HYP-1 and the report's effects carry replicate counts, T06b). **Inherits:** SPEC 000, 010, 030, 040, 080, 085. **Prefix:** P4. **Hypothesis:** `hypotheses/p4.toml` (frozen). **Crates:** none of its own; it is run by `acn-harness` (SPEC 040), `acn-hyp` (SPEC 080, 085) and `acn-cli`, with its suite in `tests/accept/p4.rs`.
 **Purpose:** define the protocol that turns `hypotheses/p4.toml` into a verdict per provider:
 - the three workloads it varies over;
 - the providers, and what each runs on the mock;
@@ -74,7 +74,7 @@ Its loop report, its final verdict and the `acn evidence verify` result make up 
 **P4-8** `tests/accept/p4.rs` MUST run on the mock in CI and MUST check:
 - **(a)** Each P4 workload loads (HAR-60) and meets P4-2 and P4-3.
 - **(b)** Each of the six knobs changes the requests of at least one P4 workload on the `mockllm` backend, on one replicate per knob value.
-- **(c)** A reduced L1 loop over a checked-in candidate, `tests/accept/fixtures/p4-timestamp.toml`. The candidate:
+- **(c)** A reduced L1 loop over a checked-in candidate, `tests/accept/fixtures/p4t-timestamp.toml` (named `<id>-<slug>`, HYP-1). The candidate:
   - has id `p4t`;
   - varies `timestamp_in_system_prompt` and `provider` (`anthropic`, `openai`), with `[control].config = { timestamp_in_system_prompt = true }`;
   - otherwise takes `hypotheses/p4.toml`'s measures, replicates, guard and falsifier.

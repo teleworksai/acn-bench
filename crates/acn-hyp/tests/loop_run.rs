@@ -814,7 +814,8 @@ fn the_rendering_says_when_no_effect_is_defined() {
         "verdict": "inconclusive", "reasons": [{"reason": "guard", "refers": []}],
         "best": null, "worst": null,
         "control_effect": [{"slice": "provider=p1", "cell": "x=1", "quantity": "q",
-                            "effect": null, "ci_low": null, "ci_high": null}],
+                            "effect": null, "ci_low": null, "ci_high": null,
+                            "treatment_replicates": 4, "control_replicates": null}],
         "lab_note": {"question": "q?", "varied": {}, "next_layer": "L3",
                      "observed": {"verdict": "inconclusive", "reasons": ["guard"], "batches": 0,
                                   "bundles": 0, "stop": "budget"}},
@@ -823,7 +824,9 @@ fn the_rendering_says_when_no_effect_is_defined() {
     assert!(md.contains("- best: none (no defined effect)."), "{md}");
     assert!(md.contains("- worst: none (no defined effect)."), "{md}");
     assert!(
-        md.contains("| `provider=p1` | x=1 | q | undefined | [undefined, undefined] |"),
+        md.contains(
+            "| `provider=p1` | x=1 | q | undefined | [undefined, undefined] | 4 / undefined |"
+        ),
         "{md}"
     );
     assert!(md.contains("reasons: guard"), "{md}");

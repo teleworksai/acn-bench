@@ -1114,12 +1114,17 @@ fn effects(h: &Hypothesis, v: &Verdict) -> (J, J, J) {
     let mut all = Vec::new();
     for s in &v.slices {
         for (i, c) in s.data.cells().iter().enumerate() {
-            if c.treatment.is_none() {
+            let Some(treatment) = &c.treatment else {
                 continue;
-            }
+            };
             let Some(per_q) = s.effects.get(&i) else {
                 continue;
             };
+            // CON-18: the effect with its replicate counts, treatment and control.
+            let control = c
+                .control
+                .and_then(|k| s.data.controls().get(k))
+                .map(|k| k.arm.completed());
             for q in h.primary() {
                 let Some(e) = per_q.get(q) else {
                     continue;
@@ -1131,6 +1136,8 @@ fn effects(h: &Hypothesis, v: &Verdict) -> (J, J, J) {
                     ("effect", J::num(e.value)),
                     ("ci_low", J::num(e.interval.map(|x| x.0))),
                     ("ci_high", J::num(e.interval.map(|x| x.1))),
+                    ("treatment_replicates", J::count(treatment.completed())),
+                    ("control_replicates", control.map_or(J::Null, J::count)),
                 ]));
                 if *q != first {
                     continue;
@@ -1428,18 +1435,23 @@ pub fn markdown(report_json: &str) -> Result<String, LoopError> {
         );
     }
     let _ = writeln!(o, "\n## Control effect\n");
-    let _ = writeln!(o, "| slice | cell | quantity | effect | 95% interval |");
-    let _ = writeln!(o, "|---|---|---|---|---|");
+    let _ = writeln!(
+        o,
+        "| slice | cell | quantity | effect | 95% interval | replicates (treatment / control) |"
+    );
+    let _ = writeln!(o, "|---|---|---|---|---|---|");
     for e in r["control_effect"].as_array().into_iter().flatten() {
         let _ = writeln!(
             o,
-            "| {} | {} | {} | {} | [{}, {}] |",
+            "| {} | {} | {} | {} | [{}, {}] | {} / {} |",
             slice(&e["slice"]),
             s(&e["cell"]),
             s(&e["quantity"]),
             s(&e["effect"]),
             s(&e["ci_low"]),
-            s(&e["ci_high"])
+            s(&e["ci_high"]),
+            s(&e["treatment_replicates"]),
+            s(&e["control_replicates"])
         );
     }
     let n = &r["lab_note"];
