@@ -22,6 +22,10 @@ thiserror.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+# The loop tests run real bundles through the harness, as acn-cli's executor
+# does (LOOP-15); only the tests depend on the run path.
+acn-harness = { path = "../acn-harness" }
+acn-mockllm = { path = "../acn-mockllm" }
 blake3.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 pub mod bundles;
+pub mod exec;
 
 use acn_hyp::{HypError, Hypothesis};
 

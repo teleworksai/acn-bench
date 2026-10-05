@@ -26,3 +26,4 @@
 | [ADR-20](../decisions/ADR-20.md) | The readings T05.2b makes: from bundles to `verdict.json` | accepted (T05.2b, Class C) | HYP-6, HYP-8, HYP-11, HYP-12, HYP-15, HYP-20 to HYP-24, HYP-28; TRC-23, CON-8 |
 | [ADR-21](../decisions/ADR-21.md) | The readings T05.3 makes: read-only files, no relaxing, the freeze PR | accepted (T05.3, Class C) | HYP-1, HYP-4, HYP-9, HYP-23, HYP-25, HYP-26, HYP-27; CON-7, CON-17, LOOP-13 |
 | [ADR-22](../decisions/ADR-22.md) | SPEC 085 v0.2: the choices the review of the loop spec left open | accepted (T05b, `spec-change`; the maintainer delegated these choices) | LOOP-1, LOOP-2, LOOP-4, LOOP-10 to LOOP-15; HYP-8, HYP-9, HYP-20, HYP-22; CON-18, CON-31; HAR-10, HAR-50 |
+| [ADR-23](../decisions/ADR-23.md) | T05b.1: the L1 loop runner, and the readings SPEC 085 leaves open | accepted (T05b.1, Class C: `crates/acn-hyp`) | LOOP-1, LOOP-3, LOOP-10, LOOP-11, LOOP-13, LOOP-14, LOOP-15; HYP-4, HYP-9, HYP-20; CON-8, CON-27, CON-31 |

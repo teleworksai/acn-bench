@@ -1,10 +1,12 @@
 //! `acn` — the acn-bench command line (CON-8: one JSON object on stdout,
 //! logs on stderr, exit 0 iff `"ok": true`). Subcommands land with their specs:
 //! `version` (T01), `bundle verify` (TRC-23, T02b), `harness run` (HAR-50, T04),
-//! `hyp lint` (HYP-27, T05).
+//! `hyp lint` (HYP-27, T05), `hyp verdict` (HYP-20, T05.2b), `loop run` (LOOP-10,
+//! LOOP-14, T05b).
 #![forbid(unsafe_code)]
 
 mod build_info;
+mod loop_exec;
 
 use std::path::PathBuf;
 
@@ -45,6 +47,62 @@ enum Cmd {
         #[command(subcommand)]
         cmd: HypCmd,
     },
+    /// The layered feedback loop (SPEC 085).
+    Loop {
+        #[command(subcommand)]
+        cmd: LoopCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum LoopCmd {
+    /// Run L1 for a hypothesis in sim on the mock: batches of one cell, the
+    /// verdict after each, a final verdict and a loop report (LOOP-10, LOOP-11).
+    /// With --from-report, regenerate a report and compare it byte for byte
+    /// (LOOP-14).
+    Run(Box<LoopRun>),
+}
+
+#[derive(clap::Args)]
+struct LoopRun {
+    /// The hypothesis file; its `[design].search` is the strategy.
+    #[arg(
+        long,
+        required_unless_present = "from_report",
+        conflicts_with = "from_report"
+    )]
+    hypothesis: Option<PathBuf>,
+    /// The workload file, or `<value>=<file>` once per value when the file
+    /// varies `workload`.
+    #[arg(
+        long = "workload",
+        value_name = "FILE | VALUE=FILE",
+        conflicts_with = "from_report"
+    )]
+    workload: Vec<String>,
+    /// The mock profile (MLM-50), or `<value>=<profile>` once per value when the
+    /// file varies `provider`.
+    #[arg(
+        long = "model",
+        value_name = "PROFILE | VALUE=PROFILE",
+        conflicts_with = "from_report"
+    )]
+    model: Vec<String>,
+    /// How many bundles the loop may use, treatment and control alike.
+    #[arg(
+        long,
+        required_unless_present = "from_report",
+        conflicts_with = "from_report"
+    )]
+    budget: Option<u64>,
+    /// The `runs` directory: bundles, `verdicts/` and `loop/` go under it. This
+    /// path, the hypothesis, the workloads and --from-report resolve against
+    /// the workspace root (CON-28), or the current directory outside one.
+    #[arg(long, default_value = "runs", conflicts_with = "from_report")]
+    runs_dir: PathBuf,
+    /// A loop report, `runs/loop/<loop_id>/report.json`, to regenerate.
+    #[arg(long)]
+    from_report: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -511,6 +569,80 @@ fn hyp_verdict(file: &std::path::Path, dirs: &[PathBuf], runs_dir: &std::path::P
     })
 }
 
+fn loop_failure(e: &acn_hyp::loop_run::LoopError) -> Value {
+    tracing::error!("{e}");
+    json!({ "ok": false, "code": e.code.as_str(), "error": e.to_string() })
+}
+
+fn loop_run(a: &LoopRun) -> Value {
+    use acn_hyp::loop_run::{self, Args, Binary};
+    let setup = || -> anyhow::Result<(Binary, loop_exec::HarnessExecutor, std::path::PathBuf)> {
+        let engine_hash = build_info::engine_hash()?;
+        let build = build_info::build_info()?;
+        let bin = Binary {
+            engine_hash,
+            build_hash: acn_trace::identity::Digest::from_hex(&build.build_hash)?,
+        };
+        let exec = loop_exec::HarnessExecutor { engine_hash, build };
+        // LOOP-10, CON-28: paths resolve against the workspace root, or the
+        // current directory outside one.
+        let cwd = std::env::current_dir()?;
+        let root = acn_trace::env::find_root(&cwd)?.unwrap_or(cwd);
+        Ok((bin, exec, root))
+    };
+    let (bin, mut exec, root) = match setup() {
+        Ok(x) => x,
+        Err(e) => return json!({ "ok": false, "code": "internal", "error": format!("{e:#}") }),
+    };
+    if let Some(report) = &a.from_report {
+        return match loop_run::regenerate(&root.join(report), bin, &mut exec) {
+            Ok(r) => {
+                if !r.identical() {
+                    tracing::error!(differ = ?r.differ, "the regeneration differs (LOOP-14)");
+                }
+                json!({
+                    "ok": r.identical(),
+                    "identical": r.identical(),
+                    "loop_id": r.loop_id.to_hex(),
+                    "dir": r.dir.display().to_string(),
+                    "differ": r.differ,
+                })
+            }
+            Err(e) => loop_failure(&e),
+        };
+    }
+    let (Some(file), Some(budget)) = (&a.hypothesis, a.budget) else {
+        return json!({
+            "ok": false,
+            "code": "bad_args",
+            "error": "give --hypothesis and --budget, or --from-report",
+        });
+    };
+    let h = match acn_hyp::load_in(&root.join(file), &root) {
+        Ok(h) => h,
+        Err(e) => {
+            return json!({ "ok": false, "code": "hypothesis_refused", "error": e.to_string() });
+        }
+    };
+    let args = Args {
+        workloads: a.workload.clone(),
+        models: a.model.clone(),
+        budget,
+    };
+    match loop_run::run(&h, &args, &root.join(&a.runs_dir), bin, &mut exec) {
+        Ok(c) => json!({
+            "ok": true,
+            "loop_id": c.loop_id.to_hex(),
+            "report": c.report.display().to_string(),
+            "verdict_id": c.verdict_id.to_hex(),
+            "verdict": c.verdict.as_str(),
+            "stop": c.stop.as_str(),
+            "run_ids": c.run_ids.iter().map(acn_trace::identity::Digest::to_hex).collect::<Vec<_>>(),
+        }),
+        Err(e) => loop_failure(&e),
+    }
+}
+
 fn version() -> Value {
     match (build_info::build_info(), build_info::engine_hash()) {
         (Ok(b), Ok(e)) => json!({
@@ -621,6 +753,9 @@ fn run() -> Value {
                     runs_dir,
                 },
         } => hyp_verdict(&hypothesis, &bundles, &runs_dir),
+        Cmd::Loop {
+            cmd: LoopCmd::Run(a),
+        } => loop_run(&a),
     }
 }
 

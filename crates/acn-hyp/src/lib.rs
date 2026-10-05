@@ -1,5 +1,5 @@
-//! `acn-hyp` — hypothesis files, the falsifier language and verdicts (SPEC 080);
-//! the loop runner (SPEC 085) will follow. Frozen set
+//! `acn-hyp` — hypothesis files, the falsifier language and verdicts (SPEC 080),
+//! and the L1 loop runner (SPEC 085, `loop_run`; ADR-23). Frozen set
 //! (CON-7): every change here is a Class C change. T05 landed in parts (ADR-18 to
 //! ADR-21): this crate holds the file format (HYP-1..9), the
 //! predicate language, its static checks and its one evaluator (HYP-10..14), the
@@ -7,8 +7,9 @@
 //! HYP-15), evaluation over a slice's data (HYP-11, HYP-14), bundles read into a
 //! verdict and `verdict.json` (HYP-20..24, HYP-28), lint (HYP-27), and the
 //! read-only rules (HYP-4, HYP-25): it opens hypothesis files only to read them,
-//! writes only under the workspace's `runs/`, and only in `verdict::write` (as
-//! xtask's `workspace.rs` checks), and detects a file that changed under it.
+//! writes only under the workspace's `runs/`, and only in `verdict::write` and
+//! the loop's `loop_out` (as xtask's `workspace.rs` checks), and detects a file
+//! that changed under it.
 #![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
@@ -18,7 +19,10 @@ pub mod check;
 pub mod eval;
 pub mod file;
 pub mod json;
+pub mod layer;
 pub mod lint;
+mod loop_out;
+pub mod loop_run;
 pub mod predicate;
 pub mod quantities;
 pub mod read;
