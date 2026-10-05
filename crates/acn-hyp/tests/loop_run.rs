@@ -846,3 +846,51 @@ fn the_rendering_says_when_no_effect_is_defined() {
         Code::Report
     );
 }
+
+/// Cites: LOOP-10, LOOP-11
+#[test]
+fn the_trajectory_is_judged_every_kth_batch_and_after_the_last() {
+    // k = ⌈budget / 50⌉: every batch up to 50, then every second, …
+    for (budget, k) in [(2, 1), (50, 1), (51, 2), (100, 2), (101, 3), (1548, 31)] {
+        assert_eq!(loop_run::trajectory_step(budget), k, "budget {budget}");
+    }
+    // A random loop over many cells, with a budget of 59: k = 2, and each
+    // batch costs 2, so 29 batches: the last is judged though 29 is odd.
+    let text = TWO
+        .replace(
+            "tool_order_stable = { kind = \"bool\" }",
+            "tool_order_stable = { kind = \"bool\" }\nn = { kind = \"int_range\", min = 0, max = 99 }",
+        )
+        .replace("search = \"grid\"", "search = \"random\"");
+    let dir = dir_with(&text);
+    let d = dir.path();
+    let c = run_loop(d, args(59), &mut Exec::new(d)).unwrap();
+    assert_eq!(c.stop, Stop::Budget);
+    let r = report(&c);
+    let batches = r["batches"].as_array().unwrap();
+    let last = batches.len();
+    assert!(
+        last > 2 && last % 2 == 1,
+        "{last} batches: an odd count tests the last"
+    );
+    for (i, b) in batches.iter().enumerate() {
+        let judged = (i + 1) % 2 == 0 || i + 1 == last;
+        assert_eq!(!b["verdict"].is_null(), judged, "batch {}", i + 1);
+        assert_eq!(!b["reasons"].is_null(), judged, "batch {}", i + 1);
+    }
+    assert_eq!(
+        batches[last - 1]["verdict"],
+        r["verdict"],
+        "the last is the final verdict"
+    );
+    let md = std::fs::read_to_string(c.report.with_file_name("report.md")).unwrap();
+    assert!(md.contains("not judged (LOOP-10(c))"));
+    // A thinned report regenerates like any other (LOOP-14).
+    let mut ex = Exec::new(d);
+    let bin = ex.bin();
+    assert!(
+        loop_run::regenerate(&c.report, bin, &mut ex)
+            .unwrap()
+            .identical()
+    );
+}

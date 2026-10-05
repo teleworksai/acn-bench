@@ -30,3 +30,4 @@
 | [ADR-24](../decisions/ADR-24.md) | T05b.2: `acn evidence verify` and the gates between layers | accepted (T05b.2, Class C: `crates/acn-hyp`) | LOOP-1, LOOP-2, LOOP-4; HYP-15, HYP-20, HYP-22; CON-8, CON-31 |
 | [ADR-25](../decisions/ADR-25.md) | T06b: the POC 4 workloads, the mock suite and the run of record | accepted (T06b; Class A with a Class C part in `crates/acn-hyp`) | P4-1 to P4-5, P4-7, P4-8; CON-18; LOOP-11; HAR-17, HAR-30 |
 | [ADR-26](../decisions/ADR-26.md) | T06b2: tool choice for compaction and forked children | accepted (T06b2; Class B: `acn-harness`, `acn-mockllm`) | HAR-4, HAR-14, HAR-21, HAR-60; MLM-1, MLM-10, MLM-40; P4-12 |
+| [ADR-27](../decisions/ADR-27.md) | T06b3: a thinned verdict trajectory | accepted (T06b3; `spec-change` to SPEC 085 v0.3, and Class C in `crates/acn-hyp`) | LOOP-10, LOOP-11, LOOP-14; P4-7 |
