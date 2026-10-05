@@ -1,6 +1,6 @@
 # SPEC 030 — Mock inference: a deterministic model of prefill, decode and prompt caching
 
-**Status:** Draft v0.1 (October 2026). **Inherits:** SPEC 000, 010. **Prefix:** MLM. **Crate:** `acn-mockllm` (Class B).
+**Status:** Draft v0.2 (October 2026; v0.2: the reply policy honours a request's `tool_choice` of `none` and of `allowed_tools`, issues #24, #25). **Inherits:** SPEC 000, 010. **Prefix:** MLM. **Crate:** `acn-mockllm` (Class B).
 **Purpose:** define a deterministic, OpenAI-compatible inference server whose latency and cache accounting follow stated rules, so that the harness (SPEC 040), the generator (SPEC 050) and every POC suite can run end to end without a provider, in `sim` (in process, virtual time) and in `live` (real sockets, wall time) — and so that a result obtained on it is visibly a test of the harness against our own model of caching, never a measurement of a provider (CON-26, PLAN §8b).
 
 ## 0. What the mock is for, and what it is not
@@ -59,7 +59,10 @@ The mock exists so that tests and the L1 loop (SPEC 085) can exercise the harnes
 
 ## 7. Replies
 
-**MLM-40** A reply MUST be decided by the profile's reply policy from the request alone: with `tools` present and fewer than `tool_calls_per_turn` (default 1) tool results since the last `user` message, the reply MUST be one tool call to the tool at index (number of those results) modulo the number of tools, with arguments `{}` and an id derived from the BLAKE3 of the prompt bytes, and `finish_reason = "tool_calls"`; otherwise a text answer with `finish_reason = "stop"`. The answer's length in tokens MUST be drawn uniformly from the profile's `[output_tokens_min, output_tokens_max]`, capped by the request's token limit, in which case `finish_reason = "length"`. Answer text MUST be made of 4-byte words drawn from a fixed list in the crate, so that its token count by MLM-11 equals `completion_tokens`.
+**MLM-40** A reply MUST be decided by the profile's reply policy from the request alone: with `tools` present and fewer than `tool_calls_per_turn` (default 1) tool results since the last `user` message, the reply MUST be one tool call to the tool at index (number of those results) modulo the number of tools, with arguments `{}` and an id derived from the BLAKE3 of the prompt bytes, and `finish_reason = "tool_calls"`; otherwise a text answer with `finish_reason = "stop"`. The answer's length in tokens MUST be drawn uniformly from the profile's `[output_tokens_min, output_tokens_max]`, capped by the request's token limit, in which case `finish_reason = "length"`. Answer text MUST be made of 4-byte words drawn from a fixed list in the crate, so that its token count by MLM-11 equals `completion_tokens`. A request's `tool_choice` MUST constrain this policy, and MUST NOT enter the prompt bytes (MLM-10).
+- `"none"`, or `{"type": "none"}`, makes the reply a text answer whatever the tools.
+- `{"type": "allowed_tools", "allowed_tools": {"tools": [...]}}` restricts the choice to the listed names that appear in `tools`, kept in `tools`' order: the reply calls the allowed tool at index (number of those results) modulo the number of allowed tools. When none of the listed names appears in `tools`, the reply is a text answer.
+- Any other `tool_choice`, or none, leaves the policy as stated above.
 
 **MLM-41** A profile MAY inject faults, each with a rate in parts per million drawn per request from the `mockllm` sub-stream: `429` with a `retry-after` in whole seconds, `500`, and a stream cut after a drawn number of tokens without a final chunk. Faults default to off, and a fault MUST NOT change the cache state.
 
