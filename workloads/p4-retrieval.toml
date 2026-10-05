@@ -77,7 +77,7 @@ temperature = 0.0
 max_tokens = 256
 stream = true
 max_calls_per_turn = 6
-compact_at_tokens = 6000
+compact_at_tokens = 20000
 read_cost_threshold_tokens = 3000
 summary_instruction = "Summarise the conversation so far in a few sentences, keeping file names, function names and decisions."
 summary_max_tokens = 256
@@ -85,7 +85,7 @@ summary_max_tokens = 256
 [[tool]]
 name = "search_docs"
 class = "search"
-description = "Search the document set and return the best-matching passages with their titles and sections."
+description = "Search the document set and return the best-matching passages with their titles and sections. The query is matched against titles, section headings and body text; exact phrases in double quotes are matched literally, and every other word is matched after stemming, so retry, retries and retrying match each other. Results are ranked by relevance, newest first among equals, and each passage is returned with the title of its document, the heading of its section, the date the section last changed and up to six hundred words of surrounding text. Use short queries of two to five content words; long natural-language questions match worse than the words they contain. When a query returns nothing useful, try a synonym or a broader term before concluding that the documents are silent, and say which queries you tried. Passages may be cut at a section boundary; when you need the rest of a section, fetch it in full with fetch_doc rather than searching again. Do not search for document titles you already know; list_docs is cheaper for that, and fetch_doc returns the exact section. Searches cover accepted, draft and superseded documents alike; the status of each passage is given with it, and a passage from a draft states a proposal, not a decision. Results are capped at twenty passages per query; when a query matches more, the result says how many matched in total, and a narrower query will surface the rest. Numbers, dates and identifiers in a query are matched exactly, so a ticket number or a version string finds the passages that mention it."
 parameters = { type = "object", properties = { query = { type = "string" } }, required = ["query"] }
 result_bytes = { min = 4000, max = 8000 }
 duration_ns = { min = 20_000_000, max = 80_000_000 }
@@ -93,7 +93,7 @@ duration_ns = { min = 20_000_000, max = 80_000_000 }
 [[tool]]
 name = "fetch_doc"
 class = "file"
-description = "Fetch one document section in full by title and section."
+description = "Fetch one document section in full by title and section. The title must match a document title exactly, as list_docs or search_docs returned it, and the section must match one of its headings exactly, including numbering such as 3.2. The section is returned with its heading, its owner, the date it last changed, the list of documents it links to and its full text, without the text of its subsections, which have headings of their own. When a section has been revised, the result says so in its first line and gives the date of the previous version; fetch the section again after a revision rather than relying on an earlier result. Fetching a section that does not exist returns an error naming the closest headings, which you may then fetch instead. Prefer fetching one section to fetching a whole document: sections are short, and documents in this set run to dozens of pages. Quote what you rely on from the returned text, and give the title and section with every quote. Sections that embed tables return them as plain text, one row per line, with columns separated by vertical bars, so that figures can be quoted exactly. Sections that embed diagrams return the diagram caption and its alternative text only; when a decision rests on a diagram, say that you could not see it. A section owned by another team may name a contact; when a question remains open after reading it, name that contact in your answer."
 parameters = { type = "object", properties = { title = { type = "string" }, section = { type = "string" } }, required = ["title", "section"] }
 result_bytes = { min = 2000, max = 5000 }
 duration_ns = { min = 5_000_000, max = 20_000_000 }
@@ -101,7 +101,7 @@ duration_ns = { min = 5_000_000, max = 20_000_000 }
 [[tool]]
 name = "list_docs"
 class = "search"
-description = "List the documents in the set with their titles, owners and last-modified dates."
+description = "List the documents in the set with their titles, owners and last-modified dates. The prefix restricts the list to documents whose title starts with it, compared without regard to case; an empty prefix lists every document, which is slow and rarely needed. Each entry gives the title, the owning team, the date the document last changed, its status (draft, accepted, superseded) and, when it has been superseded, the title of the document that replaces it. Use the list to find candidate documents before searching them, to check whether a document is current, and to find who to ask about it. The list does not include the text of any document; use search_docs to find passages and fetch_doc to read a section. Superseded documents stay in the list and in search results so that older decisions can be traced; never cite a superseded document as current without saying that it was superseded. Owners are teams, not people; the team page, which this tool does not return, names who to contact. Dates are given in UTC as year, month and day; a document changed today shows today's date even when the change was small."
 parameters = { type = "object", properties = { prefix = { type = "string" } }, required = ["prefix"] }
 result_bytes = { min = 800, max = 1600 }
 duration_ns = { min = 2_000_000, max = 8_000_000 }

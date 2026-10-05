@@ -73,6 +73,7 @@ ids = [
 
 [[implemented]]
 spec = "100"
-ids = ["P4-1", "P4-2", "P4-3", "P4-4", "P4-5", "P4-7", "P4-8"]
-# T06b (ADR-25): the workloads, the mock suite and the run of record. P4-9..11
-# are the live tier's (T06d), after SPEC 080 §6 question 1 is settled.
+ids = ["P4-1", "P4-2", "P4-3", "P4-5", "P4-7", "P4-8"]
+# T06b (ADR-25): the workloads and the mock suite. P4-4 enters scope when
+# hypotheses/p4.toml is pinned (its check is in existing_files.rs); P4-9..12 are
+# T06b2's and the live tier's (T06d).

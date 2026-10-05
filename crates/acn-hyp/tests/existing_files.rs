@@ -89,7 +89,7 @@ fn p17_loads_unedited_with_its_two_selects_and_at_clause() {
     assert_eq!(h.design().replicates, 10);
 }
 
-/// Cites: P4-4, P4-5, P4-1
+/// Cites: P4-5, P4-1
 #[test]
 fn p4_names_the_spec_100_providers_and_workloads_and_pins_them_when_pinned() {
     use acn_hyp::file::Domain;
@@ -104,8 +104,9 @@ fn p4_names_the_spec_100_providers_and_workloads_and_pins_them_when_pinned() {
         ["anthropic", "openai", "vllm", "sglang"]
     );
     assert_eq!(values("workload"), ["coding", "retrieval", "fanout"]);
-    // P4-1: each value has its workload file; P4-4: once pinned, the pins are
-    // exactly their hashes.
+    // P4-1: each value has its workload file. Once the file is pinned, P4-4
+    // holds here: the pins are exactly their hashes. Unpinned, the check is
+    // not yet in force, and P4-4 is left out of scope until then.
     let mut hashes: Vec<String> = ["coding", "retrieval", "fanout"]
         .iter()
         .map(|v| {

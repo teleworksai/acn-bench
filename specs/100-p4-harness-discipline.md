@@ -1,6 +1,6 @@
 # SPEC 100 — POC 4: harness cache discipline as a controlled variable
 
-**Status:** Draft v0.1 (October 2026; the P4-8(c) fixture is named for HYP-1 and the report's effects carry replicate counts, T06b). **Inherits:** SPEC 000, 010, 030, 040, 080, 085. **Prefix:** P4. **Hypothesis:** `hypotheses/p4.toml` (frozen). **Crates:** none of its own; it is run by `acn-harness` (SPEC 040), `acn-hyp` (SPEC 080, 085) and `acn-cli`, with its suite in `tests/accept/p4.rs`.
+**Status:** Draft v0.2 (October 2026; v0.2, with T06b: the P4-8(c) fixture's name follows HYP-2, backfilled results stay in context, `retrieval` gets a cacheable tool block, and P4-12 holds the run of record until the mock's compaction and fan-out replies are not degenerate). **Inherits:** SPEC 000, 010, 030, 040, 080, 085. **Prefix:** P4. **Hypothesis:** `hypotheses/p4.toml` (frozen). **Crates:** none of its own; it is run by `acn-harness` (SPEC 040), `acn-hyp` (SPEC 080, 085) and `acn-cli`, with its suite in `tests/accept/p4.rs`.
 **Purpose:** define the protocol that turns `hypotheses/p4.toml` into a verdict per provider:
 - the three workloads it varies over;
 - the providers, and what each runs on the mock;
@@ -44,11 +44,11 @@ They are given to `acn loop run` as a map (`--workload coding=workloads/p4-codin
 - **`max_tokens`** of at least 256 for the agent and the summary, enough for a tool call and a short reply on every pinned model.
 
 The workloads differ as follows:
-- **`coding`** edits a repository. It has `read_file` and `grep` tools and at least one turn with `updates` (HAR-13). Every task compacts at least once under `window_full`, at the control's other knob values on `mock-explicit` and `mock-auto`. Every task also compacts at least once under `read_cost_threshold` with `timestamp_in_system_prompt = true`, on both profiles.
-- **`retrieval`** answers questions from long tool results. It has a tool whose `result_bytes` minimum is 4 000, and at least one turn with `updates`.
+- **`coding`** edits a repository. It has `read_file` and `grep` tools and at least one turn with `updates` (HAR-13). Every task compacts at least once under `window_full`, at the control's other knob values on `mock-explicit` and `mock-auto`, but never at or before its turn with `updates`, so the backfilled result is still in context. Every task also compacts at least once under `read_cost_threshold` with `timestamp_in_system_prompt = true`, on both profiles.
+- **`retrieval`** answers questions from long tool results. It has a tool whose `result_bytes` minimum is 4 000, at least one turn with `updates`, and a tool block (the tool definitions as JSON) of at least 1 024 estimated tokens, so that a `system_and_tools` breakpoint (HAR-16) has something to cache above the minimum.
 - **`fanout`** delegates. It has a `subagent` tool of width at least 3.
 
-Taken together, the three workloads MUST give every knob of HAR-11 to HAR-16 a workload in which it changes the requests. This coverage rule is SPEC 100's own: a knob inert on every workload would measure nothing.
+Taken together, the three workloads MUST give every value of every knob of HAR-11 to HAR-16 a workload in which it changes the requests. This coverage rule is SPEC 100's own: a knob inert on every workload would measure nothing.
 
 **P4-4** The workload files are hashed inputs (CON-27(a)). When `hypotheses/p4.toml` is pinned (HYP-9, HYP-26), `pins.workload` MUST list exactly their three hashes. A change to a workload file after the first cited run gives it a new hash, and so a new run under a new pin; a cited run is never edited.
 
@@ -65,16 +65,23 @@ Taken together, the three workloads MUST give every knob of HAR-11 to HAR-16 a w
 - a budget equal to the grid's bundle count: 4 providers × 387 = 1 548 (LOOP-10(e));
 - a binary built with `--release`.
 
-Its loop report, its final verdict and the `acn evidence verify` result make up the M0 mock deliverable: a *model-of-caching* table, labelled `mock-gated` (HYP-23), never cited.
+It is made only once P4-12 holds. Its loop report, its final verdict and the `acn evidence verify` result make up the M0 mock deliverable: a *model-of-caching* table, labelled `mock-gated` (HYP-23), never cited.
 - **The file-level verdict is inconclusive by construction**, because the `vllm` and `sglang` slices are unpriced (P4-5, HYP-24).
 - **The deliverable is therefore the per-slice `anthropic` and `openai` verdicts, with each cell's effect (CON-18).**
+
+**P4-12** The run of record (P4-7) MUST NOT be made, and no live run (P4-9) proposed, until the mock's replies are not degenerate for POC 4. Three conditions must hold:
+- **(a) Compaction summaries are text.** Every compaction call (HAR-4) gets a text reply, not a tool call. Today the compaction call carries the tools, and the mock answers it with a tool call (MLM-40), so the summary is empty and compaction only deletes history.
+- **(b) Forked children run their own tools.** Under `fork_from_prefix` (HAR-14), children call the tools of their child specification. Today they inherit the parent's tool list and call the `subagent` tool, which fails.
+- **(c) The tool-order confound is resolved or recorded.** The effect of `tool_order_stable` either does not change which tools the mock calls, or that confound is stated with the knob's effect.
+
+The SPEC 040 and SPEC 030 changes that settle these conditions are T06b2's (issues #24, #25 and #26).
 
 ## 4. The acceptance suite
 
 **P4-8** `tests/accept/p4.rs` MUST run on the mock in CI and MUST check:
 - **(a)** Each P4 workload loads (HAR-60) and meets P4-2 and P4-3.
 - **(b)** Each of the six knobs changes the requests of at least one P4 workload on the `mockllm` backend, on one replicate per knob value.
-- **(c)** A reduced L1 loop over a checked-in candidate, `tests/accept/fixtures/p4t-timestamp.toml` (named `<id>-<slug>`, HYP-1). The candidate:
+- **(c)** A reduced L1 loop over a checked-in candidate, `tests/accept/fixtures/p4t-timestamp.toml` (named `<id>-<slug>`, HYP-2). The candidate:
   - has id `p4t`;
   - varies `timestamp_in_system_prompt` and `provider` (`anthropic`, `openai`), with `[control].config = { timestamp_in_system_prompt = true }`;
   - otherwise takes `hypotheses/p4.toml`'s measures, replicates, guard and falsifier.
@@ -98,7 +105,7 @@ The full grid of P4-7 is too long for CI. It runs on demand and in the nightly t
 
    A `p4` successor that `supersedes` this file applies the answer.
 2. **The file is pinned (HYP-26).** Its pins are its workloads (P4-4), scenario hash zero (ADR-17), and one model per provider whose minimum meets P4-2. Each model's prices MUST match its row's `reference` in `PRICES`, or a Class C change updates the row. Pinning changes the file's hash, and so its seed (HYP-9), so the L1 run of record MUST be redone on the pinned file. Pins and mock runs conflict until SPEC 080 §6 is changed as §7 question 3 says.
-3. **The maintainer approves** the provider models, the request each model accepts (parameters a model refuses, and reasoning tokens that would add noise to `cost_per_success`), and the spend estimate of P4-10.
+3. **The maintainer approves** the provider models, the request each model accepts, and the spend estimate of P4-10. The request covers the parameters a model refuses (some models refuse `temperature`, which the harness always sends today), a `max_tokens` large enough for reasoning tokens as well as the reply, and the treatment of a reply cut by its token limit (`finish_reason = "length"`), which HAR-3 counts as a success today (issue #27).
 4. **One build runs the whole campaign** (HYP-20 refuses more than one build per mode). The campaign's start and end times are recorded with its verdict.
 
 **P4-10** The spend estimate of a live run MUST be computed from the L1 run of record on the pinned file, and stated in the PR that proposes the live run. It is the sum, over the provider's grid bundles, of the calls' tokens weighted by that provider's list prices. Its shape is 387 bundles per provider at 20 replicates, which is 7 740 workload replicates per provider, each of a few tens of calls. On a provider that caches automatically, 288 of the 384 cells repeat another cell's requests, because breakpoints are not sent there (HAR-16). The estimate MUST state that share.

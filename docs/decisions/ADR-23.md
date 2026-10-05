@@ -80,7 +80,7 @@ Implementing the runner needs these readings.
   | `stop` | why the loop stopped |
   | `verdict_id`, `verdict`, `reasons` | the final verdict |
   | `best`, `worst` | |
-  | `control_effect` | `[{slice, cell, quantity, effect, ci_low, ci_high}]` |
+  | `control_effect` | `[{slice, cell, quantity, effect, ci_low, ci_high}]`; ADR-25 adds `treatment_replicates` and `control_replicates` (CON-18) |
   | `lab_note` | `{question, varied, observed, next_layer}` |
 
 - **`next_layer`** is `L2` when `twin_required` holds and `L3` otherwise (ADR-22).

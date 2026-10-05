@@ -77,7 +77,7 @@ temperature = 0.0
 max_tokens = 256
 stream = true
 max_calls_per_turn = 6
-compact_at_tokens = 2600
+compact_at_tokens = 3800
 read_cost_threshold_tokens = 1500
 summary_instruction = "Summarise the conversation so far in a few sentences, keeping file names, function names and decisions."
 summary_max_tokens = 256
@@ -127,6 +127,10 @@ think_time_ns = { min = 500_000_000, max = 1_500_000_000 }
 user = "Now check whether any caller matches on the old message text."
 think_time_ns = { min = 500_000_000, max = 1_500_000_000 }
 
+[[task.turn]]
+user = "Summarise the change and the callers it affects in three sentences."
+think_time_ns = { min = 500_000_000, max = 1_500_000_000 }
+
 [[task]]
 id = "find-callers"
 tools = ["grep", "read_file", "run_tests"]
@@ -136,13 +140,21 @@ user = "Find every caller of parse_config across the workspace."
 think_time_ns = { min = 0, max = 0 }
 
 [[task.turn]]
-user = "Which of those callers ignore the error it returns?"
-think_time_ns = { min = 1_000_000_000, max = 2_000_000_000 }
-
-[[task.turn]]
 user = "I fixed two of them; search again and tell me which remain."
 think_time_ns = { min = 1_000_000_000, max = 3_000_000_000 }
 updates = [0]
+
+[[task.turn]]
+user = "Which of the remaining callers ignore the error it returns?"
+think_time_ns = { min = 1_000_000_000, max = 2_000_000_000 }
+
+[[task.turn]]
+user = "Propose the smallest change that makes each of them handle it."
+think_time_ns = { min = 1_000_000_000, max = 2_000_000_000 }
+
+[[task.turn]]
+user = "List the files you would touch, in the order you would touch them."
+think_time_ns = { min = 500_000_000, max = 1_500_000_000 }
 
 [[task]]
 id = "flaky-test"
@@ -153,10 +165,18 @@ user = "The config crate's tests failed on CI once. Run them and report what you
 think_time_ns = { min = 0, max = 0 }
 
 [[task.turn]]
-user = "Read the failing test and say what it depends on that could vary between runs."
-think_time_ns = { min = 1_000_000_000, max = 2_000_000_000 }
-
-[[task.turn]]
 user = "I pinned the seed; run the tests again and confirm they pass."
 think_time_ns = { min = 2_000_000_000, max = 4_000_000_000 }
 updates = [0]
+
+[[task.turn]]
+user = "Read the test that failed and say what it depends on that could vary between runs."
+think_time_ns = { min = 1_000_000_000, max = 2_000_000_000 }
+
+[[task.turn]]
+user = "Is anything else in the crate seeded the same way?"
+think_time_ns = { min = 1_000_000_000, max = 2_000_000_000 }
+
+[[task.turn]]
+user = "Write the note for the CI log explaining the fix."
+think_time_ns = { min = 500_000_000, max = 1_500_000_000 }

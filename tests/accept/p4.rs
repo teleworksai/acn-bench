@@ -47,6 +47,11 @@ fn engine() -> Digest {
 /// One replicate of `file` on `model`, with `vary` knob values, in a fresh
 /// directory outside any workspace; the embedded profiles, as `acn` ships them.
 fn one(file: &str, model: &str, vary: &[(&str, &str)]) -> BundleData {
+    many(file, model, vary, 1)
+}
+
+/// `replicates` replicates of `file` on `model`, as [`one`].
+fn many(file: &str, model: &str, vary: &[(&str, &str)], replicates: u32) -> BundleData {
     let dir = tempfile::tempdir().unwrap();
     let w = run(&RunConfig {
         workload: workload(file),
@@ -54,7 +59,7 @@ fn one(file: &str, model: &str, vary: &[(&str, &str)]) -> BundleData {
         model: model.into(),
         mode: Mode::Sim,
         arm: "treatment".into(),
-        replicates: 1,
+        replicates,
         vary: vary
             .iter()
             .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
@@ -86,6 +91,19 @@ fn accounting(b: &BundleData) -> Vec<Counts> {
                 c.cache_write_tokens,
                 c.output_tokens,
             )
+        })
+        .collect()
+}
+
+/// The turns of each session (one per task and replicate, HAR-30), in order.
+fn sessions(b: &BundleData) -> Vec<Vec<&acn_hyp::quantities::Turn>> {
+    b.sessions
+        .iter()
+        .map(|s| {
+            b.turns
+                .iter()
+                .filter(|t| t.session_id == s.session_id)
+                .collect()
         })
         .collect()
 }
@@ -141,6 +159,24 @@ fn the_p4_workloads_meet_the_spec() {
                 assert!(updates);
             }
             "retrieval" => {
+                // A tool block a `system_and_tools` breakpoint can cache: at
+                // least the mock's 1 024-token minimum (MLM-50, HAR-16).
+                let tools: Vec<serde_json::Value> = w
+                    .tools
+                    .iter()
+                    .map(|t| {
+                        serde_json::json!({
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters_json().unwrap(),
+                        })
+                    })
+                    .collect();
+                let block = serde_json::to_string(&tools).unwrap().len().div_ceil(4);
+                assert!(
+                    block >= 1024,
+                    "retrieval's tool block: {block} estimated tokens"
+                );
                 assert!(
                     w.tools
                         .iter()
@@ -163,12 +199,26 @@ fn the_p4_workloads_meet_the_spec() {
             );
         }
     }
-    // P4-3, `coding`: every task compacts under each trigger, on both profiles.
+    // P4-3, `coding`: every task compacts under each trigger, on both profiles;
+    // under the control, never at or before its turn with `updates` (turn 1), so
+    // that the result it backfills is still in context (HAR-13).
+    let coding = Workload::load(&workload("p4-coding.toml")).unwrap();
+    assert!(
+        coding
+            .tasks
+            .iter()
+            .all(|t| t.turns.iter().position(|u| !u.updates.is_empty()) == Some(1)),
+        "each coding task backfills at turn 1"
+    );
     for (_, model) in PROFILES {
-        assert!(
-            every_task_compacts(&one("p4-coding.toml", model, &[])),
-            "window_full on {model}"
-        );
+        let control = many("p4-coding.toml", model, &[], 5);
+        assert!(every_task_compacts(&control), "window_full on {model}");
+        for turns in sessions(&control) {
+            assert!(
+                turns.iter().take(2).all(|t| t.compaction == "none"),
+                "{model}: a compaction at or before the backfilled turn"
+            );
+        }
         assert!(
             every_task_compacts(&one(
                 "p4-coding.toml",
@@ -186,31 +236,47 @@ fn the_p4_workloads_meet_the_spec() {
 /// Cites: P4-3, P4-8
 #[test]
 fn every_knob_changes_the_requests_of_some_p4_workload() {
-    // Each knob moved off its shipped default (HAR-10).
-    let moved = [
-        ("timestamp_in_system_prompt", "false"),
-        ("tool_order_stable", "false"),
-        ("backfill_mode", "tail_restate"),
-        ("fanout_prompting", "fork_from_prefix"),
-        ("compaction_trigger", "read_cost_threshold"),
-        ("cache_breakpoint_placement", "none"),
-    ];
+    use acn_hyp::file::{Control, Domain};
+    use acn_hyp::predicate::Lit;
+    // Every knob of `hypotheses/p4.toml`'s control (the six of HAR-10), at
+    // every value other than the shipped default.
+    let r = root();
+    let h = acn_hyp::load_in(&r.join("hypotheses/p4.toml"), &r).unwrap();
+    let Control::Config(config) = h.control() else {
+        panic!("p4's control is a config")
+    };
+    assert_eq!(config.len(), 6, "the six knobs of HAR-10");
+    let mut moved = Vec::new();
+    for (knob, default) in config {
+        let default = match default {
+            Lit::Bool(b) => b.to_string(),
+            Lit::Ident(s) => s.clone(),
+            other => panic!("{knob}: {other:?}"),
+        };
+        let values = match &h.params()[knob].domain {
+            Domain::Bool => vec!["false".to_owned(), "true".to_owned()],
+            Domain::Enum(v) => v.clone(),
+            d => panic!("{knob}: {d:?}"),
+        };
+        for v in values.into_iter().filter(|v| *v != default) {
+            moved.push((knob.clone(), v));
+        }
+    }
+    assert_eq!(moved.len(), 8, "1+1+1+1+1+3 non-default values");
     let mut control = BTreeMap::new();
     for (_, file) in WORKLOADS {
         for (_, model) in PROFILES {
             control.insert((file, model), accounting(&one(file, model, &[])));
         }
     }
-    for (knob, value) in moved {
-        let changes: Vec<String> = WORKLOADS
+    for (knob, value) in &moved {
+        let changes = WORKLOADS
             .iter()
-            .flat_map(|(w, file)| PROFILES.iter().map(move |(_, m)| (*w, *file, *m)))
-            .filter(|(_, file, model)| {
-                accounting(&one(file, model, &[(knob, value)])) != control[&(*file, *model)]
-            })
-            .map(|(w, _, m)| format!("{w} on {m}"))
-            .collect();
-        assert!(!changes.is_empty(), "`{knob}` changes no P4 workload");
+            .flat_map(|(_, file)| PROFILES.iter().map(move |(_, m)| (*file, *m)))
+            .any(|(file, model)| {
+                accounting(&one(file, model, &[(knob, value)])) != control[&(file, model)]
+            });
+        assert!(changes, "`{knob} = {value}` changes no P4 workload");
     }
 }
 
@@ -243,6 +309,21 @@ fn the_mock_reacts_to_a_timestamp_in_the_system_prompt_as_built() {
     .unwrap();
     std::fs::copy(workload("p4-coding.toml"), d.join("p4-coding.toml")).unwrap();
     let h = acn_hyp::load_in(&d.join("p4t-timestamp.toml"), d).unwrap();
+    // P4-8(c): the candidate takes p4's measures, replicates, guard and
+    // falsifier, and cannot drift from them.
+    let p4 = acn_hyp::load_in(&root().join("hypotheses/p4.toml"), &root()).unwrap();
+    assert_eq!(h.primary(), p4.primary());
+    assert_eq!(h.secondary(), p4.secondary());
+    assert_eq!(h.design().replicates, p4.design().replicates);
+    assert_eq!(
+        h.design().min_providers_for_verdict,
+        p4.design().min_providers_for_verdict
+    );
+    assert_eq!(h.predicate().to_string(), p4.predicate().to_string());
+    assert_eq!(
+        h.guard().map(ToString::to_string),
+        p4.guard().map(ToString::to_string)
+    );
     let (mut x, bin) = harness("p4");
     let args = Args {
         workloads: vec![d.join("p4-coding.toml").display().to_string()],
@@ -302,17 +383,20 @@ fn the_mock_reacts_to_a_timestamp_in_the_system_prompt_as_built() {
         assert_eq!(e["control_replicates"], 20, "{e}");
     }
     // The control is the harness's shipped default (HAR-10): only the
-    // timestamp knob and the provider are set on its bundles.
+    // timestamp knob and the provider are set on its bundles, one per slice.
+    let mut controls = 0;
     for id in &c.run_ids {
         let m = acn_trace::bundle::verify(&d.join("runs").join(id.to_hex()))
             .unwrap()
             .manifest;
         if m.params["arms"] == "control" {
+            controls += 1;
             assert_eq!(m.params["vary.timestamp_in_system_prompt"], "true");
             let knobs: Vec<&String> = m.params.keys().filter(|k| k.starts_with("vary.")).collect();
             assert_eq!(knobs.len(), 2, "{knobs:?}");
         }
     }
+    assert_eq!(controls, 2, "one control bundle per provider");
 }
 
 /// An executor that refuses every run: reaching it means every check before
@@ -355,6 +439,9 @@ fn the_run_of_record_is_accepted_at_its_budget_and_refused_below_it() {
         budget,
     };
     // Nothing is written either way: the loop stops before its first bundle.
+    // The run of record's `runs/` is the workspace's own (P4-7): the frozen
+    // file and its workloads must lie in the directory `runs/` lies in
+    // (ADR-23), so a scratch `runs/` cannot stand in. The test only reads it.
     let runs = r.join("runs");
     let e = loop_run::run(&h, &args(1547), &runs, bin, &mut x).unwrap_err();
     assert_eq!(e.code, Code::BudgetTooSmall, "{e}");
