@@ -436,10 +436,21 @@ pub fn scripted(
     task: usize,
     backend: Backend,
 ) -> (Trace, Result<(), acn_harness::HarnessError>) {
+    scripted_with(env, workload, task, backend, Knobs::default())
+}
+
+/// [`scripted`] under `knobs`.
+pub fn scripted_with(
+    env: &Scripted,
+    workload: &str,
+    task: usize,
+    backend: Backend,
+    knobs: Knobs,
+) -> (Trace, Result<(), acn_harness::HarnessError>) {
     let workload = workload.replace("stream = true", "stream = false");
     let setup = Setup {
         workload: Workload::parse(workload.as_bytes()).unwrap(),
-        knobs: Knobs::default(),
+        knobs,
         backend,
         model: "m".into(),
         opts: Opts {

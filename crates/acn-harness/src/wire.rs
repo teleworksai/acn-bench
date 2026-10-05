@@ -69,6 +69,24 @@ impl Backend {
         matches!(self, Self::Mockllm | Self::Anthropic)
     }
 
+    /// Whether requests may restrict the tools a call may use to a subset
+    /// (HAR-14): `allowed_tools` on `openai` and the mock. `vllm` and `sglang`
+    /// do not accept it, and the Messages API has no such choice.
+    #[must_use]
+    pub fn restricts_tools(self) -> bool {
+        matches!(self, Self::Mockllm | Self::Openai)
+    }
+
+    /// How this backend's requests are encoded.
+    #[must_use]
+    pub fn encoding(self) -> crate::context::Encoding {
+        crate::context::Encoding {
+            dialect: self.dialect(),
+            marks_breakpoints: self.marks_breakpoints(),
+            restricts_tools: self.restricts_tools(),
+        }
+    }
+
     /// The request path under the endpoint.
     #[must_use]
     pub fn path(self) -> &'static str {

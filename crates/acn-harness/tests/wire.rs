@@ -8,7 +8,7 @@ mod common;
 
 use acn_harness::HarnessError;
 use acn_harness::agent::Opts;
-use acn_harness::context::{Context, Dialect, Msg, Sampling, ToolCall, ToolDef};
+use acn_harness::context::{Context, Dialect, Encoding, Msg, Sampling, ToolCall, ToolDef};
 use acn_harness::knobs::Placement;
 use acn_harness::wire::{Backend, Exchange, assemble};
 use acn_trace::identity::Mode;
@@ -18,6 +18,7 @@ use serde_json::json;
 fn golden() -> Context {
     Context {
         system: "S".into(),
+        tool_choice: None,
         tools: vec![ToolDef {
             name: "f".into(),
             description: "d".into(),
@@ -54,11 +55,14 @@ const SAMPLING: Sampling = Sampling {
 #[test]
 fn both_dialects_encode_a_golden_context_deterministically() {
     let cc = golden().encode(
-        Dialect::ChatCompletions,
+        Encoding {
+            dialect: Dialect::ChatCompletions,
+            marks_breakpoints: true,
+            restricts_tools: false,
+        },
         "m",
         SAMPLING,
         Placement::RollingTail,
-        true,
     );
     assert_eq!(
         cc.to_string(),
@@ -75,11 +79,14 @@ fn both_dialects_encode_a_golden_context_deterministically() {
         "keys sorted, no whitespace: the bytes are a function of the context"
     );
     let msgs = golden().encode(
-        Dialect::Messages,
+        Encoding {
+            dialect: Dialect::Messages,
+            marks_breakpoints: true,
+            restricts_tools: false,
+        },
         "m",
         SAMPLING,
         Placement::SystemAndTools,
-        true,
     );
     assert_eq!(
         msgs,
@@ -485,6 +492,7 @@ fn anthropic_events_assemble_into_a_message_the_frozen_mapping_reads() {
 fn an_empty_reply_is_never_sent_back_empty() {
     let ctx = Context {
         system: "S".into(),
+        tool_choice: None,
         tools: vec![],
         messages: vec![
             Msg::User { text: "u".into() },
@@ -495,7 +503,16 @@ fn an_empty_reply_is_never_sent_back_empty() {
             Msg::User { text: "v".into() },
         ],
     };
-    let m = ctx.encode(Dialect::Messages, "m", SAMPLING, Placement::None, false);
+    let m = ctx.encode(
+        Encoding {
+            dialect: Dialect::Messages,
+            marks_breakpoints: false,
+            restricts_tools: false,
+        },
+        "m",
+        SAMPLING,
+        Placement::None,
+    );
     assert_eq!(
         m["messages"],
         json!([{ "role": "user", "content": [
@@ -504,11 +521,14 @@ fn an_empty_reply_is_never_sent_back_empty() {
         "no empty text block: the user turns merge"
     );
     let c = ctx.encode(
-        Dialect::ChatCompletions,
+        Encoding {
+            dialect: Dialect::ChatCompletions,
+            marks_breakpoints: false,
+            restricts_tools: false,
+        },
         "m",
         SAMPLING,
         Placement::None,
-        false,
     );
     assert_eq!(
         c["messages"][2],
@@ -593,4 +613,76 @@ fn live_retries_honour_retry_after_and_a_live_attempt_times_out() {
     assert_eq!(text(chat, "acn.call.error_class"), Some("timeout"));
     let took = chat.end_ns - chat.start_ns;
     assert!((100_000_000..2_000_000_000).contains(&took), "{took}");
+}
+
+/// Cites: HAR-4, HAR-14, HAR-21
+#[test]
+fn a_tool_choice_is_written_in_each_dialects_form_and_only_where_it_applies() {
+    use acn_harness::context::ToolChoice;
+    use acn_harness::wire::Backend;
+    let with = |c: Option<ToolChoice>| Context {
+        tool_choice: c,
+        ..golden()
+    };
+    let enc = |ctx: &Context, d: Dialect, subset: bool| {
+        ctx.encode(
+            Encoding {
+                dialect: d,
+                marks_breakpoints: false,
+                restricts_tools: subset,
+            },
+            "m",
+            SAMPLING,
+            Placement::None,
+        )
+    };
+    // HAR-4: none, in each dialect's form.
+    let forbid = with(Some(ToolChoice::Forbid));
+    assert_eq!(
+        enc(&forbid, Dialect::ChatCompletions, true)["tool_choice"],
+        "none"
+    );
+    assert_eq!(
+        enc(&forbid, Dialect::Messages, false)["tool_choice"],
+        json!({ "type": "none" })
+    );
+    // HAR-14: an allowed subset on the backends that take one, nothing elsewhere.
+    let allowed = with(Some(ToolChoice::Allowed(vec!["f".into()])));
+    assert_eq!(
+        enc(&allowed, Dialect::ChatCompletions, true)["tool_choice"],
+        json!({ "type": "allowed_tools", "allowed_tools": {
+            "mode": "auto", "tools": [{ "type": "function", "function": { "name": "f" } }] } })
+    );
+    assert!(
+        enc(&allowed, Dialect::ChatCompletions, false)
+            .get("tool_choice")
+            .is_none()
+    );
+    assert!(
+        enc(&allowed, Dialect::Messages, false)
+            .get("tool_choice")
+            .is_none()
+    );
+    for (b, subset) in [
+        (Backend::Mockllm, true),
+        (Backend::Openai, true),
+        (Backend::Vllm, false),
+        (Backend::Sglang, false),
+        (Backend::Anthropic, false),
+    ] {
+        assert_eq!(b.restricts_tools(), subset, "{}", b.as_str());
+    }
+    // A context without tools carries no tool choice, and none is otherwise
+    // the body of before.
+    let bare = Context {
+        tools: vec![],
+        tool_choice: Some(ToolChoice::Forbid),
+        ..golden()
+    };
+    for d in [Dialect::ChatCompletions, Dialect::Messages] {
+        assert!(enc(&bare, d, true).get("tool_choice").is_none());
+    }
+    let mut plain = enc(&forbid, Dialect::ChatCompletions, true);
+    plain.as_object_mut().unwrap().remove("tool_choice");
+    assert_eq!(plain, enc(&golden(), Dialect::ChatCompletions, true));
 }

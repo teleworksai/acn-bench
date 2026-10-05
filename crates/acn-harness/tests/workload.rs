@@ -110,3 +110,20 @@ fn workloads_are_hashed_as_working_tree_bytes() {
             .unwrap();
     assert!(attrs.lines().any(|l| l.trim() == "workloads/** -text"));
 }
+
+/// Cites: HAR-60, HAR-14
+#[test]
+fn a_child_tool_missing_from_a_task_that_spawns_it_is_refused() {
+    // The smoke workload's `fanout` task lists `delegate` and its child tool
+    // `read_file`; without `read_file` a forked child could not present it.
+    let bad = common::smoke().replace(
+        "tools = [\"delegate\", \"read_file\"]",
+        "tools = [\"delegate\", \"grep\"]",
+    );
+    assert_ne!(bad, common::smoke());
+    let e = Workload::parse(bad.as_bytes()).unwrap_err().to_string();
+    assert!(
+        e.contains("child tool `read_file`") && e.contains("HAR-60"),
+        "{e}"
+    );
+}

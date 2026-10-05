@@ -512,13 +512,24 @@ impl Mock {
             .take_while(|m| m.get("role").and_then(Value::as_str) != Some("user"))
             .filter(|m| m.get("role").and_then(Value::as_str) == Some("tool"))
             .count() as u64;
-        if !tools.is_empty() && since_user < profile.tool_calls_per_turn {
-            let tool = &tools[(since_user as usize) % tools.len()];
+        // MLM-40: `tool_choice` narrows the tools the reply may call.
+        let offered: Vec<&str> = tools.iter().filter_map(tool_name).collect();
+        let choosable: Vec<&str> = match req.get("tool_choice") {
+            Some(Value::String(c)) if c == "none" => Vec::new(),
+            Some(c) if c.get("type").and_then(Value::as_str) == Some("none") => Vec::new(),
+            Some(c) if c.get("type").and_then(Value::as_str) == Some("allowed_tools") => c
+                .pointer("/allowed_tools/tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(tool_name)
+                .filter(|n| offered.contains(n))
+                .collect(),
+            _ => offered,
+        };
+        if !choosable.is_empty() && since_user < profile.tool_calls_per_turn {
             // `prompt::prompt` refused a tool without a name.
-            let name = tool
-                .pointer("/function/name")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let name = choosable[(since_user as usize) % choosable.len()];
             let id = format!("call_{}", &blake3::hash(&prompt.bytes).to_hex()[..16]);
             return Reply::Tool(json!({
                 "id": id, "type": "function",
@@ -536,6 +547,11 @@ impl Mock {
             truncated: n < drawn,
         }
     }
+}
+
+/// A tool definition's (or allowed-tools entry's) `function.name`.
+fn tool_name(t: &Value) -> Option<&str> {
+    t.pointer("/function/name").and_then(Value::as_str)
 }
 
 enum Reply {

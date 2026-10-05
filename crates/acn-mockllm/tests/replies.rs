@@ -228,3 +228,64 @@ fn a_cut_stream_has_no_usage_and_a_500_leaves_the_cache_alone() {
     assert_eq!(body(&o)["error"]["type"], "server_error");
     assert_eq!(m.cache_sizes(), (0, 0));
 }
+
+/// `with_tools`, with `tool_choice` set to `choice`.
+fn choosing(results_since_user: usize, choice: serde_json::Value) -> Vec<u8> {
+    let mut req: serde_json::Value =
+        serde_json::from_slice(&with_tools(results_since_user)).unwrap();
+    req["tool_choice"] = choice;
+    req.to_string().into_bytes()
+}
+
+fn allowed(names: &[&str]) -> serde_json::Value {
+    json!({ "type": "allowed_tools", "allowed_tools": { "mode": "auto",
+        "tools": names.iter().map(|n| json!({ "type": "function", "function": { "name": n } })).collect::<Vec<_>>() } })
+}
+
+/// Cites: MLM-40, MLM-1
+#[test]
+fn a_tool_choice_constrains_the_reply_policy() {
+    let mut m = mock_with(
+        &[profile_toml(
+            "r",
+            "automatic_prefix",
+            &["tool_calls_per_turn = 2"],
+        )],
+        3,
+    );
+    let mut reply = |req: Vec<u8>| body(&m.handle(&req, "-", 0));
+    let called = |b: &serde_json::Value| {
+        b["choices"][0]["message"]["tool_calls"][0]["function"]["name"]
+            .as_str()
+            .map(str::to_owned)
+    };
+    // `none`, in either form: a text answer whatever the tools.
+    for c in [json!("none"), json!({ "type": "none" })] {
+        let b = reply(choosing(0, c));
+        assert_eq!(b["choices"][0]["finish_reason"], "stop");
+        assert!(called(&b).is_none());
+    }
+    // `allowed_tools`: only the listed tools, in the list's order, modulo their
+    // number; names not offered are dropped.
+    let b = reply(choosing(0, allowed(&["grep"])));
+    assert_eq!(called(&b).as_deref(), Some("grep"));
+    let b = reply(choosing(0, allowed(&["grep", "read"])));
+    assert_eq!(called(&b).as_deref(), Some("grep"), "the list's order");
+    let b = reply(choosing(1, allowed(&["grep", "read"])));
+    assert_eq!(called(&b).as_deref(), Some("read"));
+    let b = reply(choosing(1, allowed(&["grep", "missing"])));
+    assert_eq!(called(&b).as_deref(), Some("grep"), "modulo the one left");
+    // Nothing left to call: a text answer.
+    for names in [&["missing"][..], &[][..]] {
+        let b = reply(choosing(0, allowed(names)));
+        assert_eq!(b["choices"][0]["finish_reason"], "stop", "{names:?}");
+    }
+    // Any other choice leaves the policy as it was.
+    for c in [
+        json!("auto"),
+        json!("required"),
+        json!({ "type": "function", "function": { "name": "grep" } }),
+    ] {
+        assert_eq!(called(&reply(choosing(0, c))).as_deref(), Some("read"));
+    }
+}

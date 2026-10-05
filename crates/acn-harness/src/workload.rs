@@ -231,6 +231,19 @@ impl Workload {
         if f.tasks.is_empty() {
             return bad("a workload has at least one task");
         }
+        // HAR-60: a child's tools are among the tools of every task that lists
+        // its subagent tool, so a forked child presents them (HAR-14).
+        for t in &f.tools {
+            let Some(c) = &t.child else { continue };
+            for task in f.tasks.iter().filter(|k| k.tools.contains(&t.name)) {
+                if let Some(n) = c.tools.iter().find(|n| !task.tools.contains(n)) {
+                    return bad(format!(
+                        "task `{}`: lists `{}` but not its child tool `{n}` (HAR-60)",
+                        task.id, t.name
+                    ));
+                }
+            }
+        }
         let mut ids = BTreeSet::new();
         for task in &f.tasks {
             let at = format!("task `{}`", task.id);
