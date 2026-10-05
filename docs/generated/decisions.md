@@ -32,3 +32,4 @@
 | [ADR-26](../decisions/ADR-26.md) | T06b2: tool choice for compaction and forked children | accepted (T06b2; Class B: `acn-harness`, `acn-mockllm`) | HAR-4, HAR-14, HAR-21, HAR-60; MLM-1, MLM-10, MLM-40; P4-12 |
 | [ADR-27](../decisions/ADR-27.md) | T06b3: a thinned verdict trajectory | accepted (T06b3; `spec-change` to SPEC 085 v0.3, and Class C in `crates/acn-hyp`) | LOOP-10, LOOP-11, LOOP-14; P4-7 |
 | [ADR-28](../decisions/ADR-28.md) | T06b4: the mock's explicit-breakpoint cache writes partition the prompt | accepted (T06b4; `spec-change` to SPEC 030 v0.3, and Class B in `acn-mockllm`) | MLM-2, MLM-21; TRC-21, HYP-12; P4-7, P4-12 |
+| [ADR-29](../decisions/ADR-29.md) | Maintainer decisions after the POC 4 mock run (2026-10-05) | accepted (maintainer decision, recorded by the agent; `spec-change`) | SPEC 080 §6 question 1; SPEC 100 P4-9, §7 questions 1 and 2; HAR-60 (issue #27); CON-21, CON-22; TASKS T06c, T06d, T07, T08 |

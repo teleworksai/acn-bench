@@ -102,11 +102,7 @@ The full grid of P4-7 is too long for CI. It runs on demand and in the nightly t
 ## 5. Live runs (L3)
 
 **P4-9** A live POC 4 verdict MUST be made of real-provider bundles only (HYP-20 refuses mixing mock and real), for at least two providers. It MUST be computed by `acn hyp verdict`, with every grid cell present at `[design].replicates` replicates for each provider (HYP-21). It MUST NOT be cited until all of the following hold:
-1. **The falsifier is settled.** A `spec-change` settles SPEC 080 §6 question 1:
-   - whether `max_over_knobs` over 384 cells needs a simultaneous interval or a null distribution of the maximum;
-   - whether knobs inert on a provider (the four breakpoint placements on automatic-caching providers, HAR-16) need conditional domains.
-
-   A `p4` successor that `supersedes` this file applies the answer.
+1. **The falsifier.** Settled by ADR-29 (SPEC 080 §6 question 1): the falsifier and the full grid stay as `hypotheses/p4.toml` states them.
 2. **The file is pinned (HYP-26).** Its pins are its workloads (P4-4), scenario hash zero (ADR-17), and one model per provider whose minimum meets P4-2. Each model's prices MUST match its row's `reference` in `PRICES`, or a Class C change updates the row. Pinning changes the file's hash, and so its seed (HYP-9), so the L1 run of record MUST be redone on the pinned file. Pins and mock runs conflict until SPEC 080 §6 is changed as §7 question 3 says.
 3. **The maintainer approves** the provider models, the request each model accepts, and the spend estimate of P4-10. The request covers the parameters a model refuses (some models refuse `temperature`, which the harness always sends today), a `max_tokens` large enough for reasoning tokens as well as the reply, and the treatment of a reply cut by its token limit (`finish_reason = "length"`), which HAR-3 counts as a success today (issue #27).
 4. **One build runs the whole campaign** (HYP-20 refuses more than one build per mode). The campaign's start and end times are recorded with its verdict.
@@ -131,7 +127,7 @@ A provider whose responses do not report cache reads makes its `cost_per_success
 ## 7. Open questions (ADR candidates)
 
 1. **Live runs.** LOOP-12's `acn loop promote` is scheduled with T30, which is M3 and hardware-gated. Hosted providers need no hardware, and T06 needs live runs at M0. Recommendation: a SPEC 085 change that lands `loop promote` for hosted providers as T06c, ahead of T30's node adapters.
-2. **Live cost and the design.** The frozen file's grid makes 384 cells per provider mandatory for a decided verdict. A smaller design cannot be expressed in SPEC 080, which knows only `grid`; one knob at a time from the control would be 8 cells per workload, and would drop "in combination", so it is a new hypothesis. Conditional domains (P4-9 item 1) alone cut an automatically caching provider's grid by 4×. Recommendation: settle P4-9 item 1 first, then price the resulting grid from the L1 run (P4-10).
+2. **Live cost and the design.** Settled by ADR-29: the full grid stays. Live runs are deferred (mocks first), and the spend estimate of P4-10 is made when they are proposed.
 3. **Pins and the mock.** HYP-20 checks `pins.models` on every bundle, mock bundles included. A pinned `p4.toml` therefore refuses its own mock runs: a provider's model cannot be both the mock profile and the real model. Recommendation: apply `pins.models` to real-provider bundles only in SPEC 080, since mock bundles are never cited (CON-26). Filed with issue #18; until then `p4.toml` stays unpinned, and its verdicts carry `unpinned-inputs` (HYP-23).
 4. **Trajectory cost.** LOOP-10(c) computes a verdict after every batch, so the L1 run of record spends most of its time on intermediate verdicts: 1 536 batches over up to 1 548 bundles. Recommendation: a SPEC 085 change that computes the trajectory at most every ⌈n/50⌉ batches, n being the grid's batch count, and at the last batch.
 5. **Live order and provider drift.** The loop runs cells in grid order, and a slice's control runs with its first batch. Over a campaign of hours or days, provider drift is confounded with the knob effects. Recommendation: at L3, run cells in a seeded shuffle and repeat the control bundle at intervals, through a SPEC 085 change with T06c.

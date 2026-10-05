@@ -59,11 +59,14 @@ T06 POC 4 spec+suite → SPEC 100 (P4): protocol, knob grid, replicate
                        writes beyond the read (#12); the L1 run of record on the mock
                        (P4-7, docs/runs/2026-10-05-p4-l1-mock.md); T06c `loop promote` for hosted
                        providers (SPEC 100 §7 Q1, a SPEC 085 change); T06d live runs
-                       (P4-9..11), after the falsifier is settled (SPEC 080 §6 Q1)
-                       and the maintainer approves models and spend.
+                       (P4-9..11). T06c and T06d are deferred: mocks first (ADR-29);
+                       the falsifier is settled as is, and live request settings are
+                       the providers' typical defaults (#27).
 T08 first trace      → lab/trace-capture graduates minimally: capture format + provenance
                        per CON-21; one phone-tethered 5G walk trace lands in
                        scenarios/measured/ (Class C from M0). Do not wait for M4.
+                       ADR-29: the first trace is the published 5G-IANA drive test
+                       (Zenodo 12664724, CC BY 4.0) until our own capture exists.
 T07 M0 gate          → SPEC 095 §M0 acceptance; docs/gates/M0.md; human sign-off.
 L-M0 exploration     → starts day one, in parallel with T01:
                        (a) lab/turn-transport — quinn prototype: one QUIC stream per
