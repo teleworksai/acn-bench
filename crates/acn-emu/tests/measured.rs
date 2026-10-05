@@ -80,7 +80,7 @@ fn a_broken_layout_is_refused() {
     let dir = tmp.path().join("t");
     std::fs::create_dir(&dir).unwrap();
     std::fs::copy(reference().join("trace.toml"), dir.join("trace.toml")).unwrap();
-    assert_eq!(load(&dir).unwrap_err().reason, "layout");
+    assert_eq!(load(&dir).unwrap_err().reason.name(), "layout");
 
     std::fs::copy(
         reference().join("provenance.toml"),
@@ -88,17 +88,27 @@ fn a_broken_layout_is_refused() {
     )
     .unwrap();
     std::fs::write(dir.join("notes.md"), "x").unwrap();
-    assert_eq!(load(&dir).unwrap_err().reason, "layout");
+    assert_eq!(load(&dir).unwrap_err().reason.name(), "layout");
+
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(dir.join("notes.md")).unwrap();
+        std::fs::remove_file(dir.join("trace.toml")).unwrap();
+        std::os::unix::fs::symlink(reference().join("trace.toml"), dir.join("trace.toml")).unwrap();
+        let e = load(&dir).unwrap_err();
+        assert_eq!(e.reason.name(), "layout", "{e}");
+        assert!(e.message.contains("not a regular file"), "{e}");
+    }
 
     let upper = tmp.path().join("Upper");
     std::fs::create_dir(&upper).unwrap();
-    assert_eq!(load(&upper).unwrap_err().reason, "layout");
+    assert_eq!(load(&upper).unwrap_err().reason.name(), "layout");
 }
 
 /// Cites: EMU-60, EMU-62, EMU-63, EMU-64
 #[test]
 fn a_malformed_trace_is_refused_by_name() {
-    let cases: [Case; 9] = [
+    let mut cases: Vec<Case> = vec![
         (
             "unknown key",
             Box::new(replace("loss = 0.0\n", "loss = 0.0\njitter_ms = 1.0\n")),
@@ -140,14 +150,68 @@ fn a_malformed_trace_is_refused_by_name() {
             "range",
         ),
         (
-            "rtt below total loss missing",
+            "incomplete rtt_ms",
             Box::new(replace(", min = 14.0, max = 57.0, stdev = 13.0 }", " }")),
             "parse",
         ),
     ];
+    cases.extend::<Vec<Case>>(vec![
+        (
+            "equal t_s",
+            Box::new(replace("t_s = 52.0", "t_s = 25.0")),
+            "samples",
+        ),
+        (
+            "negative zero first t_s",
+            Box::new(replace("t_s = 0.0", "t_s = -0.0")),
+            "samples",
+        ),
+        (
+            "negative loss",
+            Box::new(replace("loss = 0.0", "loss = -0.1")),
+            "range",
+        ),
+        (
+            "negative throughput",
+            Box::new(replace("ul_kbps = 2403.0", "ul_kbps = -1.0")),
+            "range",
+        ),
+        (
+            "negative stdev",
+            Box::new(replace("stdev = 13.0 }", "stdev = -1.0 }")),
+            "range",
+        ),
+        (
+            "negative min",
+            Box::new(replace("min = 14.0", "min = -1.0")),
+            "range",
+        ),
+        (
+            "max below avg",
+            Box::new(replace("max = 57.0", "max = 30.0")),
+            "range",
+        ),
+        (
+            "zero interval",
+            Box::new(replace(
+                "sample_interval_s = 26.0",
+                "sample_interval_s = 0.0",
+            )),
+            "range",
+        ),
+        (
+            "one sample",
+            Box::new(|s: &str| {
+                let first = s.find("[[sample]]").unwrap();
+                let second = first + 1 + s[first + 1..].find("[[sample]]").unwrap();
+                s[..second].to_owned()
+            }),
+            "samples",
+        ),
+    ]);
     for (what, edit, reason) in cases {
         let e = load_edited("trace.toml", edit);
-        assert_eq!(e.reason, reason, "{what}: {e}");
+        assert_eq!(e.reason.name(), reason, "{what}: {e}");
     }
 }
 
@@ -162,7 +226,7 @@ fn rtt_is_present_exactly_below_total_loss() {
             "",
         ),
     );
-    assert_eq!(e.reason, "samples", "{e}");
+    assert_eq!(e.reason.name(), "samples", "{e}");
     // A sample at total loss with an rtt_ms.
     let e = load_edited("trace.toml", |s| {
         let i = s.find("loss = 1.0\n").unwrap() + "loss = 1.0\n".len();
@@ -172,13 +236,13 @@ fn rtt_is_present_exactly_below_total_loss() {
             &s[i..]
         )
     });
-    assert_eq!(e.reason, "samples", "{e}");
+    assert_eq!(e.reason.name(), "samples", "{e}");
 }
 
 /// Cites: EMU-61, EMU-64
 #[test]
 fn a_provenance_that_breaks_emu_61_is_refused_by_name() {
-    let cases: [Case; 6] = [
+    let mut cases: Vec<Case> = vec![
         (
             "not redistributable",
             Box::new(replace("spdx = \"CC-BY-4.0\"", "spdx = \"CC-BY-NC-4.0\"")),
@@ -220,8 +284,58 @@ fn a_provenance_that_breaks_emu_61_is_refused_by_name() {
             "provenance",
         ),
     ];
+    cases.extend::<Vec<Case>>(vec![
+        (
+            "network",
+            Box::new(replace("network = \"testbed\"", "network = \"lab\"")),
+            "provenance",
+        ),
+        (
+            "tool hash",
+            Box::new(replace("tool_blake3 = \"", "tool_blake3 = \"0")),
+            "provenance",
+        ),
+        (
+            "date",
+            Box::new(replace("date = \"2023-01-29\"", "date = \"yesterday\"")),
+            "provenance",
+        ),
+        (
+            "empty identifier",
+            Box::new(replace(
+                "identifier = \"doi:10.5281/zenodo.12664724\"",
+                "identifier = \"\"",
+            )),
+            "provenance",
+        ),
+        (
+            "no sources",
+            Box::new(|s: &str| {
+                let i = s.find("[[conversion.sources]]").unwrap();
+                s[..i].replace("tool = \"", "sources = []\ntool = \"")
+            }),
+            "provenance",
+        ),
+        (
+            "duplicate source",
+            Box::new(|s: &str| {
+                let i = s.find("[[conversion.sources]]").unwrap();
+                format!("{s}\n{}", &s[i..])
+            }),
+            "provenance",
+        ),
+        (
+            "nothing dropped",
+            Box::new(|s: &str| {
+                let i = s.find("dropped = [").unwrap();
+                let j = i + s[i..].find("]\n").unwrap() + 1;
+                format!("{}dropped = []{}", &s[..i], &s[j..])
+            }),
+            "provenance",
+        ),
+    ]);
     for (what, edit, reason) in cases {
         let e = load_edited("provenance.toml", edit);
-        assert_eq!(e.reason, reason, "{what}: {e}");
+        assert_eq!(e.reason.name(), reason, "{what}: {e}");
     }
 }
