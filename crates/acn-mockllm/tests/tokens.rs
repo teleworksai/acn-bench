@@ -153,3 +153,27 @@ fn a_token_is_four_bytes_and_the_last_may_be_shorter() {
     let t = prompt::tokenize(b"0123456789");
     assert_eq!(t, vec![&b"0123"[..], &b"4567"[..], &b"89"[..]]);
 }
+
+/// Cites: MLM-10, MLM-40
+#[test]
+fn a_tool_choice_never_changes_the_bytes() {
+    let base = serde_json::json!({
+        "model": "m",
+        "messages": [{ "role": "user", "content": "hi" }],
+        "tools": [{ "type": "function", "function": { "name": "t", "parameters": {} } }],
+    });
+    let bytes = |v: &serde_json::Value| {
+        acn_mockllm::prompt::prompt(v, &profile("[\"tools\", \"system\", \"messages\"]"))
+            .unwrap()
+            .bytes
+    };
+    for c in [
+        serde_json::json!("none"),
+        serde_json::json!({ "type": "none" }),
+        serde_json::json!({ "type": "allowed_tools", "allowed_tools": { "mode": "auto", "tools": [] } }),
+    ] {
+        let mut v = base.clone();
+        v["tool_choice"] = c;
+        assert_eq!(bytes(&v), bytes(&base));
+    }
+}

@@ -69,12 +69,23 @@ pub struct ToolDef {
     pub parameters: Value,
 }
 
+/// What a call allows the model to call (HAR-4, HAR-14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolChoice {
+    /// No tool call: a compaction call, or a forked child with no tools.
+    Forbid,
+    /// Only these tools, by name, in this order: a forked child's own.
+    Allowed(Vec<String>),
+}
+
 /// Everything one call sends, before encoding.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Context {
     pub system: String,
     pub tools: Vec<ToolDef>,
     pub messages: Vec<Msg>,
+    /// `None` leaves the choice to the model.
+    pub tool_choice: Option<ToolChoice>,
 }
 
 /// The sampling parameters of one call.
@@ -109,7 +120,9 @@ impl Context {
     }
 
     /// The request body in `dialect`, marking breakpoints by `placement` when
-    /// `mark` (HAR-16: only on the Messages dialect and on the mock).
+    /// `mark` (HAR-16: only on the Messages dialect and on the mock), and sending
+    /// an allowed-tools restriction only when `subset` (HAR-14: `openai` and the
+    /// mock).
     #[must_use]
     pub fn encode(
         &self,
@@ -118,12 +131,34 @@ impl Context {
         sampling: Sampling,
         placement: Placement,
         mark: bool,
+        subset: bool,
     ) -> Value {
         let placement = if mark { placement } else { Placement::None };
-        match dialect {
+        let mut body = match dialect {
             Dialect::ChatCompletions => self.chat_completions(model, sampling, placement),
             Dialect::Messages => self.messages_api(model, sampling, placement),
+        };
+        if let (Some(choice), false) = (&self.tool_choice, self.tools.is_empty())
+            && let Some(map) = body.as_object_mut()
+        {
+            let value = match (choice, dialect) {
+                (ToolChoice::Forbid, Dialect::ChatCompletions) => Some(json!("none")),
+                (ToolChoice::Forbid, Dialect::Messages) => Some(json!({ "type": "none" })),
+                (ToolChoice::Allowed(names), Dialect::ChatCompletions) if subset => {
+                    Some(json!({ "type": "allowed_tools", "allowed_tools": {
+                        "mode": "auto",
+                        "tools": names.iter().map(|n| json!({ "type": "function", "function": { "name": n } })).collect::<Vec<_>>(),
+                    } }))
+                }
+                // No subset restriction on this backend: the instruction line
+                // carries it (HAR-14).
+                (ToolChoice::Allowed(_), _) => None,
+            };
+            if let Some(v) = value {
+                map.insert("tool_choice".into(), v);
+            }
         }
+        body
     }
 
     fn chat_completions(&self, model: &str, s: Sampling, placement: Placement) -> Value {

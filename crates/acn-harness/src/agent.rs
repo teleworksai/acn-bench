@@ -16,7 +16,9 @@ use rand_core::Rng as _;
 use serde_json::Value;
 
 use crate::HarnessError;
-use crate::context::{Context, Dialect, Msg, Sampling, ToolCall, ToolDef, common_prefix};
+use crate::context::{
+    Context, Dialect, Msg, Sampling, ToolCall, ToolChoice, ToolDef, common_prefix,
+};
 use crate::env::{Env, join_all};
 use crate::knobs::{Backfill, Compaction, Fanout, Knobs};
 use crate::wire::{AssembleError, Backend, Exchange, Failure, Reply, assemble};
@@ -188,6 +190,16 @@ pub struct Replicate<'a, E: Env> {
 /// Retry-after waits longer than this are cut to it (ADR-17).
 pub const MAX_RETRY_AFTER_S: u64 = 300;
 
+/// The tool choice that lets a call use only `tools` (HAR-14): none at all when
+/// there are none.
+fn choice_of(tools: &[String]) -> ToolChoice {
+    if tools.is_empty() {
+        ToolChoice::Forbid
+    } else {
+        ToolChoice::Allowed(tools.to_vec())
+    }
+}
+
 /// A context lineage (TRC-12): the main chain or one sub-agent.
 #[derive(Debug, Clone)]
 struct Lineage {
@@ -206,6 +218,9 @@ struct Lineage {
     call_index: i64,
     /// A sub-agent's first context under `fork_from_prefix`, sent as it is (HAR-14).
     first: Option<Context>,
+    /// Under `fork_from_prefix`, the only tools the sub-agent may call: it
+    /// presents `tools` (the parent's) and executes only these (HAR-14).
+    allowed: Option<Vec<String>>,
     /// The task this lineage belongs to.
     task: usize,
     /// A sub-agent's own streams; the main lineage uses the replicate's.
@@ -300,6 +315,7 @@ impl<E: Env> Replicate<'_, E> {
             system: self.system(&lin.system_base, lin.turn_start),
             tools: self.tool_defs(lin)?,
             messages: lin.messages.clone(),
+            tool_choice: lin.allowed.as_ref().map(|a| choice_of(a)),
         })
     }
 
@@ -312,6 +328,7 @@ impl<E: Env> Replicate<'_, E> {
                     &self.setup.model,
                     self.sampling(1),
                     crate::knobs::Placement::None,
+                    false,
                     false,
                 );
                 acn_mockllm::prompt::prompt(&json, profile)
@@ -352,6 +369,7 @@ impl<E: Env> Replicate<'_, E> {
             sampling,
             s.knobs.cache_breakpoint_placement,
             s.backend.marks_breakpoints(),
+            s.backend.restricts_tools(),
         ))
         .map_err(|e| HarnessError::Internal(e.to_string()))?;
         let compared = self.compared(&ctx)?;
@@ -568,7 +586,8 @@ impl<E: Env> Replicate<'_, E> {
         requesting: i64,
         parent: &Cx,
     ) -> Result<String, HarnessError> {
-        let available = &lin.tools;
+        // A forked child executes only its own tools (HAR-14).
+        let available = lin.allowed.as_ref().unwrap_or(&lin.tools);
         let start = self.env.now();
         let tool = self
             .setup
@@ -636,6 +655,7 @@ impl<E: Env> Replicate<'_, E> {
             last_uncached: None,
             call_index: 0,
             first: None,
+            allowed: None,
             task: task_index,
             own: None,
         };
@@ -735,6 +755,9 @@ impl<E: Env> Replicate<'_, E> {
                 cctx.messages.push(Msg::User {
                     text: s.workload.agent.summary_instruction.clone(),
                 });
+                // HAR-4: the same tools, so the same prefix; no tool call, so a
+                // text summary.
+                cctx.tool_choice = (!cctx.tools.is_empty()).then_some(ToolChoice::Forbid);
                 let c = self
                     .call(
                         lin,
@@ -888,10 +911,17 @@ impl<E: Env> Replicate<'_, E> {
             let instruction = format!("{}\n(child {} of {width})", child.instruction, i + 1);
             let mut lin = match self.setup.knobs.fanout_prompting {
                 Fanout::ForkFromPrefix => {
+                    // HAR-14: the parent's tools, but only the child's to call.
+                    let line = if child.tools.is_empty() {
+                        "Use no tools.".to_owned()
+                    } else {
+                        format!("Use only these tools: {}.", child.tools.join(", "))
+                    };
                     let mut first = spawning.context.clone();
                     first.messages.push(Msg::User {
-                        text: instruction.clone(),
+                        text: format!("{instruction}\n{line}"),
                     });
+                    first.tool_choice = Some(choice_of(&child.tools));
                     Lineage {
                         system_base: parent.system_base.clone(),
                         tools: parent.tools.clone(),
@@ -901,6 +931,7 @@ impl<E: Env> Replicate<'_, E> {
                         last_uncached: None,
                         call_index: 0,
                         first: Some(first),
+                        allowed: Some(child.tools.clone()),
                         task: parent.task,
                         own,
                     }
@@ -914,6 +945,7 @@ impl<E: Env> Replicate<'_, E> {
                     last_uncached: None,
                     call_index: 0,
                     first: None,
+                    allowed: None,
                     task: parent.task,
                     own,
                 },

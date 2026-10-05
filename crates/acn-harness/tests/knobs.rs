@@ -363,6 +363,7 @@ fn breakpoints_go_where_the_placement_says_and_only_where_they_are_read() {
     // Breakpoints are sent only on the Messages dialect and to the mock.
     let ctx = Context {
         system: "s".into(),
+        tool_choice: None,
         tools: vec![ToolDef {
             name: "t".into(),
             description: "d".into(),
@@ -381,8 +382,11 @@ fn breakpoints_go_where_the_placement_says_and_only_where_they_are_read() {
             Placement::SystemAndTools,
             Placement::RollingTail,
         ] {
-            assert_eq!(count_marks(&ctx.encode(d, "m", sampling, p, false)), 0);
-            assert!(count_marks(&ctx.encode(d, "m", sampling, p, true)) > 0);
+            assert_eq!(
+                count_marks(&ctx.encode(d, "m", sampling, p, false, false)),
+                0
+            );
+            assert!(count_marks(&ctx.encode(d, "m", sampling, p, true, false)) > 0);
         }
     }
 }
@@ -484,6 +488,7 @@ fn only_anthropic_and_the_mock_are_ever_sent_a_breakpoint() {
     use acn_harness::wire::Backend;
     let ctx = Context {
         system: "s".into(),
+        tool_choice: None,
         tools: vec![ToolDef {
             name: "t".into(),
             description: "d".into(),
@@ -512,7 +517,7 @@ fn only_anthropic_and_the_mock_are_ever_sent_a_breakpoint() {
         ]
         .iter()
         .map(|p| {
-            ctx.encode(b.dialect(), "m", sampling, *p, b.marks_breakpoints())
+            ctx.encode(b.dialect(), "m", sampling, *p, b.marks_breakpoints(), false)
                 .to_string()
         })
         .collect();
