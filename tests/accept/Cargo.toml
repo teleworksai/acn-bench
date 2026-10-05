@@ -50,3 +50,7 @@ path = "hyp_verdict.rs"
 [[test]]
 name = "evidence_chain"
 path = "evidence_chain.rs"
+
+[[test]]
+name = "p4"
+path = "p4.rs"

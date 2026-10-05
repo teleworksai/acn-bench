@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 7 · IDs: 170 · MUSTs: 164 · implemented: 125 · cited: 142
+Specs: 7 · IDs: 171 · MUSTs: 165 · implemented: 131 · cited: 148
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -28,7 +28,7 @@ Specs: 7 · IDs: 170 · MUSTs: 164 · implemented: 125 · cited: 142
 | CON-15 | `000-constitution.md` | 4 | MUST | no | — |
 | CON-16 | `000-constitution.md` | 4 | MUST | no | `crates/xtask/tests/workspace.rs` `the_pr_template_asks_for_requirement_ids_class_and_labels` |
 | CON-17 | `000-constitution.md` | 5 | MUST | no | — |
-| CON-18 | `000-constitution.md` | 5 | MUST | no | `crates/acn-hyp/tests/format.rs` `a_control_is_a_nonempty_config_within_domains_or_a_workload` |
+| CON-18 | `000-constitution.md` | 5 | MUST | no | `crates/acn-hyp/tests/format.rs` `a_control_is_a_nonempty_config_within_domains_or_a_workload`<br>`tests/accept/p4.rs` `the_mock_reacts_to_a_timestamp_in_the_system_prompt_as_built` |
 | CON-19 | `000-constitution.md` | 5 | MUST | yes | `crates/xtask/tests/workspace.rs` `every_crate_forbids_unsafe_and_inherits_the_lint_posture`<br>`crates/xtask/tests/workspace.rs` `the_workspace_lint_table_is_exactly_the_agreed_posture`<br>`crates/xtask/tests/workspace.rs` `every_path_package_in_the_lockfile_is_a_workspace_member` |
 | CON-20 | `000-constitution.md` | 5 | MUST | yes | `crates/xtask/tests/workspace.rs` `no_substrate_crate_requires_a_robotics_or_dataflow_framework`<br>`crates/xtask/tests/workspace.rs` `the_framework_matcher_catches_renames_and_targets_and_spares_lookalikes`<br>`crates/xtask/tests/workspace.rs` `deny_toml_is_exactly_the_agreed_policy` |
 | CON-21 | `000-constitution.md` | 5 | MUST | no | — |
@@ -165,14 +165,15 @@ Specs: 7 · IDs: 170 · MUSTs: 164 · implemented: 125 · cited: 142
 | LOOP-21 | `085-feedback-loop.md` | 3 | MUST | no | — |
 | LOOP-30 | `085-feedback-loop.md` | 4 | MUST | no | — |
 | LOOP-31 | `085-feedback-loop.md` | 4 | MUST | no | — |
-| P4-1 | `100-p4-harness-discipline.md` | 2 | MUST | no | — |
-| P4-2 | `100-p4-harness-discipline.md` | 2 | MUST | no | — |
-| P4-3 | `100-p4-harness-discipline.md` | 2 | MUST | no | — |
+| P4-1 | `100-p4-harness-discipline.md` | 2 | MUST | yes | `crates/acn-hyp/tests/existing_files.rs` `p4_names_the_spec_100_providers_and_workloads_and_pins_them_when_pinned`<br>`tests/accept/p4.rs` `the_p4_workloads_meet_the_spec`<br>`tests/accept/p4.rs` `the_run_of_record_is_accepted_at_its_budget_and_refused_below_it` |
+| P4-2 | `100-p4-harness-discipline.md` | 2 | MUST | yes | `tests/accept/p4.rs` `the_p4_workloads_meet_the_spec` |
+| P4-3 | `100-p4-harness-discipline.md` | 2 | MUST | yes | `tests/accept/p4.rs` `the_p4_workloads_meet_the_spec`<br>`tests/accept/p4.rs` `every_knob_changes_the_requests_of_some_p4_workload` |
 | P4-4 | `100-p4-harness-discipline.md` | 2 | MUST | no | — |
-| P4-5 | `100-p4-harness-discipline.md` | 3 | MUST | no | — |
+| P4-5 | `100-p4-harness-discipline.md` | 3 | MUST | yes | `crates/acn-hyp/tests/existing_files.rs` `p4_names_the_spec_100_providers_and_workloads_and_pins_them_when_pinned`<br>`tests/accept/p4.rs` `the_mock_reacts_to_a_timestamp_in_the_system_prompt_as_built`<br>`tests/accept/p4.rs` `the_run_of_record_is_accepted_at_its_budget_and_refused_below_it` |
 | P4-6 | `100-p4-harness-discipline.md` | 3 | — | no | — |
-| P4-7 | `100-p4-harness-discipline.md` | 3 | MUST | no | — |
-| P4-8 | `100-p4-harness-discipline.md` | 4 | MUST | no | — |
+| P4-7 | `100-p4-harness-discipline.md` | 3 | MUST | yes | `tests/accept/p4.rs` `the_run_of_record_is_accepted_at_its_budget_and_refused_below_it` |
+| P4-12 | `100-p4-harness-discipline.md` | 3 | MUST | no | — |
+| P4-8 | `100-p4-harness-discipline.md` | 4 | MUST | yes | `tests/accept/p4.rs` `the_p4_workloads_meet_the_spec`<br>`tests/accept/p4.rs` `every_knob_changes_the_requests_of_some_p4_workload`<br>`tests/accept/p4.rs` `the_mock_reacts_to_a_timestamp_in_the_system_prompt_as_built` |
 | P4-9 | `100-p4-harness-discipline.md` | 5 | MUST | no | — |
 | P4-10 | `100-p4-harness-discipline.md` | 5 | MUST | no | — |
 | P4-11 | `100-p4-harness-discipline.md` | 5 | MUST | no | — |

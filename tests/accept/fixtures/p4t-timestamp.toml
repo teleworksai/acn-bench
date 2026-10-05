@@ -1,0 +1,37 @@
+# tests/accept/fixtures/p4t-timestamp.toml — the reduced POC 4 loop of SPEC 100
+# P4-8(c): `hypotheses/p4.toml` cut down to one knob, two providers and one
+# workload, with its measures, replicates, guard and falsifier. A candidate: it
+# checks that the mock's model of caching reacts as built, and is never a result.
+
+[poc]
+id = "p4t"
+title = "Timestamp in the system prompt, on the mock"
+
+[hypothesis]
+statement = "A timestamp in the system prompt moves cost per successful task by more than the run-to-run noise floor, on each provider's mock profile."
+
+[varies]
+timestamp_in_system_prompt = { kind = "bool" }
+provider                   = { kind = "enum", values = ["anthropic", "openai"] }
+
+[measures]
+primary   = ["cached_token_ratio", "ttft_p50_ms", "ttft_p99_ms", "cost_per_success"]
+secondary = ["input_tokens_per_turn", "compactions_per_session"]
+
+[control]
+description = "The harness's default configuration: the timestamp is in the system prompt."
+config = { timestamp_in_system_prompt = true }
+
+[design]
+search = "grid"
+replicates = 20
+twin_required = false
+backends = ["mockllm"]
+min_providers_for_verdict = 2
+
+[falsifier]
+predicate = "max_over_knobs(abs(effect(cost_per_success))) < noise_floor(cost_per_success, control, ci = 0.95)"
+inconclusive_if = "replicates < 20 or providers_reported < 2"
+
+[expected]
+outcome = "pass"

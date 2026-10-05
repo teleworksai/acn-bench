@@ -88,3 +88,36 @@ fn p17_loads_unedited_with_its_two_selects_and_at_clause() {
     assert_eq!(h.design().search, "bisect");
     assert_eq!(h.design().replicates, 10);
 }
+
+/// Cites: P4-5, P4-1
+#[test]
+fn p4_names_the_spec_100_providers_and_workloads_and_pins_them_when_pinned() {
+    use acn_hyp::file::Domain;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let h = acn_hyp::load(&root.join("hypotheses/p4.toml")).unwrap();
+    let values = |name: &str| match &h.params()[name].domain {
+        Domain::Enum(v) => v.clone(),
+        d => panic!("{name}: {d:?}"),
+    };
+    assert_eq!(
+        values("provider"),
+        ["anthropic", "openai", "vllm", "sglang"]
+    );
+    assert_eq!(values("workload"), ["coding", "retrieval", "fanout"]);
+    // P4-1: each value has its workload file. Once the file is pinned, P4-4
+    // holds here: the pins are exactly their hashes. Unpinned, the check is
+    // not yet in force, and P4-4 is left out of scope until then.
+    let mut hashes: Vec<String> = ["coding", "retrieval", "fanout"]
+        .iter()
+        .map(|v| {
+            let bytes = std::fs::read(root.join(format!("workloads/p4-{v}.toml"))).unwrap();
+            blake3::hash(&bytes).to_hex().to_string()
+        })
+        .collect();
+    hashes.sort();
+    if let Some(pins) = &h.design().pins {
+        let mut pinned = pins.workload.clone();
+        pinned.sort();
+        assert_eq!(pinned, hashes, "P4-4");
+    }
+}

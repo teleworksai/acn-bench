@@ -70,3 +70,10 @@ ids = [
 # vector exist; acn_emu::{clock,rng} and the ranged/distribution vectors land in T10–T12).
 # CON-14 is cited by the pr-check tests but stays out of scope: the label rule is
 # enforced, the "states the rationale and the IDs" clause is not machine-checkable.
+
+[[implemented]]
+spec = "100"
+ids = ["P4-1", "P4-2", "P4-3", "P4-5", "P4-7", "P4-8"]
+# T06b (ADR-25): the workloads and the mock suite. P4-4 enters scope when
+# hypotheses/p4.toml is pinned (its check is in existing_files.rs); P4-9..12 are
+# T06b2's and the live tier's (T06d).

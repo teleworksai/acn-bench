@@ -107,6 +107,17 @@ fn a_grid_loop_runs_every_cell_in_order_and_writes_its_report() {
         "and nothing else"
     );
     assert_eq!(r["control_effect"].as_array().unwrap().len(), 2);
+    // CON-18: each effect with its replicate counts, treatment and control.
+    for e in r["control_effect"].as_array().unwrap() {
+        assert_eq!(
+            (
+                e["treatment_replicates"].as_i64(),
+                e["control_replicates"].as_i64()
+            ),
+            (Some(4), Some(4)),
+            "{e}"
+        );
+    }
     assert_eq!(r["best"]["quantity"], "cached_token_ratio");
     assert!(r["worst"]["effect"].is_number());
     assert_eq!(r["lab_note"]["question"], h.statement());
@@ -814,7 +825,8 @@ fn the_rendering_says_when_no_effect_is_defined() {
         "verdict": "inconclusive", "reasons": [{"reason": "guard", "refers": []}],
         "best": null, "worst": null,
         "control_effect": [{"slice": "provider=p1", "cell": "x=1", "quantity": "q",
-                            "effect": null, "ci_low": null, "ci_high": null}],
+                            "effect": null, "ci_low": null, "ci_high": null,
+                            "treatment_replicates": 4, "control_replicates": null}],
         "lab_note": {"question": "q?", "varied": {}, "next_layer": "L3",
                      "observed": {"verdict": "inconclusive", "reasons": ["guard"], "batches": 0,
                                   "bundles": 0, "stop": "budget"}},
@@ -823,7 +835,9 @@ fn the_rendering_says_when_no_effect_is_defined() {
     assert!(md.contains("- best: none (no defined effect)."), "{md}");
     assert!(md.contains("- worst: none (no defined effect)."), "{md}");
     assert!(
-        md.contains("| `provider=p1` | x=1 | q | undefined | [undefined, undefined] |"),
+        md.contains(
+            "| `provider=p1` | x=1 | q | undefined | [undefined, undefined] | 4 / undefined |"
+        ),
         "{md}"
     );
     assert!(md.contains("reasons: guard"), "{md}");

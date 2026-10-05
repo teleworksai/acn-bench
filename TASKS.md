@@ -52,8 +52,10 @@ T06 POC 4 spec+suite → SPEC 100 (P4): protocol, knob grid, replicate
                        (mock-gated). Then `live` runs against ≥2 real providers with
                        cached-token counters; one bundle and one verdict per provider
                        attached to the PR. Lands in parts: T06a SPEC 100 (spec-change);
-                       T06b the three P4 workloads, tests/accept/p4.rs and the L1 run
-                       of record on the mock (P4-1..8); T06c `loop promote` for hosted
+                       T06b the three P4 workloads and tests/accept/p4.rs (P4-1..8);
+                       T06b2 SPEC 040/030 fixes for compaction summaries, forked
+                       children and the tool-order confound (#24-#26, P4-12), then
+                       the L1 run of record on the mock (P4-7); T06c `loop promote` for hosted
                        providers (SPEC 100 §7 Q1, a SPEC 085 change); T06d live runs
                        (P4-9..11), after the falsifier is settled (SPEC 080 §6 Q1)
                        and the maintainer approves models and spend.

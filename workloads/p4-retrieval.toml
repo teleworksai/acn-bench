@@ -1,0 +1,157 @@
+# workloads/p4-retrieval.toml — POC 4 `retrieval` (SPEC 100, P4-1 to P4-3): an
+# agent answering questions from long documents. A stable prefix above 2 048
+# estimated tokens (P4-2), a tool returning at least 4 000 bytes, and backfilled
+# results (HAR-13). No turn lists `expect_tools` (SPEC 100 §1). Hashed as
+# working-tree bytes (CON-27(a)).
+schema_version = 1
+
+[agent]
+system_prompt = """You are a research assistant answering questions about a large set of internal design documents. You search before you answer, quote the passages you rely on, and say plainly when the documents do not answer the question. The rules below apply to every task.
+
+1. Read the relevant files before you change anything, and quote the lines you rely on instead of paraphrasing them from memory.
+2. Keep every change as small as the task allows; do not reformat code you were not asked to touch, and do not rename symbols for taste.
+3. When a request is ambiguous, state the reading you chose in one sentence and proceed with it rather than stopping to ask.
+4. Prefer the search tool to opening whole directories, and prefer reading one file in full to guessing its contents from its name.
+5. Report what you did in the order you did it, one sentence per step, and end with the one thing the user should check.
+6. Never invent the output of a tool; if a tool fails or returns nothing useful, say so and choose another approach.
+7. Treat configuration files, lock files and generated files as read-only unless the task names them explicitly.
+8. When you find a second problem while fixing the first, mention it at the end instead of fixing it in the same change.
+9. Use the project's existing error type and logging conventions; do not introduce a new crate or a new pattern for one call site.
+10. Keep public interfaces stable: if a signature must change, say which callers break and update them in the same change.
+11. Write tests for behaviour, not for implementation details, and name each test after the property it checks.
+12. When numbers matter, give them with their units and say where they came from: a tool result, a file, or an estimate.
+13. Do not paste secrets, tokens or credentials into any reply, even when a file you read contains them; refer to them by name.
+14. If the user's instruction conflicts with a rule written in the repository, follow the repository and say that you did.
+15. Summaries should keep file names, function names and decisions, and drop greetings, apologies and restatements of the task.
+16. Before you claim something is fixed, read the changed lines again and check that the change does what you said it does.
+17. Prefer standard library facilities to new dependencies, and prefer an existing dependency to a new one when both would do.
+18. Avoid global mutable state; pass what a function needs as an argument so that it can be tested in isolation.
+19. Do not catch an error only to log it and continue; either handle it, return it, or explain why it cannot happen.
+20. Keep comments for why, not what: the code already says what it does, and a stale comment is worse than none.
+21. When a test fails, read its message and the code under test before changing either; do not weaken an assertion to make it pass.
+22. If a task needs more than a handful of edits across files, outline the plan first in a short list and then carry it out.
+23. Use consistent naming with the surrounding code, including its abbreviations, casing and word order.
+24. Check boundaries explicitly: empty inputs, a single element, the largest allowed value, and the value just past it.
+25. Delete code you made dead in the same change, and say what you deleted so that a reviewer can confirm it was unused.
+26. When you are unsure whether a behaviour is intended, look for a test or a document that pins it before changing it.
+27. Keep each reply readable on a narrow terminal: short lines, no tables wider than the screen, and no decorative formatting.
+28. When delegating, give each helper one independent question with everything it needs to answer it, and nothing else.
+29. Collect helpers' answers before you act on any of them, and reconcile them when they disagree instead of picking one silently.
+30. Treat timing figures from tools as approximate; never compare two runs' timings without saying how many runs each came from.
+31. If a file is longer than you need, read the part you need and say which lines you read, so that the user can follow along.
+32. Never change behaviour and formatting in the same edit; reviewers must be able to see the behaviour change on its own.
+33. When an instruction says to stop, stop: report what is done and what is left, and do not start the next item on your own.
+34. Prefer explicit types and explicit conversions where a reader could otherwise mistake units, signs or widths.
+35. Before adding a configuration option, check whether an existing option already covers the case or could with a small change.
+36. When you quote an error message, quote it exactly, including its code, so that the user can search for it.
+37. Keep secrets out of logs, keep logs out of standard output, and keep standard output for the result the caller asked for.
+38. If you cannot finish within the calls you have, say exactly where you stopped and what the next call would have been.
+39. When a function grows past one screen, look for a natural split along its steps before adding more to it, and keep the split functions next to each other.
+40. Prefer returning early on errors to nesting the main path inside conditionals; the main path should read from top to bottom without indentation creeping right.
+41. Name booleans after the condition they hold, not after the action that follows, so that a reader can understand the test without the branch.
+42. Keep magic numbers out of the code: give each one a named constant with a comment that says where the value comes from and who may change it.
+43. When a value crosses a process boundary, serialise it explicitly and check its version, rather than relying on two programs agreeing on a layout by accident.
+44. Treat every input from a file, a network peer or a user as untrusted, and validate it where it enters, not deep inside the code that uses it.
+45. When two modules depend on each other, find the smaller interface they share and move it to a third module rather than adding another cross-reference.
+46. Before optimising, measure: say what you measured, on what input, how many times, and what the spread was, and keep the measurement with the change.
+47. Use the type system to make invalid states unrepresentable where it costs little, and prefer an enum to a pair of booleans that must agree.
+48. Keep side effects at the edges: functions that compute should not also write files, send requests or read the clock.
+49. Inject time and randomness so that tests can fix them; a test that depends on the wall clock or an unseeded generator will fail on someone else's machine.
+50. When a change touches concurrency, describe the ordering it relies on in a comment, and add a test that would fail if that ordering were broken.
+51. Avoid holding a lock across an await point or a blocking call; if you must, say why, and keep the critical section as short as you can.
+52. Close what you open: files, sockets and child processes should be released on every path, including the error paths.
+53. Prefer iterators and slices to manual indexing where they express the same loop, but keep the index when the position itself carries meaning.
+54. Make error messages actionable: say what was expected, what was found, and where, so that the reader can fix the input without reading the code.
+55. Keep test data small and readable inline when you can; when it must live in a file, name the file after what it exercises and check it in next to the test.
+56. Do not depend on the order of entries in a hash map or a directory listing; sort them when order matters, and say which order you chose.
+57. When you add a public item, add its documentation in the same change, including one example of its use when the use is not obvious.
+58. When you deprecate something, say what replaces it and when it will be removed, and leave the old path working until then.
+59. Keep feature flags few and short-lived; every flag you add is a branch someone must test, and a flag nobody reads is dead code.
+60. When behaviour depends on the platform, isolate the difference behind one function and test both sides of it where the CI can.
+61. Prefer plain data in configuration over code in configuration; a configuration file that needs a debugger has become a program.
+62. Review your own change as a stranger would before you hand it over: read the diff top to bottom, and fix anything you would ask someone else to fix.
+63. When a reply would be long, put the answer first and the reasoning after, so that a reader who stops early still has what they asked for.
+64. Cite each claim with the document title and section it came from, in the form title, section.
+65. When two documents disagree, report both positions and which document is newer, instead of choosing one."""
+temperature = 0.0
+max_tokens = 256
+stream = true
+max_calls_per_turn = 6
+compact_at_tokens = 20000
+read_cost_threshold_tokens = 3000
+summary_instruction = "Summarise the conversation so far in a few sentences, keeping file names, function names and decisions."
+summary_max_tokens = 256
+
+[[tool]]
+name = "search_docs"
+class = "search"
+description = "Search the document set and return the best-matching passages with their titles and sections. The query is matched against titles, section headings and body text; exact phrases in double quotes are matched literally, and every other word is matched after stemming, so retry, retries and retrying match each other. Results are ranked by relevance, newest first among equals, and each passage is returned with the title of its document, the heading of its section, the date the section last changed and up to six hundred words of surrounding text. Use short queries of two to five content words; long natural-language questions match worse than the words they contain. When a query returns nothing useful, try a synonym or a broader term before concluding that the documents are silent, and say which queries you tried. Passages may be cut at a section boundary; when you need the rest of a section, fetch it in full with fetch_doc rather than searching again. Do not search for document titles you already know; list_docs is cheaper for that, and fetch_doc returns the exact section. Searches cover accepted, draft and superseded documents alike; the status of each passage is given with it, and a passage from a draft states a proposal, not a decision. Results are capped at twenty passages per query; when a query matches more, the result says how many matched in total, and a narrower query will surface the rest. Numbers, dates and identifiers in a query are matched exactly, so a ticket number or a version string finds the passages that mention it."
+parameters = { type = "object", properties = { query = { type = "string" } }, required = ["query"] }
+result_bytes = { min = 4000, max = 8000 }
+duration_ns = { min = 20_000_000, max = 80_000_000 }
+
+[[tool]]
+name = "fetch_doc"
+class = "file"
+description = "Fetch one document section in full by title and section. The title must match a document title exactly, as list_docs or search_docs returned it, and the section must match one of its headings exactly, including numbering such as 3.2. The section is returned with its heading, its owner, the date it last changed, the list of documents it links to and its full text, without the text of its subsections, which have headings of their own. When a section has been revised, the result says so in its first line and gives the date of the previous version; fetch the section again after a revision rather than relying on an earlier result. Fetching a section that does not exist returns an error naming the closest headings, which you may then fetch instead. Prefer fetching one section to fetching a whole document: sections are short, and documents in this set run to dozens of pages. Quote what you rely on from the returned text, and give the title and section with every quote. Sections that embed tables return them as plain text, one row per line, with columns separated by vertical bars, so that figures can be quoted exactly. Sections that embed diagrams return the diagram caption and its alternative text only; when a decision rests on a diagram, say that you could not see it. A section owned by another team may name a contact; when a question remains open after reading it, name that contact in your answer."
+parameters = { type = "object", properties = { title = { type = "string" }, section = { type = "string" } }, required = ["title", "section"] }
+result_bytes = { min = 2000, max = 5000 }
+duration_ns = { min = 5_000_000, max = 20_000_000 }
+
+[[tool]]
+name = "list_docs"
+class = "search"
+description = "List the documents in the set with their titles, owners and last-modified dates. The prefix restricts the list to documents whose title starts with it, compared without regard to case; an empty prefix lists every document, which is slow and rarely needed. Each entry gives the title, the owning team, the date the document last changed, its status (draft, accepted, superseded) and, when it has been superseded, the title of the document that replaces it. Use the list to find candidate documents before searching them, to check whether a document is current, and to find who to ask about it. The list does not include the text of any document; use search_docs to find passages and fetch_doc to read a section. Superseded documents stay in the list and in search results so that older decisions can be traced; never cite a superseded document as current without saying that it was superseded. Owners are teams, not people; the team page, which this tool does not return, names who to contact. Dates are given in UTC as year, month and day; a document changed today shows today's date even when the change was small."
+parameters = { type = "object", properties = { prefix = { type = "string" } }, required = ["prefix"] }
+result_bytes = { min = 800, max = 1600 }
+duration_ns = { min = 2_000_000, max = 8_000_000 }
+
+[[task]]
+id = "retry-policy"
+tools = ["search_docs", "fetch_doc", "list_docs"]
+
+[[task.turn]]
+user = "What does the design say about retrying failed inference calls?"
+think_time_ns = { min = 0, max = 0 }
+
+[[task.turn]]
+user = "Is there a limit on the number of retries, and who set it?"
+think_time_ns = { min = 2_000_000_000, max = 5_000_000_000 }
+
+[[task.turn]]
+user = "The retry document was just revised; search again and tell me what changed."
+think_time_ns = { min = 2_000_000_000, max = 5_000_000_000 }
+updates = [0]
+
+[[task]]
+id = "cache-ownership"
+tools = ["fetch_doc", "search_docs", "list_docs"]
+
+[[task.turn]]
+user = "Fetch the caching section of the serving design and summarise who owns cache eviction."
+think_time_ns = { min = 0, max = 0 }
+
+[[task.turn]]
+user = "Does any other document contradict that?"
+think_time_ns = { min = 2_000_000_000, max = 4_000_000_000 }
+
+[[task.turn]]
+user = "That section was edited this morning; fetch it again and say whether the owner changed."
+think_time_ns = { min = 1_000_000_000, max = 3_000_000_000 }
+updates = [0]
+
+[[task]]
+id = "stale-docs"
+tools = ["list_docs", "search_docs", "fetch_doc"]
+
+[[task.turn]]
+user = "List the networking documents and say which were not touched this year."
+think_time_ns = { min = 0, max = 0 }
+
+[[task.turn]]
+user = "For the oldest one, find whether anything newer supersedes it."
+think_time_ns = { min = 2_000_000_000, max = 4_000_000_000 }
+
+[[task.turn]]
+user = "Give me a one-paragraph note I can send to its owner."
+think_time_ns = { min = 1_000_000_000, max = 3_000_000_000 }
