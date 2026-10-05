@@ -253,10 +253,12 @@ fn a_request_can_read_a_shorter_marked_prefix_and_write_a_longer_one() {
         (0, 16)
     );
     // The system element is 16 tokens; the user element `{"content":C,"role":"user"}\n`
-    // another 16. cache_write_tokens is the longest prefix written (ADR-16).
+    // another 16. cache_write_tokens is what is written beyond the read: the
+    // longest prefix written, 32, less the 16 read (MLM-21 v0.3, issue #12), so
+    // that uncached, read and written partition the prompt.
     assert_eq!(
         cached(&mut m, &with_system(&s33, &[(C, true)], "e"), "-", 1),
-        (16, 32)
+        (16, 16)
     );
     assert_eq!(
         cached(&mut m, &with_system(&s33, &[(C, true)], "e"), "-", 2),
@@ -356,5 +358,75 @@ fn profiles_never_share_cache_entries() {
         cached(&mut m, &user("a1", C), "-", 20),
         (16, 0),
         "a2's short ttl does not expire a1's entries"
+    );
+}
+
+/// Cites: MLM-21, MLM-2
+#[test]
+fn uncached_read_and_written_tokens_partition_the_prompt_as_a_breakpoint_rolls() {
+    // A growing conversation whose system and last message are marked, as
+    // `rolling_tail` marks them. The previous request's last-message prefix is
+    // not marked again, and MLM-21 reads only marked prefixes, so each request
+    // reads the system prefix and writes the new marked prefix beyond it. The
+    // write is only what lies beyond the read (issue #12), so the three counts
+    // never exceed the prompt.
+    let mut m = mock_with(&[profile_toml("e", "explicit_breakpoints", &[])], 1);
+    let s33 = "s".repeat(33);
+    let turns = [
+        "one two three four",
+        "five six seven",
+        "eight nine ten eleven twelve",
+    ];
+    for k in 1..=turns.len() {
+        let mut users: Vec<(&str, bool)> = turns[..k].iter().map(|t| (*t, false)).collect();
+        if let Some(last) = users.last_mut() {
+            last.1 = true;
+        }
+        let o = m.handle(&with_system(&s33, &users, "e"), "-", k as i64);
+        assert_eq!(o.status, 200);
+        let usage = &common::body(&o)["usage"];
+        let prompt = usage["prompt_tokens"].as_u64().unwrap();
+        let read = usage["prompt_tokens_details"]["cached_tokens"]
+            .as_u64()
+            .unwrap();
+        let write = usage["prompt_tokens_details"]["cache_write_tokens"]
+            .as_u64()
+            .unwrap();
+        assert!(
+            read + write <= prompt,
+            "turn {k}: {read} + {write} > {prompt}"
+        );
+        if k > 1 {
+            // Exactly the system prefix (16 tokens, stored by the first
+            // request) is read, and the write is the rest of the new prefix.
+            assert_eq!(read, 16, "turn {k}");
+            assert!(write > 0, "turn {k}");
+        }
+    }
+}
+
+/// Cites: MLM-21
+#[test]
+fn a_new_breakpoint_inside_the_prefix_read_is_stored_and_costs_nothing() {
+    let mut m = mock_with(&[profile_toml("e", "explicit_breakpoints", &[])], 1);
+    let s33 = "s".repeat(33);
+    // A marks only the long prefix L: system and user.
+    let only_long = json!({ "model": "e", "messages": [
+        { "role": "system", "content": s33 },
+        { "role": "user", "content": C, "cache_control": { "type": "ephemeral" } },
+    ] })
+    .to_string()
+    .into_bytes();
+    assert_eq!(cached(&mut m, &only_long, "-", 0), (0, 32));
+    // B marks the short prefix S (the system) too: it reads L, and S lies inside
+    // the read, so nothing more is written.
+    assert_eq!(
+        cached(&mut m, &with_system(&s33, &[(C, true)], "e"), "-", 1),
+        (32, 0)
+    );
+    // S was stored all the same: C, marking only S, reads it.
+    assert_eq!(
+        cached(&mut m, &with_system(&s33, &[("other", false)], "e"), "-", 2),
+        (16, 0)
     );
 }
