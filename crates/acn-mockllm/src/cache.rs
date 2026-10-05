@@ -118,9 +118,11 @@ impl Cache {
                     }
                     self.prefixes.insert(*h, now);
                 }
+                // MLM-21: tokens written beyond the read, as Anthropic counts
+                // them, so that uncached, read and written partition the prompt.
                 Accounting {
                     cached_tokens: read,
-                    cache_write_tokens: write,
+                    cache_write_tokens: write.saturating_sub(read),
                 }
             }
             CacheModel::AutomaticPrefix => {

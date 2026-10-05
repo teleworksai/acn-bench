@@ -253,10 +253,12 @@ fn a_request_can_read_a_shorter_marked_prefix_and_write_a_longer_one() {
         (0, 16)
     );
     // The system element is 16 tokens; the user element `{"content":C,"role":"user"}\n`
-    // another 16. cache_write_tokens is the longest prefix written (ADR-16).
+    // another 16. cache_write_tokens is what is written beyond the read: the
+    // longest prefix written, 32, less the 16 read (MLM-21 v0.3, issue #12), so
+    // that uncached, read and written partition the prompt.
     assert_eq!(
         cached(&mut m, &with_system(&s33, &[(C, true)], "e"), "-", 1),
-        (16, 32)
+        (16, 16)
     );
     assert_eq!(
         cached(&mut m, &with_system(&s33, &[(C, true)], "e"), "-", 2),
@@ -357,4 +359,47 @@ fn profiles_never_share_cache_entries() {
         (16, 0),
         "a2's short ttl does not expire a1's entries"
     );
+}
+
+/// Cites: MLM-21, MLM-2
+#[test]
+fn uncached_read_and_written_tokens_partition_the_prompt_as_a_breakpoint_rolls() {
+    // A growing conversation whose last message is marked, as `rolling_tail`
+    // marks it: each request reads the previous marked prefix and writes a
+    // longer one. The write is only what lies beyond the read (issue #12), so
+    // the three counts never exceed the prompt.
+    let mut m = mock_with(&[profile_toml("e", "explicit_breakpoints", &[])], 1);
+    let s33 = "s".repeat(33);
+    let turns = [
+        "one two three four",
+        "five six seven",
+        "eight nine ten eleven twelve",
+    ];
+    for k in 1..=turns.len() {
+        let users: Vec<(&str, bool)> = turns[..k].iter().map(|t| (*t, false)).collect();
+        let mut users = users;
+        if let Some(last) = users.last_mut() {
+            last.1 = true;
+        }
+        let o = m.handle(&with_system(&s33, &users, "e"), "-", k as i64);
+        assert_eq!(o.status, 200);
+        let usage = &common::body(&o)["usage"];
+        let prompt = usage["prompt_tokens"].as_u64().unwrap();
+        let read = usage["prompt_tokens_details"]["cached_tokens"]
+            .as_u64()
+            .unwrap();
+        let write = usage["prompt_tokens_details"]["cache_write_tokens"]
+            .as_u64()
+            .unwrap();
+        assert!(
+            read + write <= prompt,
+            "turn {k}: {read} + {write} > {prompt}"
+        );
+        if k > 1 {
+            assert!(
+                read > 0 && write > 0,
+                "turn {k}: reads the last prefix, writes the rest"
+            );
+        }
+    }
 }
