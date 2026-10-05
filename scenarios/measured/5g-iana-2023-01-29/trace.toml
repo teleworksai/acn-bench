@@ -1,0 +1,1371 @@
+# A measured trace (SPEC 020 EMU-62), written by `cargo xtask import-5g-iana`
+# from PING.kml of Zenodo record 12664724. Do not edit: see provenance.toml.
+schema_version = 1
+sample_interval_s = 26.0
+
+[[sample]]
+t_s = 0.0
+loss = 0.0
+dl_kbps = 120858.0
+ul_kbps = 2403.0
+rtt_ms = { avg = 36.0, min = 14.0, max = 57.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 25.0
+loss = 0.0
+dl_kbps = 100234.0
+ul_kbps = 1761.0
+rtt_ms = { avg = 42.0, min = 15.0, max = 61.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 52.0
+loss = 0.0
+dl_kbps = 65524.0
+ul_kbps = 716.0
+rtt_ms = { avg = 52.0, min = 27.0, max = 190.0, stdev = 38.0 }
+
+[[sample]]
+t_s = 79.0
+loss = 1.0
+dl_kbps = 18.0
+ul_kbps = 381.0
+
+[[sample]]
+t_s = 105.0
+loss = 0.0
+dl_kbps = 42609.0
+ul_kbps = 329.0
+rtt_ms = { avg = 42.0, min = 19.0, max = 70.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 130.0
+loss = 1.0
+dl_kbps = 87.0
+ul_kbps = 1298.0
+
+[[sample]]
+t_s = 155.0
+loss = 0.25
+dl_kbps = 119191.0
+ul_kbps = 4262.0
+rtt_ms = { avg = 802.0, min = 229.0, max = 1582.0, stdev = 374.0 }
+
+[[sample]]
+t_s = 181.0
+loss = 0.0
+dl_kbps = 143453.0
+ul_kbps = 7823.0
+rtt_ms = { avg = 28.0, min = 12.0, max = 48.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 208.0
+loss = 0.0
+dl_kbps = 135422.0
+ul_kbps = 6433.0
+rtt_ms = { avg = 41.0, min = 18.0, max = 63.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 235.0
+loss = 0.0
+dl_kbps = 128919.0
+ul_kbps = 7014.0
+rtt_ms = { avg = 43.0, min = 22.0, max = 61.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 262.0
+loss = 0.0
+dl_kbps = 116567.0
+ul_kbps = 4468.0
+rtt_ms = { avg = 47.0, min = 24.0, max = 61.0, stdev = 10.0 }
+
+[[sample]]
+t_s = 288.0
+loss = 0.0
+dl_kbps = 131383.0
+ul_kbps = 5154.0
+rtt_ms = { avg = 34.0, min = 17.0, max = 53.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 314.0
+loss = 0.0
+dl_kbps = 177290.0
+ul_kbps = 9555.0
+rtt_ms = { avg = 49.0, min = 23.0, max = 123.0, stdev = 23.0 }
+
+[[sample]]
+t_s = 340.0
+loss = 0.0
+dl_kbps = 155580.0
+ul_kbps = 9399.0
+rtt_ms = { avg = 38.0, min = 18.0, max = 61.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 368.0
+loss = 0.0
+dl_kbps = 149014.0
+ul_kbps = 11717.0
+rtt_ms = { avg = 44.0, min = 23.0, max = 94.0, stdev = 18.0 }
+
+[[sample]]
+t_s = 393.0
+loss = 0.0
+dl_kbps = 132615.0
+ul_kbps = 3869.0
+rtt_ms = { avg = 35.0, min = 15.0, max = 62.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 420.0
+loss = 0.0
+dl_kbps = 138662.0
+ul_kbps = 8326.0
+rtt_ms = { avg = 37.0, min = 10.0, max = 60.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 447.0
+loss = 0.0
+dl_kbps = 199257.0
+ul_kbps = 15088.0
+rtt_ms = { avg = 36.0, min = 16.0, max = 62.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 474.0
+loss = 0.0
+dl_kbps = 145024.0
+ul_kbps = 8615.0
+rtt_ms = { avg = 42.0, min = 21.0, max = 83.0, stdev = 15.0 }
+
+[[sample]]
+t_s = 501.0
+loss = 0.0
+dl_kbps = 166934.0
+ul_kbps = 7453.0
+rtt_ms = { avg = 38.0, min = 17.0, max = 60.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 527.0
+loss = 0.0
+dl_kbps = 146820.0
+ul_kbps = 8203.0
+rtt_ms = { avg = 42.0, min = 22.0, max = 60.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 553.0
+loss = 0.0
+dl_kbps = 177710.0
+ul_kbps = 12887.0
+rtt_ms = { avg = 41.0, min = 16.0, max = 56.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 577.0
+loss = 0.0
+dl_kbps = 161135.0
+ul_kbps = 10115.0
+rtt_ms = { avg = 40.0, min = 24.0, max = 63.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 603.0
+loss = 0.0
+dl_kbps = 190618.0
+ul_kbps = 12106.0
+rtt_ms = { avg = 42.0, min = 24.0, max = 59.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 628.0
+loss = 0.0
+dl_kbps = 188686.0
+ul_kbps = 8920.0
+rtt_ms = { avg = 36.0, min = 13.0, max = 64.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 659.0
+loss = 0.0
+dl_kbps = 179644.0
+ul_kbps = 9917.0
+rtt_ms = { avg = 39.0, min = 13.0, max = 57.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 684.0
+loss = 0.0
+dl_kbps = 137984.0
+ul_kbps = 6578.0
+rtt_ms = { avg = 41.0, min = 15.0, max = 66.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 709.0
+loss = 0.0
+dl_kbps = 126619.0
+ul_kbps = 7102.0
+rtt_ms = { avg = 36.0, min = 9.0, max = 59.0, stdev = 15.0 }
+
+[[sample]]
+t_s = 736.0
+loss = 0.0
+dl_kbps = 107078.0
+ul_kbps = 4414.0
+rtt_ms = { avg = 41.0, min = 15.0, max = 82.0, stdev = 17.0 }
+
+[[sample]]
+t_s = 762.0
+loss = 0.0
+dl_kbps = 111538.0
+ul_kbps = 8696.0
+rtt_ms = { avg = 44.0, min = 22.0, max = 93.0, stdev = 16.0 }
+
+[[sample]]
+t_s = 788.0
+loss = 0.0
+dl_kbps = 113739.0
+ul_kbps = 8264.0
+rtt_ms = { avg = 38.0, min = 22.0, max = 61.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 814.0
+loss = 0.0
+dl_kbps = 146480.0
+ul_kbps = 7840.0
+rtt_ms = { avg = 39.0, min = 21.0, max = 59.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 840.0
+loss = 0.0
+dl_kbps = 181297.0
+ul_kbps = 11988.0
+rtt_ms = { avg = 45.0, min = 13.0, max = 104.0, stdev = 20.0 }
+
+[[sample]]
+t_s = 865.0
+loss = 0.0
+dl_kbps = 189299.0
+ul_kbps = 11698.0
+rtt_ms = { avg = 44.0, min = 23.0, max = 58.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 891.0
+loss = 0.06
+dl_kbps = 209334.0
+ul_kbps = 9433.0
+rtt_ms = { avg = 35.0, min = 14.0, max = 53.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 917.0
+loss = 0.0
+dl_kbps = 215353.0
+ul_kbps = 10234.0
+rtt_ms = { avg = 43.0, min = 24.0, max = 65.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 941.0
+loss = 0.0
+dl_kbps = 207411.0
+ul_kbps = 15277.0
+rtt_ms = { avg = 35.0, min = 13.0, max = 59.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 967.0
+loss = 0.0
+dl_kbps = 227047.0
+ul_kbps = 21200.0
+rtt_ms = { avg = 43.0, min = 24.0, max = 58.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 993.0
+loss = 0.0
+dl_kbps = 183680.0
+ul_kbps = 13419.0
+rtt_ms = { avg = 48.0, min = 23.0, max = 66.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 1022.0
+loss = 0.0
+dl_kbps = 209668.0
+ul_kbps = 15850.0
+rtt_ms = { avg = 39.0, min = 24.0, max = 57.0, stdev = 10.0 }
+
+[[sample]]
+t_s = 1049.0
+loss = 0.0
+dl_kbps = 206041.0
+ul_kbps = 14643.0
+rtt_ms = { avg = 37.0, min = 15.0, max = 58.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 1075.0
+loss = 0.0
+dl_kbps = 194055.0
+ul_kbps = 15858.0
+rtt_ms = { avg = 44.0, min = 18.0, max = 98.0, stdev = 19.0 }
+
+[[sample]]
+t_s = 1101.0
+loss = 0.0
+dl_kbps = 244379.0
+ul_kbps = 25288.0
+rtt_ms = { avg = 39.0, min = 18.0, max = 59.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 1129.0
+loss = 0.0
+dl_kbps = 255113.0
+ul_kbps = 24517.0
+rtt_ms = { avg = 39.0, min = 16.0, max = 63.0, stdev = 15.0 }
+
+[[sample]]
+t_s = 1156.0
+loss = 0.0
+dl_kbps = 219060.0
+ul_kbps = 14826.0
+rtt_ms = { avg = 42.0, min = 23.0, max = 64.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 1183.0
+loss = 0.0
+dl_kbps = 223538.0
+ul_kbps = 13747.0
+rtt_ms = { avg = 40.0, min = 22.0, max = 60.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 1210.0
+loss = 0.0
+dl_kbps = 240604.0
+ul_kbps = 26423.0
+rtt_ms = { avg = 36.0, min = 21.0, max = 55.0, stdev = 9.0 }
+
+[[sample]]
+t_s = 1237.0
+loss = 0.0
+dl_kbps = 274421.0
+ul_kbps = 29305.0
+rtt_ms = { avg = 40.0, min = 22.0, max = 60.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 1261.0
+loss = 0.0
+dl_kbps = 250039.0
+ul_kbps = 26647.0
+rtt_ms = { avg = 36.0, min = 19.0, max = 54.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 1285.0
+loss = 0.0
+dl_kbps = 259445.0
+ul_kbps = 31472.0
+rtt_ms = { avg = 45.0, min = 22.0, max = 61.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 1312.0
+loss = 0.0
+dl_kbps = 275932.0
+ul_kbps = 31353.0
+rtt_ms = { avg = 46.0, min = 17.0, max = 67.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 1338.0
+loss = 0.0
+dl_kbps = 278534.0
+ul_kbps = 28222.0
+rtt_ms = { avg = 42.0, min = 18.0, max = 55.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 1365.0
+loss = 0.0
+dl_kbps = 282811.0
+ul_kbps = 26429.0
+rtt_ms = { avg = 40.0, min = 20.0, max = 64.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 1392.0
+loss = 0.0
+dl_kbps = 274059.0
+ul_kbps = 32273.0
+rtt_ms = { avg = 39.0, min = 22.0, max = 57.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 1418.0
+loss = 0.0
+dl_kbps = 268607.0
+ul_kbps = 23192.0
+rtt_ms = { avg = 38.0, min = 17.0, max = 62.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 1444.0
+loss = 0.0
+dl_kbps = 253560.0
+ul_kbps = 24404.0
+rtt_ms = { avg = 38.0, min = 20.0, max = 58.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 1471.0
+loss = 0.0
+dl_kbps = 264653.0
+ul_kbps = 26200.0
+rtt_ms = { avg = 43.0, min = 26.0, max = 62.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 1497.0
+loss = 0.0
+dl_kbps = 235619.0
+ul_kbps = 17830.0
+rtt_ms = { avg = 37.0, min = 14.0, max = 58.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 1523.0
+loss = 0.0
+dl_kbps = 206293.0
+ul_kbps = 13721.0
+rtt_ms = { avg = 42.0, min = 17.0, max = 64.0, stdev = 15.0 }
+
+[[sample]]
+t_s = 1548.0
+loss = 0.0
+dl_kbps = 184279.0
+ul_kbps = 9682.0
+rtt_ms = { avg = 42.0, min = 16.0, max = 57.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 1575.0
+loss = 0.0
+dl_kbps = 189823.0
+ul_kbps = 9504.0
+rtt_ms = { avg = 39.0, min = 21.0, max = 58.0, stdev = 10.0 }
+
+[[sample]]
+t_s = 1603.0
+loss = 0.0
+dl_kbps = 185707.0
+ul_kbps = 10661.0
+rtt_ms = { avg = 36.0, min = 19.0, max = 59.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 1630.0
+loss = 0.0
+dl_kbps = 177622.0
+ul_kbps = 14685.0
+rtt_ms = { avg = 42.0, min = 22.0, max = 61.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 1657.0
+loss = 0.0
+dl_kbps = 207766.0
+ul_kbps = 12171.0
+rtt_ms = { avg = 37.0, min = 20.0, max = 54.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 1683.0
+loss = 0.0
+dl_kbps = 149613.0
+ul_kbps = 8893.0
+rtt_ms = { avg = 40.0, min = 15.0, max = 60.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 1724.0
+loss = 0.0
+dl_kbps = 129935.0
+ul_kbps = 9080.0
+rtt_ms = { avg = 46.0, min = 20.0, max = 70.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 1754.0
+loss = 0.0
+dl_kbps = 127125.0
+ul_kbps = 6250.0
+rtt_ms = { avg = 44.0, min = 14.0, max = 98.0, stdev = 19.0 }
+
+[[sample]]
+t_s = 1785.0
+loss = 0.0
+dl_kbps = 123956.0
+ul_kbps = 8240.0
+rtt_ms = { avg = 12.0, min = 8.0, max = 17.0, stdev = 2.0 }
+
+[[sample]]
+t_s = 1814.0
+loss = 0.0
+dl_kbps = 124580.0
+ul_kbps = 8168.0
+rtt_ms = { avg = 14.0, min = 8.0, max = 46.0, stdev = 9.0 }
+
+[[sample]]
+t_s = 1842.0
+loss = 0.0
+dl_kbps = 146563.0
+ul_kbps = 9052.0
+rtt_ms = { avg = 14.0, min = 8.0, max = 60.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 1867.0
+loss = 0.0
+dl_kbps = 129807.0
+ul_kbps = 6187.0
+rtt_ms = { avg = 12.0, min = 8.0, max = 24.0, stdev = 4.0 }
+
+[[sample]]
+t_s = 1895.0
+loss = 0.0
+dl_kbps = 122530.0
+ul_kbps = 9277.0
+rtt_ms = { avg = 13.0, min = 8.0, max = 49.0, stdev = 10.0 }
+
+[[sample]]
+t_s = 1922.0
+loss = 0.0
+dl_kbps = 112358.0
+ul_kbps = 9004.0
+rtt_ms = { avg = 13.0, min = 8.0, max = 30.0, stdev = 5.0 }
+
+[[sample]]
+t_s = 1950.0
+loss = 0.0
+dl_kbps = 117148.0
+ul_kbps = 9208.0
+rtt_ms = { avg = 11.0, min = 8.0, max = 14.0, stdev = 2.0 }
+
+[[sample]]
+t_s = 1977.0
+loss = 0.0
+dl_kbps = 146624.0
+ul_kbps = 12110.0
+rtt_ms = { avg = 13.0, min = 8.0, max = 41.0, stdev = 8.0 }
+
+[[sample]]
+t_s = 2003.0
+loss = 0.0
+dl_kbps = 116863.0
+ul_kbps = 7433.0
+rtt_ms = { avg = 11.0, min = 8.0, max = 13.0, stdev = 2.0 }
+
+[[sample]]
+t_s = 2030.0
+loss = 0.0
+dl_kbps = 117350.0
+ul_kbps = 7405.0
+rtt_ms = { avg = 13.0, min = 8.0, max = 38.0, stdev = 7.0 }
+
+[[sample]]
+t_s = 2055.0
+loss = 0.0
+dl_kbps = 179285.0
+ul_kbps = 12189.0
+rtt_ms = { avg = 12.0, min = 8.0, max = 26.0, stdev = 4.0 }
+
+[[sample]]
+t_s = 2082.0
+loss = 0.0
+dl_kbps = 142384.0
+ul_kbps = 7535.0
+rtt_ms = { avg = 13.0, min = 8.0, max = 47.0, stdev = 9.0 }
+
+[[sample]]
+t_s = 2108.0
+loss = 0.0
+dl_kbps = 176906.0
+ul_kbps = 6152.0
+rtt_ms = { avg = 14.0, min = 8.0, max = 50.0, stdev = 10.0 }
+
+[[sample]]
+t_s = 2136.0
+loss = 0.0
+dl_kbps = 157320.0
+ul_kbps = 7892.0
+rtt_ms = { avg = 13.0, min = 10.0, max = 36.0, stdev = 6.0 }
+
+[[sample]]
+t_s = 2162.0
+loss = 0.0
+dl_kbps = 153235.0
+ul_kbps = 8848.0
+rtt_ms = { avg = 13.0, min = 9.0, max = 25.0, stdev = 4.0 }
+
+[[sample]]
+t_s = 2189.0
+loss = 0.0
+dl_kbps = 142079.0
+ul_kbps = 10134.0
+rtt_ms = { avg = 14.0, min = 8.0, max = 48.0, stdev = 9.0 }
+
+[[sample]]
+t_s = 2215.0
+loss = 0.0
+dl_kbps = 132761.0
+ul_kbps = 10997.0
+rtt_ms = { avg = 12.0, min = 7.0, max = 20.0, stdev = 4.0 }
+
+[[sample]]
+t_s = 2245.0
+loss = 0.0
+dl_kbps = 144078.0
+ul_kbps = 9625.0
+rtt_ms = { avg = 11.0, min = 9.0, max = 18.0, stdev = 2.0 }
+
+[[sample]]
+t_s = 2272.0
+loss = 0.0
+dl_kbps = 134633.0
+ul_kbps = 9126.0
+rtt_ms = { avg = 11.0, min = 9.0, max = 16.0, stdev = 2.0 }
+
+[[sample]]
+t_s = 2368.0
+loss = 0.0
+dl_kbps = 147126.0
+ul_kbps = 9393.0
+rtt_ms = { avg = 12.0, min = 9.0, max = 18.0, stdev = 2.0 }
+
+[[sample]]
+t_s = 2394.0
+loss = 0.0
+dl_kbps = 153536.0
+ul_kbps = 9898.0
+rtt_ms = { avg = 13.0, min = 9.0, max = 42.0, stdev = 8.0 }
+
+[[sample]]
+t_s = 2421.0
+loss = 0.0
+dl_kbps = 152125.0
+ul_kbps = 10138.0
+rtt_ms = { avg = 12.0, min = 8.0, max = 30.0, stdev = 5.0 }
+
+[[sample]]
+t_s = 2446.0
+loss = 0.0
+dl_kbps = 139412.0
+ul_kbps = 8993.0
+rtt_ms = { avg = 12.0, min = 8.0, max = 16.0, stdev = 3.0 }
+
+[[sample]]
+t_s = 2474.0
+loss = 0.0
+dl_kbps = 179634.0
+ul_kbps = 12092.0
+rtt_ms = { avg = 12.0, min = 8.0, max = 25.0, stdev = 4.0 }
+
+[[sample]]
+t_s = 2502.0
+loss = 0.0
+dl_kbps = 153377.0
+ul_kbps = 8286.0
+rtt_ms = { avg = 14.0, min = 9.0, max = 40.0, stdev = 7.0 }
+
+[[sample]]
+t_s = 2528.0
+loss = 0.0
+dl_kbps = 175576.0
+ul_kbps = 9882.0
+rtt_ms = { avg = 14.0, min = 9.0, max = 58.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 2554.0
+loss = 0.0
+dl_kbps = 185052.0
+ul_kbps = 15411.0
+rtt_ms = { avg = 11.0, min = 8.0, max = 14.0, stdev = 2.0 }
+
+[[sample]]
+t_s = 2583.0
+loss = 0.0
+dl_kbps = 175065.0
+ul_kbps = 16351.0
+rtt_ms = { avg = 14.0, min = 8.0, max = 44.0, stdev = 8.0 }
+
+[[sample]]
+t_s = 2611.0
+loss = 0.0
+dl_kbps = 159502.0
+ul_kbps = 10487.0
+rtt_ms = { avg = 11.0, min = 8.0, max = 15.0, stdev = 2.0 }
+
+[[sample]]
+t_s = 2637.0
+loss = 0.0
+dl_kbps = 168744.0
+ul_kbps = 6033.0
+rtt_ms = { avg = 14.0, min = 8.0, max = 58.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 2664.0
+loss = 0.0
+dl_kbps = 172526.0
+ul_kbps = 10216.0
+rtt_ms = { avg = 13.0, min = 9.0, max = 35.0, stdev = 6.0 }
+
+[[sample]]
+t_s = 2691.0
+loss = 0.0
+dl_kbps = 170462.0
+ul_kbps = 7776.0
+rtt_ms = { avg = 11.0, min = 8.0, max = 14.0, stdev = 2.0 }
+
+[[sample]]
+t_s = 2717.0
+loss = 0.0
+dl_kbps = 171410.0
+ul_kbps = 9999.0
+rtt_ms = { avg = 12.0, min = 8.0, max = 15.0, stdev = 2.0 }
+
+[[sample]]
+t_s = 2741.0
+loss = 0.0
+dl_kbps = 144615.0
+ul_kbps = 9053.0
+rtt_ms = { avg = 13.0, min = 8.0, max = 38.0, stdev = 7.0 }
+
+[[sample]]
+t_s = 2766.0
+loss = 0.0
+dl_kbps = 132315.0
+ul_kbps = 7381.0
+rtt_ms = { avg = 13.0, min = 7.0, max = 56.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 2792.0
+loss = 0.0
+dl_kbps = 170287.0
+ul_kbps = 10784.0
+rtt_ms = { avg = 12.0, min = 9.0, max = 22.0, stdev = 3.0 }
+
+[[sample]]
+t_s = 2818.0
+loss = 0.0
+dl_kbps = 138310.0
+ul_kbps = 6561.0
+rtt_ms = { avg = 12.0, min = 8.0, max = 24.0, stdev = 4.0 }
+
+[[sample]]
+t_s = 2844.0
+loss = 0.0
+dl_kbps = 143246.0
+ul_kbps = 8397.0
+rtt_ms = { avg = 13.0, min = 8.0, max = 48.0, stdev = 9.0 }
+
+[[sample]]
+t_s = 2942.0
+loss = 0.0
+dl_kbps = 99345.0
+ul_kbps = 3454.0
+rtt_ms = { avg = 14.0, min = 9.0, max = 50.0, stdev = 10.0 }
+
+[[sample]]
+t_s = 2957.0
+loss = 0.0
+dl_kbps = 124574.0
+ul_kbps = 6535.0
+rtt_ms = { avg = 12.0, min = 8.0, max = 18.0, stdev = 3.0 }
+
+[[sample]]
+t_s = 2975.0
+loss = 0.0
+dl_kbps = 127511.0
+ul_kbps = 6237.0
+rtt_ms = { avg = 13.0, min = 8.0, max = 47.0, stdev = 9.0 }
+
+[[sample]]
+t_s = 2997.0
+loss = 0.0
+dl_kbps = 127960.0
+ul_kbps = 3672.0
+rtt_ms = { avg = 12.0, min = 8.0, max = 18.0, stdev = 2.0 }
+
+[[sample]]
+t_s = 3019.0
+loss = 0.0
+dl_kbps = 119745.0
+ul_kbps = 5357.0
+rtt_ms = { avg = 13.0, min = 7.0, max = 40.0, stdev = 7.0 }
+
+[[sample]]
+t_s = 3045.0
+loss = 0.0
+dl_kbps = 110413.0
+ul_kbps = 5485.0
+rtt_ms = { avg = 11.0, min = 8.0, max = 19.0, stdev = 3.0 }
+
+[[sample]]
+t_s = 3071.0
+loss = 0.0
+dl_kbps = 104322.0
+ul_kbps = 6317.0
+rtt_ms = { avg = 13.0, min = 8.0, max = 31.0, stdev = 5.0 }
+
+[[sample]]
+t_s = 3098.0
+loss = 0.0
+dl_kbps = 89182.0
+ul_kbps = 4568.0
+rtt_ms = { avg = 14.0, min = 9.0, max = 45.0, stdev = 8.0 }
+
+[[sample]]
+t_s = 3124.0
+loss = 0.0
+dl_kbps = 61997.0
+ul_kbps = 5966.0
+rtt_ms = { avg = 14.0, min = 8.0, max = 53.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 3151.0
+loss = 0.0
+dl_kbps = 59121.0
+ul_kbps = 3317.0
+rtt_ms = { avg = 13.0, min = 9.0, max = 43.0, stdev = 8.0 }
+
+[[sample]]
+t_s = 3178.0
+loss = 0.0
+dl_kbps = 59553.0
+ul_kbps = 2368.0
+rtt_ms = { avg = 16.0, min = 9.0, max = 44.0, stdev = 8.0 }
+
+[[sample]]
+t_s = 3205.0
+loss = 0.0
+dl_kbps = 40052.0
+ul_kbps = 827.0
+rtt_ms = { avg = 18.0, min = 9.0, max = 48.0, stdev = 9.0 }
+
+[[sample]]
+t_s = 3230.0
+loss = 0.0
+dl_kbps = 108399.0
+ul_kbps = 6475.0
+rtt_ms = { avg = 41.0, min = 25.0, max = 61.0, stdev = 10.0 }
+
+[[sample]]
+t_s = 3259.0
+loss = 0.0
+dl_kbps = 115281.0
+ul_kbps = 6793.0
+rtt_ms = { avg = 273.0, min = 28.0, max = 1213.0, stdev = 378.0 }
+
+[[sample]]
+t_s = 3286.0
+loss = 0.0
+dl_kbps = 43995.0
+ul_kbps = 6997.0
+rtt_ms = { avg = 75.0, min = 21.0, max = 421.0, stdev = 99.0 }
+
+[[sample]]
+t_s = 3314.0
+loss = 0.0
+dl_kbps = 66759.0
+ul_kbps = 7714.0
+rtt_ms = { avg = 38.0, min = 16.0, max = 60.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 3341.0
+loss = 0.0
+dl_kbps = 114100.0
+ul_kbps = 9008.0
+rtt_ms = { avg = 40.0, min = 16.0, max = 61.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 3369.0
+loss = 0.0
+dl_kbps = 116349.0
+ul_kbps = 9734.0
+rtt_ms = { avg = 39.0, min = 14.0, max = 56.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 3396.0
+loss = 0.0
+dl_kbps = 119840.0
+ul_kbps = 9481.0
+rtt_ms = { avg = 41.0, min = 21.0, max = 64.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 3422.0
+loss = 0.0
+dl_kbps = 135840.0
+ul_kbps = 10227.0
+rtt_ms = { avg = 48.0, min = 23.0, max = 150.0, stdev = 30.0 }
+
+[[sample]]
+t_s = 3449.0
+loss = 0.0
+dl_kbps = 195500.0
+ul_kbps = 17805.0
+rtt_ms = { avg = 37.0, min = 14.0, max = 61.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 3477.0
+loss = 0.0
+dl_kbps = 183142.0
+ul_kbps = 8197.0
+rtt_ms = { avg = 35.0, min = 22.0, max = 55.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 3501.0
+loss = 0.0
+dl_kbps = 143444.0
+ul_kbps = 7350.0
+rtt_ms = { avg = 35.0, min = 10.0, max = 58.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 3528.0
+loss = 0.0
+dl_kbps = 206871.0
+ul_kbps = 12778.0
+rtt_ms = { avg = 41.0, min = 18.0, max = 64.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 3555.0
+loss = 0.0
+dl_kbps = 175523.0
+ul_kbps = 10226.0
+rtt_ms = { avg = 41.0, min = 24.0, max = 60.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 3583.0
+loss = 0.0
+dl_kbps = 212977.0
+ul_kbps = 15194.0
+rtt_ms = { avg = 37.0, min = 17.0, max = 52.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 3610.0
+loss = 0.0
+dl_kbps = 211839.0
+ul_kbps = 14933.0
+rtt_ms = { avg = 41.0, min = 21.0, max = 60.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 3637.0
+loss = 0.0
+dl_kbps = 233014.0
+ul_kbps = 17978.0
+rtt_ms = { avg = 33.0, min = 17.0, max = 51.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 3664.0
+loss = 0.0
+dl_kbps = 204552.0
+ul_kbps = 12289.0
+rtt_ms = { avg = 43.0, min = 22.0, max = 61.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 3691.0
+loss = 0.0
+dl_kbps = 220968.0
+ul_kbps = 17938.0
+rtt_ms = { avg = 41.0, min = 21.0, max = 62.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 3719.0
+loss = 0.0
+dl_kbps = 213273.0
+ul_kbps = 17852.0
+rtt_ms = { avg = 39.0, min = 21.0, max = 58.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 3745.0
+loss = 0.0
+dl_kbps = 221036.0
+ul_kbps = 13787.0
+rtt_ms = { avg = 47.0, min = 27.0, max = 65.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 3770.0
+loss = 0.0
+dl_kbps = 233307.0
+ul_kbps = 22817.0
+rtt_ms = { avg = 39.0, min = 27.0, max = 61.0, stdev = 8.0 }
+
+[[sample]]
+t_s = 3796.0
+loss = 0.0
+dl_kbps = 213432.0
+ul_kbps = 22102.0
+rtt_ms = { avg = 36.0, min = 18.0, max = 61.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 3822.0
+loss = 0.0
+dl_kbps = 247195.0
+ul_kbps = 30999.0
+rtt_ms = { avg = 43.0, min = 24.0, max = 73.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 3849.0
+loss = 0.06
+dl_kbps = 262009.0
+ul_kbps = 33254.0
+rtt_ms = { avg = 42.0, min = 21.0, max = 61.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 3875.0
+loss = 0.0
+dl_kbps = 213438.0
+ul_kbps = 15169.0
+rtt_ms = { avg = 40.0, min = 21.0, max = 61.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 3900.0
+loss = 0.0
+dl_kbps = 229644.0
+ul_kbps = 11654.0
+rtt_ms = { avg = 38.0, min = 21.0, max = 58.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 3920.0
+loss = 0.0
+dl_kbps = 203384.0
+ul_kbps = 11693.0
+rtt_ms = { avg = 38.0, min = 21.0, max = 61.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 3942.0
+loss = 0.0
+dl_kbps = 188045.0
+ul_kbps = 10439.0
+rtt_ms = { avg = 45.0, min = 26.0, max = 66.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 3968.0
+loss = 0.0
+dl_kbps = 175584.0
+ul_kbps = 6726.0
+rtt_ms = { avg = 43.0, min = 11.0, max = 61.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 3995.0
+loss = 0.0
+dl_kbps = 195324.0
+ul_kbps = 9723.0
+rtt_ms = { avg = 42.0, min = 21.0, max = 60.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 4021.0
+loss = 0.0
+dl_kbps = 136322.0
+ul_kbps = 7967.0
+rtt_ms = { avg = 43.0, min = 16.0, max = 125.0, stdev = 26.0 }
+
+[[sample]]
+t_s = 4047.0
+loss = 0.0
+dl_kbps = 115753.0
+ul_kbps = 7078.0
+rtt_ms = { avg = 49.0, min = 25.0, max = 98.0, stdev = 17.0 }
+
+[[sample]]
+t_s = 4073.0
+loss = 0.0
+dl_kbps = 126605.0
+ul_kbps = 6404.0
+rtt_ms = { avg = 44.0, min = 22.0, max = 63.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 4099.0
+loss = 0.0
+dl_kbps = 170461.0
+ul_kbps = 9285.0
+rtt_ms = { avg = 43.0, min = 22.0, max = 65.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 4125.0
+loss = 0.0
+dl_kbps = 204701.0
+ul_kbps = 8090.0
+rtt_ms = { avg = 42.0, min = 22.0, max = 61.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 4152.0
+loss = 0.0
+dl_kbps = 205775.0
+ul_kbps = 13332.0
+rtt_ms = { avg = 39.0, min = 22.0, max = 58.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 4178.0
+loss = 0.0
+dl_kbps = 184533.0
+ul_kbps = 5724.0
+rtt_ms = { avg = 39.0, min = 21.0, max = 55.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 4203.0
+loss = 0.0
+dl_kbps = 189995.0
+ul_kbps = 6390.0
+rtt_ms = { avg = 40.0, min = 21.0, max = 59.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 4228.0
+loss = 0.0
+dl_kbps = 195462.0
+ul_kbps = 9251.0
+rtt_ms = { avg = 39.0, min = 22.0, max = 52.0, stdev = 10.0 }
+
+[[sample]]
+t_s = 4252.0
+loss = 0.0
+dl_kbps = 226052.0
+ul_kbps = 13824.0
+rtt_ms = { avg = 40.0, min = 25.0, max = 60.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 4280.0
+loss = 0.0
+dl_kbps = 183993.0
+ul_kbps = 7396.0
+rtt_ms = { avg = 45.0, min = 24.0, max = 58.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 4307.0
+loss = 0.06
+dl_kbps = 191234.0
+ul_kbps = 11350.0
+rtt_ms = { avg = 43.0, min = 23.0, max = 61.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 4335.0
+loss = 0.0
+dl_kbps = 201668.0
+ul_kbps = 7145.0
+rtt_ms = { avg = 38.0, min = 17.0, max = 62.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 4361.0
+loss = 0.0
+dl_kbps = 224368.0
+ul_kbps = 13522.0
+rtt_ms = { avg = 39.0, min = 22.0, max = 63.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 4387.0
+loss = 0.0
+dl_kbps = 168043.0
+ul_kbps = 5408.0
+rtt_ms = { avg = 42.0, min = 16.0, max = 120.0, stdev = 24.0 }
+
+[[sample]]
+t_s = 4412.0
+loss = 0.0
+dl_kbps = 158702.0
+ul_kbps = 4806.0
+rtt_ms = { avg = 40.0, min = 25.0, max = 62.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 4437.0
+loss = 0.0
+dl_kbps = 175205.0
+ul_kbps = 3714.0
+rtt_ms = { avg = 46.0, min = 14.0, max = 135.0, stdev = 27.0 }
+
+[[sample]]
+t_s = 4461.0
+loss = 0.0
+dl_kbps = 173482.0
+ul_kbps = 4000.0
+rtt_ms = { avg = 38.0, min = 21.0, max = 74.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 4484.0
+loss = 0.0
+dl_kbps = 199415.0
+ul_kbps = 10943.0
+rtt_ms = { avg = 33.0, min = 9.0, max = 58.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 4509.0
+loss = 0.0
+dl_kbps = 181022.0
+ul_kbps = 4978.0
+rtt_ms = { avg = 41.0, min = 16.0, max = 57.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 4535.0
+loss = 0.0
+dl_kbps = 190202.0
+ul_kbps = 3542.0
+rtt_ms = { avg = 40.0, min = 24.0, max = 57.0, stdev = 10.0 }
+
+[[sample]]
+t_s = 4561.0
+loss = 0.0
+dl_kbps = 186050.0
+ul_kbps = 6875.0
+rtt_ms = { avg = 39.0, min = 16.0, max = 64.0, stdev = 14.0 }
+
+[[sample]]
+t_s = 4586.0
+loss = 0.0
+dl_kbps = 175987.0
+ul_kbps = 6539.0
+rtt_ms = { avg = 44.0, min = 24.0, max = 60.0, stdev = 11.0 }
+
+[[sample]]
+t_s = 4612.0
+loss = 0.0
+dl_kbps = 141484.0
+ul_kbps = 4866.0
+rtt_ms = { avg = 40.0, min = 17.0, max = 63.0, stdev = 13.0 }
+
+[[sample]]
+t_s = 4657.0
+loss = 0.0
+dl_kbps = 139489.0
+ul_kbps = 1962.0
+rtt_ms = { avg = 42.0, min = 22.0, max = 61.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 4684.0
+loss = 0.0
+dl_kbps = 124029.0
+ul_kbps = 2270.0
+rtt_ms = { avg = 37.0, min = 14.0, max = 62.0, stdev = 16.0 }
+
+[[sample]]
+t_s = 4710.0
+loss = 0.0
+dl_kbps = 101446.0
+ul_kbps = 1833.0
+rtt_ms = { avg = 40.0, min = 18.0, max = 91.0, stdev = 19.0 }
+
+[[sample]]
+t_s = 4735.0
+loss = 0.0
+dl_kbps = 91408.0
+ul_kbps = 1651.0
+rtt_ms = { avg = 32.0, min = 13.0, max = 53.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 4761.0
+loss = 0.0
+dl_kbps = 107711.0
+ul_kbps = 3319.0
+rtt_ms = { avg = 44.0, min = 26.0, max = 66.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 4787.0
+loss = 0.0
+dl_kbps = 71801.0
+ul_kbps = 1480.0
+rtt_ms = { avg = 45.0, min = 17.0, max = 116.0, stdev = 26.0 }
+
+[[sample]]
+t_s = 4818.0
+loss = 0.0
+dl_kbps = 95055.0
+ul_kbps = 1705.0
+rtt_ms = { avg = 1626.0, min = 135.0, max = 2678.0, stdev = 771.0 }
+
+[[sample]]
+t_s = 4845.0
+loss = 0.0
+dl_kbps = 43167.0
+ul_kbps = 421.0
+rtt_ms = { avg = 40.0, min = 20.0, max = 61.0, stdev = 12.0 }
+
+[[sample]]
+t_s = 4874.0
+loss = 1.0
+dl_kbps = 6.0
+ul_kbps = 2.0
+
+[[sample]]
+t_s = 4888.0
+loss = 1.0
+dl_kbps = 34545.0
+ul_kbps = 2872.0
+
+[[sample]]
+t_s = 4901.0
+loss = 0.0
+dl_kbps = 33975.0
+ul_kbps = 1718.0
+rtt_ms = { avg = 633.0, min = 11.0, max = 2074.0, stdev = 707.0 }
+
+[[sample]]
+t_s = 4915.0
+loss = 1.0
+dl_kbps = 31760.0
+ul_kbps = 3658.0
+
+[[sample]]
+t_s = 4929.0
+loss = 0.87
+dl_kbps = 17.0
+ul_kbps = 451.0
+rtt_ms = { avg = 3565.0, min = 3445.0, max = 3684.0, stdev = 120.0 }
+
+[[sample]]
+t_s = 4942.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 158.0
+
+[[sample]]
+t_s = 4956.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 2.0
+
+[[sample]]
+t_s = 4970.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 0.0
+
+[[sample]]
+t_s = 4984.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 0.0
+
+[[sample]]
+t_s = 4998.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 1.0
+
+[[sample]]
+t_s = 5011.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 0.0
+
+[[sample]]
+t_s = 5025.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 0.0
+
+[[sample]]
+t_s = 5039.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 0.0
+
+[[sample]]
+t_s = 5053.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 0.0
+
+[[sample]]
+t_s = 5066.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 0.0
+
+[[sample]]
+t_s = 5080.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 0.0
+
+[[sample]]
+t_s = 5094.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 0.0
+
+[[sample]]
+t_s = 5108.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 0.0
+
+[[sample]]
+t_s = 5121.0
+loss = 1.0
+dl_kbps = 0.0
+ul_kbps = 0.0

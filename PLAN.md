@@ -84,7 +84,7 @@ Crate dependency direction (no cycles): `acn-trace` ← everything; `acn-emu` �
 | GATE | 095 | milestone gates M0–M4 |
 | P4, P1A, P1B, P11, P13, P7, P16, … | 100-series | one spec per POC: experiment protocol, acceptance suite, expected outcome |
 
-Every MUST is numbered (`EMU-7`). Every implemented MUST is cited by at least one test via a `/// Cites: EMU-7, EMU-8` doc comment on the test function; `cargo xtask trace-check` fails CI otherwise. Hypothesis files cite the POC spec they instantiate and the report hypotheses they test (`H-1`, `G13`).
+Every MUST is numbered (`EMU-60`). Every implemented MUST is cited by at least one test via a `/// Cites: EMU-60, EMU-61` doc comment on the test function; `cargo xtask trace-check` fails CI otherwise. Hypothesis files cite the POC spec they instantiate and the report hypotheses they test (`H-1`, `G13`).
 
 ## 5. Milestones
 

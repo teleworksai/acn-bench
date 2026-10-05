@@ -47,6 +47,12 @@ ids = [
 # (ADR-24). The L2/L3 links of LOOP-2 come with T11b and T30.
 
 [[implemented]]
+spec = "020"
+ids = ["EMU-60", "EMU-61", "EMU-62", "EMU-63", "EMU-64", "EMU-65"]
+# T08 (ADR-30): only §6, measured traces, is written; the link models, engine
+# and proxy (IDs below EMU-60) come with T10 to T12.
+
+[[implemented]]
 spec = "040"
 ids = [
   "HAR-1", "HAR-2", "HAR-3", "HAR-4", "HAR-5",

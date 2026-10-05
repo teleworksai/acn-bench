@@ -2,7 +2,9 @@
 //!
 //! The link models, scenarios, engine and proxy arrive with T10–T12. T03 adds the
 //! one piece the mock inference server needs first: the injected [`clock`] of
-//! CON-5(b), the only place a run reads time (ADR-16).
+//! CON-5(b), the only place a run reads time (ADR-16). T08 adds measured
+//! impairment [`trace`]s (SPEC 020 §6).
 #![forbid(unsafe_code)]
 
 pub mod clock;
+pub mod trace;
