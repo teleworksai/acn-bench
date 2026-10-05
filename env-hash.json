@@ -1,6 +1,6 @@
 {
-  "env_hash": "8370eac90ce32446cb9a0fa43235388e100d13f6a377754f4d5246e2bf9f9630",
-  "engine_hash": "ba57606922342597c351642bc3ab1c1f571c97b95bbecc16ca91adfefd685b5c",
+  "env_hash": "2b02465cb6e20b84e15820da1d1a3289165183e93063b59c578040d836f943d1",
+  "engine_hash": "bdd4026d772b782acbce7328837ec3454287cf8bc399b0b2727840c03776ed75",
   "files": [
     {
       "path": "crates/acn-attrib/src/core/mod.rs",
@@ -23,6 +23,10 @@
       "blake3": "7c8ee1177881d2a8087be1bb9b137bcbec0eb04692e77e014544a2d8404c61c2"
     },
     {
+      "path": "crates/acn-hyp/src/evidence.rs",
+      "blake3": "73d3a5c10ec9e17857801b22a09c8fb7b71aa0fdbc784b7fecd7bf2f1532d797"
+    },
+    {
       "path": "crates/acn-hyp/src/file.rs",
       "blake3": "9d05303f527b2ec96d824d63b2583fc215a637cee295e493c4193aec026f0fcf"
     },
@@ -36,7 +40,7 @@
     },
     {
       "path": "crates/acn-hyp/src/lib.rs",
-      "blake3": "b152739a75ec85bff0e3b68ba79d04db9a0c0beb84f376594c7f016c4a47d249"
+      "blake3": "a5a0a9681743e0f7153a8672b9d77c1b026ccdba40e159cfd02fb8b5e3b34ee8"
     },
     {
       "path": "crates/acn-hyp/src/lint.rs",
@@ -48,7 +52,7 @@
     },
     {
       "path": "crates/acn-hyp/src/loop_run.rs",
-      "blake3": "9a3437d51dbd6abb3d94c6ee665fc637e5453a1f3d69b852d9d27aad23bf3963"
+      "blake3": "a3c5496d0a573c0296ebf1d00b48f3bdda1a8b311af0b57f8809364645accb50"
     },
     {
       "path": "crates/acn-hyp/src/predicate.rs",
@@ -113,6 +117,10 @@
     {
       "path": "crates/acn-hyp/tests/loop_direction.rs",
       "blake3": "a2eed4b537de0d355dde2edf1a9a014cee228cedca7d689a20a451371e779f0f"
+    },
+    {
+      "path": "crates/acn-hyp/tests/loop_gating.rs",
+      "blake3": "802b440ca0d34c9f5ab8cd59b92c963afeddecb42f52aaaefe9694072a0c8344"
     },
     {
       "path": "crates/acn-hyp/tests/loop_replay.rs",

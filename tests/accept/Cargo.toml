@@ -45,3 +45,7 @@ path = "hyp_lint.rs"
 [[test]]
 name = "hyp_verdict"
 path = "hyp_verdict.rs"
+
+[[test]]
+name = "evidence_chain"
+path = "evidence_chain.rs"

@@ -2,7 +2,7 @@
 //! logs on stderr, exit 0 iff `"ok": true`). Subcommands land with their specs:
 //! `version` (T01), `bundle verify` (TRC-23, T02b), `harness run` (HAR-50, T04),
 //! `hyp lint` (HYP-27, T05), `hyp verdict` (HYP-20, T05.2b), `loop run` (LOOP-10,
-//! LOOP-14, T05b).
+//! LOOP-14, T05b.1), `evidence verify` (LOOP-2, T05b.2).
 #![forbid(unsafe_code)]
 
 mod build_info;
@@ -51,6 +51,26 @@ enum Cmd {
     Loop {
         #[command(subcommand)]
         cmd: LoopCmd,
+    },
+    /// The evidence chain (SPEC 085 §4).
+    Evidence {
+        #[command(subcommand)]
+        cmd: EvidenceCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum EvidenceCmd {
+    /// Walk the chain from a loop report or a verdict down to its L1 bundles
+    /// (LOOP-2): every bundle verifies with its views, the verdict recomputes to
+    /// its bytes, every recorded layer is the derived one (LOOP-1), and the
+    /// report regenerates byte for byte (LOOP-14).
+    Verify {
+        /// A loop_id, or the verdict_id of a loop's final verdict.
+        id: String,
+        /// The `runs` directory; resolved against the workspace root (CON-28).
+        #[arg(long, default_value = "runs")]
+        runs_dir: PathBuf,
     },
 }
 
@@ -574,23 +594,29 @@ fn loop_failure(e: &acn_hyp::loop_run::LoopError) -> Value {
     json!({ "ok": false, "code": e.code.as_str(), "error": e.to_string() })
 }
 
-fn loop_run(a: &LoopRun) -> Value {
-    use acn_hyp::loop_run::{self, Args, Binary};
-    let setup = || -> anyhow::Result<(Binary, loop_exec::HarnessExecutor, std::path::PathBuf)> {
-        let engine_hash = build_info::engine_hash()?;
-        let build = build_info::build_info()?;
-        let bin = Binary {
-            engine_hash,
-            build_hash: acn_trace::identity::Digest::from_hex(&build.build_hash)?,
-        };
-        let exec = loop_exec::HarnessExecutor { engine_hash, build };
-        // LOOP-10, CON-28: paths resolve against the workspace root, or the
-        // current directory outside one.
-        let cwd = std::env::current_dir()?;
-        let root = acn_trace::env::find_root(&cwd)?.unwrap_or(cwd);
-        Ok((bin, exec, root))
+/// The binary's identity (CON-31), the harness executor (LOOP-15), and the
+/// directory paths resolve against: the workspace root, or the current
+/// directory outside one (LOOP-10, CON-28).
+fn loop_setup() -> anyhow::Result<(
+    acn_hyp::loop_run::Binary,
+    loop_exec::HarnessExecutor,
+    std::path::PathBuf,
+)> {
+    let engine_hash = build_info::engine_hash()?;
+    let build = build_info::build_info()?;
+    let bin = acn_hyp::loop_run::Binary {
+        engine_hash,
+        build_hash: acn_trace::identity::Digest::from_hex(&build.build_hash)?,
     };
-    let (bin, mut exec, root) = match setup() {
+    let exec = loop_exec::HarnessExecutor { engine_hash, build };
+    let cwd = std::env::current_dir()?;
+    let root = acn_trace::env::find_root(&cwd)?.unwrap_or(cwd);
+    Ok((bin, exec, root))
+}
+
+fn loop_run(a: &LoopRun) -> Value {
+    use acn_hyp::loop_run::{self, Args};
+    let (bin, mut exec, root) = match loop_setup() {
         Ok(x) => x,
         Err(e) => return json!({ "ok": false, "code": "internal", "error": format!("{e:#}") }),
     };
@@ -639,6 +665,31 @@ fn loop_run(a: &LoopRun) -> Value {
             "stop": c.stop.as_str(),
             "run_ids": c.run_ids.iter().map(acn_trace::identity::Digest::to_hex).collect::<Vec<_>>(),
         }),
+        Err(e) => loop_failure(&e),
+    }
+}
+
+/// `acn evidence verify` (LOOP-2): `ok` iff every link of every chain holds.
+fn evidence_verify(id: &str, runs_dir: &std::path::Path) -> Value {
+    let (bin, mut exec, root) = match loop_setup() {
+        Ok(x) => x,
+        Err(e) => return json!({ "ok": false, "code": "internal", "error": format!("{e:#}") }),
+    };
+    match acn_hyp::evidence::verify(&root.join(runs_dir), id, bin, &mut exec) {
+        Ok(c) => {
+            for f in &c.findings {
+                tracing::error!(code = f.code.as_str(), "{}", f.message);
+            }
+            json!({
+                "ok": c.ok(),
+                "target": c.target,
+                "loops": c.loops,
+                "bundles": c.bundles,
+                "verdicts": c.verdicts,
+                "regenerated": c.regenerated.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                "findings": c.findings.iter().map(|f| json!({ "code": f.code.as_str(), "message": f.message })).collect::<Vec<_>>(),
+            })
+        }
         Err(e) => loop_failure(&e),
     }
 }
@@ -756,6 +807,9 @@ fn run() -> Value {
         Cmd::Loop {
             cmd: LoopCmd::Run(a),
         } => loop_run(&a),
+        Cmd::Evidence {
+            cmd: EvidenceCmd::Verify { id, runs_dir },
+        } => evidence_verify(&id, &runs_dir),
     }
 }
 
