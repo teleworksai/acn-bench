@@ -95,7 +95,9 @@ struct LoopRun {
         conflicts_with = "from_report"
     )]
     budget: Option<u64>,
-    /// The `runs` directory: bundles, `verdicts/` and `loop/` go under it.
+    /// The `runs` directory: bundles, `verdicts/` and `loop/` go under it. This
+    /// path, the hypothesis, the workloads and --from-report resolve against
+    /// the workspace root (CON-28), or the current directory outside one.
     #[arg(long, default_value = "runs", conflicts_with = "from_report")]
     runs_dir: PathBuf,
     /// A loop report, `runs/loop/<loop_id>/report.json`, to regenerate.
@@ -574,26 +576,26 @@ fn loop_failure(e: &acn_hyp::loop_run::LoopError) -> Value {
 
 fn loop_run(a: &LoopRun) -> Value {
     use acn_hyp::loop_run::{self, Args, Binary};
-    let setup = || -> anyhow::Result<(Binary, loop_exec::HarnessExecutor)> {
+    let setup = || -> anyhow::Result<(Binary, loop_exec::HarnessExecutor, std::path::PathBuf)> {
         let engine_hash = build_info::engine_hash()?;
         let build = build_info::build_info()?;
         let bin = Binary {
             engine_hash,
             build_hash: acn_trace::identity::Digest::from_hex(&build.build_hash)?,
         };
-        let exec = loop_exec::HarnessExecutor {
-            start_dir: std::env::current_dir()?,
-            engine_hash,
-            build,
-        };
-        Ok((bin, exec))
+        let exec = loop_exec::HarnessExecutor { engine_hash, build };
+        // LOOP-10, CON-28: paths resolve against the workspace root, or the
+        // current directory outside one.
+        let cwd = std::env::current_dir()?;
+        let root = acn_trace::env::find_root(&cwd)?.unwrap_or(cwd);
+        Ok((bin, exec, root))
     };
-    let (bin, mut exec) = match setup() {
+    let (bin, mut exec, root) = match setup() {
         Ok(x) => x,
-        Err(e) => return json!({ "ok": false, "error": format!("{e:#}") }),
+        Err(e) => return json!({ "ok": false, "code": "internal", "error": format!("{e:#}") }),
     };
     if let Some(report) = &a.from_report {
-        return match loop_run::regenerate(report, bin, &mut exec) {
+        return match loop_run::regenerate(&root.join(report), bin, &mut exec) {
             Ok(r) => {
                 if !r.identical() {
                     tracing::error!(differ = ?r.differ, "the regeneration differs (LOOP-14)");
@@ -610,18 +612,24 @@ fn loop_run(a: &LoopRun) -> Value {
         };
     }
     let (Some(file), Some(budget)) = (&a.hypothesis, a.budget) else {
-        return json!({ "ok": false, "error": "give --hypothesis and --budget, or --from-report" });
+        return json!({
+            "ok": false,
+            "code": "bad_args",
+            "error": "give --hypothesis and --budget, or --from-report",
+        });
     };
-    let h = match acn_hyp::load(file) {
+    let h = match acn_hyp::load_in(&root.join(file), &root) {
         Ok(h) => h,
-        Err(e) => return json!({ "ok": false, "error": e.to_string() }),
+        Err(e) => {
+            return json!({ "ok": false, "code": "hypothesis_refused", "error": e.to_string() });
+        }
     };
     let args = Args {
         workloads: a.workload.clone(),
         models: a.model.clone(),
         budget,
     };
-    match loop_run::run(&h, &args, &a.runs_dir, bin, &mut exec) {
+    match loop_run::run(&h, &args, &root.join(&a.runs_dir), bin, &mut exec) {
         Ok(c) => json!({
             "ok": true,
             "loop_id": c.loop_id.to_hex(),

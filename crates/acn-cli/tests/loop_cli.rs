@@ -85,7 +85,10 @@ fn loop_run_and_its_regeneration_print_one_object_each() {
     assert_eq!(j["run_ids"].as_array().unwrap().len(), 3);
     let loop_id = j["loop_id"].as_str().unwrap();
     let report = j["report"].as_str().unwrap();
-    assert_eq!(report, format!("runs/loop/{loop_id}/report.json"));
+    assert!(
+        report.ends_with(&format!("runs/loop/{loop_id}/report.json")),
+        "{report}"
+    );
     assert!(
         d.join("runs/verdicts")
             .join(j["verdict_id"].as_str().unwrap())
@@ -93,7 +96,7 @@ fn loop_run_and_its_regeneration_print_one_object_each() {
             .exists()
     );
     let r: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(d.join(report)).unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string(report).unwrap()).unwrap();
     // The binary's own identity (CON-31) is what the report records.
     let (_, v) = acn_in(d, &["version"]);
     assert_eq!(r["build_hash"], v["build_hash"]);
@@ -106,7 +109,13 @@ fn loop_run_and_its_regeneration_print_one_object_each() {
         (g["ok"].clone(), g["identical"].clone()),
         (true.into(), true.into())
     );
-    assert_eq!(g["dir"], format!("runs/regen/{loop_id}/1"));
+    assert!(
+        g["dir"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("runs/regen/{loop_id}/1")),
+        "{g}"
+    );
     // A rendering that no longer matches: ok is false, exit 1 (CON-8).
     std::fs::write(d.join(format!("runs/loop/{loop_id}/report.md")), "edited\n").unwrap();
     let (code, g) = acn_in(d, &["loop", "run", "--from-report", report]);

@@ -24,7 +24,8 @@ use crate::loop_out;
 use crate::read::{self, BundleData};
 use crate::slice::{Cell, Value, cell_order, key};
 use crate::verdict::{
-    self, Controls, Role, V, Verdict, VerdictError, cell_json, product, reasons_json, values_of,
+    self, Controls, Role, V, Verdict, VerdictError, cell_json, product, reasons_json, sub,
+    values_of,
 };
 
 /// The `format` of `report.json` (LOOP-11); a change to its layout takes a new
@@ -58,6 +59,8 @@ pub enum Code {
     VerdictRefused,
     BuildMismatch,
     BundleInvalid,
+    BundleIncomplete,
+    BudgetRefused,
     ExecutorFailed,
     ExecutorMismatch,
     HypothesisChanged,
@@ -87,6 +90,8 @@ impl Code {
             Self::VerdictRefused => "verdict_refused",
             Self::BuildMismatch => "build_mismatch",
             Self::BundleInvalid => "bundle_invalid",
+            Self::BundleIncomplete => "bundle_incomplete",
+            Self::BudgetRefused => "budget_refused",
             Self::ExecutorFailed => "executor_failed",
             Self::ExecutorMismatch => "executor_mismatch",
             Self::HypothesisChanged => crate::HYPOTHESIS_CHANGED,
@@ -150,6 +155,9 @@ pub struct Request {
     pub replicates: u32,
     /// The directory the bundle goes under, as `<runs_dir>/<run_id>/`.
     pub runs_dir: PathBuf,
+    /// Where the workspace root is looked for (CON-28): the directory `runs/`
+    /// lies in, so that the harness decides the file's status as the loop did.
+    pub start_dir: PathBuf,
 }
 
 /// What makes the bundles (LOOP-15). It answers two questions the runner
@@ -234,6 +242,10 @@ struct Input {
 /// Everything a loop is decided from, checked before anything runs.
 struct Setup<'h> {
     h: &'h Hypothesis,
+    /// The directory `runs/` lies in: the workspace root inside a workspace
+    /// (CON-28). Relative inputs resolve against it and are recorded relative
+    /// to it, and the executor looks for the root from it.
+    base: PathBuf,
     /// Relative to the directory `runs/` lies in: the workspace root inside a
     /// workspace (CON-28).
     hypothesis: Input,
@@ -264,15 +276,13 @@ fn ident_value(v: &Value) -> identity::Value {
     }
 }
 
-/// `path`, made absolute, relative to `base` with `/` separators; refused when
-/// it lies outside `base`, since a report records paths relative to it.
-fn input(base: &Path, path: &Path, what: &str) -> Result<Input, LoopError> {
-    let abs = std::fs::canonicalize(path).map_err(|e| LoopError {
-        code: if what == "hypothesis" {
-            Code::HypothesisChanged
-        } else {
-            Code::Workload
-        },
+/// `path`, resolved against `base` when relative (CON-28), made absolute and
+/// recorded relative to `base` with `/` separators; refused when it lies
+/// outside `base`, since a report records paths relative to it. A file that
+/// cannot be read is refused with `unreadable`.
+fn input(base: &Path, path: &Path, what: &str, unreadable: Code) -> Result<Input, LoopError> {
+    let abs = std::fs::canonicalize(base.join(path)).map_err(|e| LoopError {
+        code: unreadable,
         message: format!("{what} {}: {e}", path.display()),
     })?;
     let Ok(rel) = abs.strip_prefix(base) else {
@@ -360,13 +370,6 @@ fn control_of(s: &Setup<'_>, cell: &Cell) -> Result<Cell, LoopError> {
         .ok_or_else(|| internal("a checked control config maps no cell"))
 }
 
-fn sub(c: &Cell, names: &BTreeSet<String>) -> Cell {
-    c.iter()
-        .filter(|(k, _)| names.contains(*k))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect()
-}
-
 /// Every grid cell, slices in key order and cells in HYP-14 order (LOOP-10(b)).
 fn grid(h: &Hypothesis, non_pooled: &BTreeSet<String>) -> Result<Vec<Cell>, LoopError> {
     let params = h
@@ -426,7 +429,10 @@ fn draw(h: &Hypothesis, rng: &mut ChaCha20Rng) -> Result<Cell, LoopError> {
             } => {
                 #[allow(clippy::cast_precision_loss)] // 53 bits: exact
                 let u = (rng.next_u64() >> 11) as f64 * f64::powi(2.0, -53);
-                Value::float(min + (max - min) * u).ok_or_else(|| LoopError {
+                // LOOP-10(b)'s formula; its width is finite (checked at setup),
+                // and the result is clamped against rounding past `max` (ADR-23).
+                let x = (min + (max - min) * u).clamp(*min, *max);
+                Value::float(x).ok_or_else(|| LoopError {
                     code: Code::Internal,
                     message: format!("`{name}`: a draw over [{min}, {max}] is not finite"),
                 })?
@@ -556,6 +562,16 @@ impl<'h> Setup<'h> {
                 );
             }
         }
+        if d.search == "random"
+            && let Some((name, _)) = h.params().iter().find(|(_, p)| {
+                matches!(p.domain, Domain::Range { min, max, levels: None } if !(max - min).is_finite())
+            })
+        {
+            return err(
+                Code::Search,
+                format!("`{name}`: random cannot draw over a range whose width max − min overflows (LOOP-10(b))"),
+            );
+        }
         match h.control() {
             Control::Config(_) => {}
             Control::Missing => {
@@ -587,7 +603,8 @@ impl<'h> Setup<'h> {
             _ => PathBuf::from("."),
         };
         let base = std::fs::canonicalize(&parent).map_err(|e| io_err(&parent, e))?;
-        let hypothesis = input(&base, h.path(), "hypothesis")?;
+        // A file loaded but no longer readable has changed (HYP-4).
+        let hypothesis = input(&base, h.path(), "hypothesis", Code::HypothesisChanged)?;
         if hypothesis.hash != h.hash() {
             return err(
                 Code::HypothesisChanged,
@@ -604,7 +621,7 @@ impl<'h> Setup<'h> {
         )?;
         let mut workloads = BTreeMap::new();
         for (v, path) in &wmap {
-            let w = input(&base, Path::new(path), "workload")?;
+            let w = input(&base, Path::new(path), "workload", Code::Workload)?;
             exec.check_workload(&w.abs).map_err(|e| LoopError {
                 code: Code::Workload,
                 message: format!("{path}: {e}"),
@@ -660,7 +677,10 @@ impl<'h> Setup<'h> {
             }
         }
         if args.budget > u64::try_from(i64::MAX).unwrap_or(u64::MAX) {
-            return err(Code::BudgetTooSmall, "a budget beyond 2^63 − 1 bundles");
+            return err(
+                Code::BudgetRefused,
+                "a budget beyond 2^63 − 1 bundles cannot be recorded (LOOP-11)",
+            );
         }
         let status = match h.status() {
             Status::Frozen => HypStatus::Frozen,
@@ -690,6 +710,7 @@ impl<'h> Setup<'h> {
             .collect();
         let s = Self {
             h,
+            base,
             hypothesis,
             workloads,
             models,
@@ -817,45 +838,92 @@ impl<'h> Setup<'h> {
         Ok(())
     }
 
-    /// One bundle of `cell` and `arm`: an existing one of the same build reused
-    /// (LOOP-11), or the executor's, checked against what was asked (LOOP-15).
-    fn bundle(
+    /// The bundle of `cell` and `arm` that already exists under `out`, checked
+    /// for reuse (LOOP-11): it verifies (TRC-23) and comes from this binary's
+    /// build and engine. `None` when there is none, or when reuse is off.
+    fn existing(
+        &self,
+        out: &Path,
+        reuse: bool,
+        cell: &Cell,
+        arm: Role,
+    ) -> Result<Option<BundleData>, LoopError> {
+        let expected = self.run_id(cell, arm)?;
+        let dir = out.join(expected.to_hex());
+        if !reuse || std::fs::symlink_metadata(&dir).is_err() {
+            return Ok(None);
+        }
+        if std::fs::symlink_metadata(dir.join(acn_trace::bundle::MANIFEST)).is_err() {
+            return err(
+                Code::BundleIncomplete,
+                format!(
+                    "{} has no {}: a run that did not finish. Remove the directory and run the loop again (CON-29)",
+                    dir.display(),
+                    acn_trace::bundle::MANIFEST
+                ),
+            );
+        }
+        let b = read::read(&dir).map_err(|e| LoopError {
+            code: Code::BundleInvalid,
+            message: format!("an existing bundle does not verify (TRC-23): {e}"),
+        })?;
+        self.check(&b, expected, cell, false)?;
+        Ok(Some(b))
+    }
+
+    /// The executor's bundle of `cell` and `arm`, checked against what was
+    /// asked (LOOP-15).
+    fn make(
         &self,
         exec: &mut dyn Executor,
         out: &Path,
-        reuse: bool,
         cell: &Cell,
         arm: Role,
     ) -> Result<BundleData, LoopError> {
         let expected = self.run_id(cell, arm)?;
         let dir = out.join(expected.to_hex());
-        let made = !(reuse && std::fs::symlink_metadata(&dir).is_ok());
-        let (b, got) = if made {
-            let request = Request {
-                hypothesis: self.hypothesis.abs.clone(),
-                workload: self.workload_of(cell)?.abs.clone(),
-                model: self.model_of(cell)?.clone(),
-                vary: cell.iter().map(|(k, v)| (k.clone(), v.text())).collect(),
-                arm,
-                replicates: self.h.design().replicates,
-                runs_dir: out.to_path_buf(),
-            };
-            let got = exec.run(&request).map_err(|e| LoopError {
-                code: Code::ExecutorFailed,
-                message: format!("{} {}: {e}", arm.as_str(), key(cell)),
-            })?;
-            let b = read::read(&got).map_err(|e| LoopError {
-                code: Code::ExecutorMismatch,
-                message: format!("the bundle returned does not verify: {e}"),
-            })?;
-            (b, Some(got))
-        } else {
-            let b = read::read(&dir).map_err(|e| LoopError {
-                code: Code::BundleInvalid,
-                message: format!("an existing bundle does not verify (TRC-23): {e}"),
-            })?;
-            (b, None)
+        let request = Request {
+            hypothesis: self.hypothesis.abs.clone(),
+            workload: self.workload_of(cell)?.abs.clone(),
+            model: self.model_of(cell)?.clone(),
+            vary: cell.iter().map(|(k, v)| (k.clone(), v.text())).collect(),
+            arm,
+            replicates: self.h.design().replicates,
+            runs_dir: out.to_path_buf(),
+            start_dir: self.base.clone(),
         };
+        let got = exec.run(&request).map_err(|e| LoopError {
+            code: Code::ExecutorFailed,
+            message: format!("{} {}: {e}", arm.as_str(), key(cell)),
+        })?;
+        let b = read::read(&got).map_err(|e| LoopError {
+            code: Code::ExecutorMismatch,
+            message: format!("the bundle returned does not verify: {e}"),
+        })?;
+        self.check(&b, expected, cell, true)?;
+        if std::fs::canonicalize(&got).ok() != std::fs::canonicalize(&dir).ok() {
+            return err(
+                Code::ExecutorMismatch,
+                format!(
+                    "the executor returned {}, not {} (LOOP-15)",
+                    got.display(),
+                    dir.display()
+                ),
+            );
+        }
+        Ok(b)
+    }
+
+    /// A bundle is the one expected: made from the file and workload the loop
+    /// read (LOOP-13), with the expected run_id, by this binary (LOOP-15,
+    /// CON-31).
+    fn check(
+        &self,
+        b: &BundleData,
+        expected: Digest,
+        cell: &Cell,
+        made: bool,
+    ) -> Result<(), LoopError> {
         let m = &b.manifest;
         if m.hypothesis.hash != self.h.hash().to_hex() {
             return err(
@@ -881,26 +949,18 @@ impl<'h> Setup<'h> {
                 ),
             );
         }
-        let (mismatch, what) = if made {
-            (Code::ExecutorMismatch, "the executor returned")
+        let what = if made {
+            "the executor returned"
         } else {
-            (Code::BuildMismatch, "an existing bundle is")
+            "an existing bundle is"
         };
-        if let Some(got) = got
-            && std::fs::canonicalize(&got).ok() != std::fs::canonicalize(&dir).ok()
-        {
-            return err(
-                Code::ExecutorMismatch,
-                format!(
-                    "the executor returned {}, not {} (LOOP-15)",
-                    got.display(),
-                    dir.display()
-                ),
-            );
-        }
         if b.run_id != expected {
             return err(
-                mismatch,
+                if made {
+                    Code::ExecutorMismatch
+                } else {
+                    Code::BundleInvalid
+                },
                 format!(
                     "{what} run {}, not the expected {} (CON-29, LOOP-15)",
                     m.run_id,
@@ -908,6 +968,11 @@ impl<'h> Setup<'h> {
                 ),
             );
         }
+        let mismatch = if made {
+            Code::ExecutorMismatch
+        } else {
+            Code::BuildMismatch
+        };
         if m.build.build_hash != self.bin.build_hash.to_hex()
             || m.engine_hash != self.bin.engine_hash.to_hex()
         {
@@ -929,7 +994,7 @@ impl<'h> Setup<'h> {
                 format!("{what} {} under seed {}", m.run_id, m.seed),
             );
         }
-        Ok(b)
+        Ok(())
     }
 }
 
@@ -980,14 +1045,26 @@ fn execute(
             break Stop::Budget;
         }
         s.check_inputs()?;
-        let mut run_ids = Vec::new();
-        let t = s.bundle(exec, out, reuse, &cell, Role::Treatment)?;
-        run_ids.push(t.run_id);
-        bundles.push(t);
+        // LOOP-10(f): every existing bundle the batch would use is checked
+        // before any of the batch runs.
+        let mut wanted = vec![(cell.clone(), Role::Treatment)];
         if need_control {
-            let c = s.bundle(exec, out, reuse, &control, Role::Control)?;
-            run_ids.push(c.run_id);
-            bundles.push(c);
+            wanted.push((control.clone(), Role::Control));
+        }
+        let found = wanted
+            .iter()
+            .map(|(c, arm)| s.existing(out, reuse, c, *arm))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut run_ids = Vec::new();
+        for ((c, arm), have) in wanted.iter().zip(found) {
+            let b = match have {
+                Some(b) => b,
+                None => s.make(exec, out, c, *arm)?,
+            };
+            run_ids.push(b.run_id);
+            bundles.push(b);
+        }
+        if need_control {
             controls.insert(key(&control));
         }
         spent += cost;
@@ -1005,7 +1082,8 @@ fn execute(
         });
     };
     if batches.is_empty() {
-        return err(Code::BudgetTooSmall, "no batch fitted the budget");
+        // Unreachable: setup refuses a budget below the first batch.
+        return err(Code::Internal, "no batch fitted the budget");
     }
     Ok(Done {
         batches,
@@ -1099,7 +1177,7 @@ fn report(s: &Setup<'_>, done: &Done) -> Result<J, LoopError> {
     let budget = i64::try_from(s.budget).map_err(internal)?;
     Ok(J::obj([
         ("format", J::str(REPORT_FORMAT)),
-        ("layer", J::str("L1")),
+        ("layer", J::str(crate::layer::REPORT.as_str())),
         ("loop_id", hex(&s.loop_id)),
         (
             "hypothesis",
@@ -1389,7 +1467,7 @@ pub fn run(
 ) -> Result<Completed, LoopError> {
     let s = Setup::new(h, args, runs_dir, bin, &*exec)?;
     let loop_dir = runs_dir.join("loop").join(s.loop_id.to_hex());
-    if std::fs::symlink_metadata(loop_dir.join(REPORT_JSON)).is_ok() {
+    if std::fs::symlink_metadata(&loop_dir).is_ok() {
         return err(
             Code::LoopExists,
             format!(
@@ -1400,6 +1478,10 @@ pub fn run(
     }
     let done = execute(&s, runs_dir, true, exec)?;
     let v = done.verdict()?;
+    // Rendered first, so that the verdict and the report are written one
+    // after the other with nothing between them that can fail but I/O.
+    let text = report(&s, &done)?.render();
+    let md = markdown(&text)?;
     // LOOP-13: re-read before the verdict is written ...
     s.check_inputs()?;
     match verdict::write(runs_dir, v) {
@@ -1421,8 +1503,6 @@ pub fn run(
     }
     // ... and before the report is.
     s.check_inputs()?;
-    let text = report(&s, &done)?.render();
-    let md = markdown(&text)?;
     let report = loop_out::write_report(runs_dir, &[], &s.loop_id, &text, &md)?;
     let mut run_ids: Vec<Digest> = done.bundles.iter().map(|b| b.run_id).collect();
     run_ids.sort_by_key(|d| d.0);
@@ -1452,6 +1532,11 @@ pub fn regenerate(
     bin: Binary,
     exec: &mut dyn Executor,
 ) -> Result<Regenerated, LoopError> {
+    // Absolute, so `runs/` and its parent are found however the path is given.
+    let report_path = &std::fs::canonicalize(report_path).map_err(|e| LoopError {
+        code: Code::Report,
+        message: format!("{}: {e}", report_path.display()),
+    })?;
     let text = std::fs::read_to_string(report_path).map_err(|e| io_err(report_path, e))?;
     let r: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| bad_report(format!("{}: {e}", report_path.display())))?;
@@ -1492,18 +1577,41 @@ pub fn regenerate(
         _ => PathBuf::from("."),
     };
     let base = std::fs::canonicalize(&parent).map_err(|e| io_err(&parent, e))?;
-    let hyp_path = base.join(str_at(&r["hypothesis"]["path"], "hypothesis.path")?);
-    let h = crate::load_in(&hyp_path, &base).map_err(|e| LoopError {
-        code: Code::InputChanged,
-        message: e.to_string(),
-    })?;
-    if h.hash().to_hex() != str_at(&r["hypothesis"]["hash"], "hypothesis.hash")?
-        || h.status().as_str() != str_at(&r["hypothesis"]["status"], "hypothesis.status")?
-    {
+    // LOOP-14: every input file still has its recorded hash, checked before
+    // anything else reads it, so that a change is named `input_changed`.
+    let unchanged = |rel: String, hash: String, what: &str| -> Result<PathBuf, LoopError> {
+        let path = base.join(&rel);
+        match identity::file_hash(&path) {
+            Ok(h) if h.to_hex() == hash => Ok(path),
+            Ok(_) => err(
+                Code::InputChanged,
+                format!("{what} {rel} no longer has the hash the report records (LOOP-14)"),
+            ),
+            Err(e) => err(
+                Code::InputChanged,
+                format!("{what} {rel} can no longer be read (LOOP-14): {e}"),
+            ),
+        }
+    };
+    let hyp_path = unchanged(
+        str_at(&r["hypothesis"]["path"], "hypothesis.path")?,
+        str_at(&r["hypothesis"]["hash"], "hypothesis.hash")?,
+        "hypothesis",
+    )?;
+    for (v, w) in r["inputs"]["workloads"].as_object().into_iter().flatten() {
+        unchanged(
+            str_at(&w["path"], "inputs.workloads path")?,
+            str_at(&w["hash"], "inputs.workloads hash")?,
+            &format!("workload `{v}`"),
+        )?;
+    }
+    // The bytes are the recorded ones, so a load failure is the report's.
+    let h = crate::load_in(&hyp_path, &base).map_err(|e| bad_report(e.to_string()))?;
+    if h.status().as_str() != str_at(&r["hypothesis"]["status"], "hypothesis.status")? {
         return err(
             Code::InputChanged,
             format!(
-                "{} no longer has the hash and status the report records (LOOP-14)",
+                "{} no longer has the status the report records (LOOP-14)",
                 hyp_path.display()
             ),
         );
@@ -1536,17 +1644,6 @@ pub fn regenerate(
             .ok_or_else(|| bad_report("no `inputs.budget`"))?,
     };
     let s = Setup::new(&h, &args, &runs, bin, &*exec)?;
-    for (v, w) in &s.workloads {
-        if Some(w.hash.to_hex().as_str()) != i["workloads"][v]["hash"].as_str() {
-            return err(
-                Code::InputChanged,
-                format!(
-                    "workload {} no longer has the hash the report records (LOOP-14)",
-                    w.rel
-                ),
-            );
-        }
-    }
     if s.loop_id.to_hex() != id {
         return err(
             Code::InputChanged,

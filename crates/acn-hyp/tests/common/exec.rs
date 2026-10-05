@@ -53,7 +53,6 @@ pub type Hook = Box<dyn FnMut(usize, &Request, PathBuf) -> Result<PathBuf, Strin
 pub struct Exec {
     pub engine: Digest,
     pub build: BuildInfo,
-    pub start: PathBuf,
     pub profiles: Profiles,
     /// Requests run so far, in order.
     pub requests: Vec<Request>,
@@ -72,15 +71,16 @@ pub fn profiles() -> Profiles {
 }
 
 impl Exec {
-    pub fn new(start: &Path) -> Self {
-        Self::with_build(start, "build")
+    /// `_dir` names the test's directory for the reader; the harness looks for
+    /// the workspace root from the request's `start_dir` (LOOP-15).
+    pub fn new(_dir: &Path) -> Self {
+        Self::with_build(_dir, "build")
     }
 
-    pub fn with_build(start: &Path, tag: &str) -> Self {
+    pub fn with_build(_dir: &Path, tag: &str) -> Self {
         Self {
             engine: Digest::of(super::bundles::ENGINE),
             build: build(tag),
-            start: start.to_path_buf(),
             profiles: profiles(),
             requests: Vec::new(),
             hook: None,
@@ -116,7 +116,7 @@ impl Executor for Exec {
             opts: Opts::default(),
             hypothesis: HypothesisArg::File(r.hypothesis.clone()),
             runs_dir: r.runs_dir.clone(),
-            start_dir: self.start.clone(),
+            start_dir: r.start_dir.clone(),
             engine_hash: self.engine,
             build: self.build.clone(),
             profiles: Some(self.profiles.clone()),

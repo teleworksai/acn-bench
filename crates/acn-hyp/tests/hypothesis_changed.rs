@@ -54,8 +54,33 @@ fn a_hypothesis_edited_during_the_last_batch_aborts_before_the_verdict() {
 /// Cites: LOOP-13
 #[test]
 fn a_workload_edited_between_batches_aborts_the_loop() {
-    let (c, _dir) = edited_after("w.toml", 0);
+    // After the first batch: caught by the re-read before the next one.
+    let (c, dir) = edited_after("w.toml", 1);
     assert_eq!(c, Code::InputChanged);
+    assert_eq!(
+        bundles(dir.path()).len(),
+        2,
+        "nothing of the next batch ran"
+    );
+}
+
+/// Cites: LOOP-13, LOOP-15
+#[test]
+fn a_workload_edited_inside_a_batch_shows_in_the_bundle_it_made() {
+    // After the first treatment: the control is made from the edited file,
+    // and its manifest says so.
+    let dir = dir_with(TWO);
+    let d = dir.path().to_path_buf();
+    let mut ex = Exec::new(&d).hook(move |n, r, out| {
+        if n == 0 {
+            let text = std::fs::read_to_string(&r.workload).unwrap();
+            std::fs::write(&r.workload, format!("{text}# edited\n")).unwrap();
+        }
+        Ok(out)
+    });
+    let e = run_loop(dir.path(), args(10), &mut ex).unwrap_err();
+    assert_eq!(e.code, Code::InputChanged, "{e}");
+    assert!(e.message.contains("was made from workload"), "{e}");
 }
 
 /// Cites: LOOP-13, HYP-4

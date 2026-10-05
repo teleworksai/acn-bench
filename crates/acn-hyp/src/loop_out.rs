@@ -1,5 +1,6 @@
 //! The loop runner's writes (LOOP-11, LOOP-14, HYP-4): the report, under the
-//! workspace's own `runs/`, and the fresh directory a regeneration runs into.
+//! workspace's own `runs/`, written all or nothing, and the fresh directory a
+//! regeneration runs into.
 //! With `verdict::write`, these are the only functions of this crate that
 //! create a file or a directory; xtask's `workspace.rs` checks it.
 
@@ -49,41 +50,42 @@ fn dir_under(runs: &Path, parts: &[&str]) -> Result<PathBuf, LoopError> {
     Ok(dir)
 }
 
-/// Write a file that must not exist, never leaving a partial one: a sibling
-/// temporary file linked into place, which fails if the target exists.
-fn write_new(path: &Path, bytes: &[u8]) -> Result<(), LoopError> {
+/// Write a new file into a directory this process just created, so no other
+/// writer shares its name.
+fn write_file(path: &Path, bytes: &[u8]) -> Result<(), LoopError> {
     use std::io::Write as _;
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-    let tmp = path.with_file_name(format!(".{name}.partial"));
-    let _ = std::fs::remove_file(&tmp);
-    let result = (|| {
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-            .map_err(|e| io_err(&tmp, e))?;
-        f.write_all(bytes).map_err(|e| io_err(&tmp, e))?;
-        f.sync_all().map_err(|e| io_err(&tmp, e))?;
-        std::fs::hard_link(&tmp, path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                LoopError {
-                    code: Code::LoopExists,
-                    message: format!(
-                        "{} exists; a loop report is never overwritten (LOOP-11)",
-                        path.display()
-                    ),
-                }
-            } else {
-                io_err(path, e)
-            }
-        })
-    })();
-    let _ = std::fs::remove_file(&tmp);
-    result
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| io_err(path, e))?;
+    f.write_all(bytes).map_err(|e| io_err(path, e))?;
+    f.sync_all().map_err(|e| io_err(path, e))
 }
 
-/// Write `report.json`, then `report.md`, under `runs/<prefix…>/loop/<loop_id>/`
-/// (LOOP-11); neither is ever overwritten. Returns the path of `report.json`.
+/// A directory beside `final_dir` that no other writer uses:
+/// `.<name>.partial.<k>`, the first `k` whose creation succeeds.
+fn staging_dir(final_dir: &Path) -> Result<PathBuf, LoopError> {
+    let name = final_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("dir");
+    for k in 0u64.. {
+        let dir = final_dir.with_file_name(format!(".{name}.partial.{k}"));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(io_err(&dir, e)),
+        }
+    }
+    err(Code::Internal, "no staging directory left")
+}
+
+/// Write `report.json` and `report.md` as `runs/<prefix…>/loop/<loop_id>/`,
+/// all or nothing (LOOP-11): both go into a staging directory of this
+/// writer's own, which is then renamed into place. A crash leaves at most a
+/// staging directory, which blocks nothing; an existing report directory is
+/// never replaced. Returns the path of `report.json`.
 pub(crate) fn write_report(
     runs: &Path,
     prefix: &[&str],
@@ -91,25 +93,35 @@ pub(crate) fn write_report(
     json: &str,
     md: &str,
 ) -> Result<PathBuf, LoopError> {
-    let id = loop_id.to_hex();
     let mut parts: Vec<&str> = prefix.to_vec();
-    parts.extend(["loop", id.as_str()]);
-    let dir = dir_under(runs, &parts)?;
-    let path = dir.join(REPORT_JSON);
-    if std::fs::symlink_metadata(&path).is_ok()
-        || std::fs::symlink_metadata(dir.join(REPORT_MD)).is_ok()
-    {
-        return err(
-            Code::LoopExists,
-            format!(
-                "{} exists; a loop report is never overwritten (LOOP-11)",
-                dir.display()
-            ),
-        );
+    parts.push("loop");
+    let parent = dir_under(runs, &parts)?;
+    let dir = parent.join(loop_id.to_hex());
+    let exists = || LoopError {
+        code: Code::LoopExists,
+        message: format!(
+            "{} exists; a loop report is never overwritten (LOOP-11)",
+            dir.display()
+        ),
+    };
+    if std::fs::symlink_metadata(&dir).is_ok() {
+        return Err(exists());
     }
-    write_new(&path, json.as_bytes())?;
-    write_new(&dir.join(REPORT_MD), md.as_bytes())?;
-    Ok(path)
+    let staging = staging_dir(&dir)?;
+    let result = write_file(&staging.join(REPORT_JSON), json.as_bytes())
+        .and_then(|()| write_file(&staging.join(REPORT_MD), md.as_bytes()))
+        .and_then(|()| {
+            // A rename onto an existing directory could replace an empty one;
+            // check again just before it (LOOP-11).
+            if std::fs::symlink_metadata(&dir).is_ok() {
+                return Err(exists());
+            }
+            std::fs::rename(&staging, &dir).map_err(|e| io_err(&dir, e))
+        });
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    result.map(|()| dir.join(REPORT_JSON))
 }
 
 /// A fresh `runs/regen/<loop_id>/<n>/`, `n` the smallest positive decimal not

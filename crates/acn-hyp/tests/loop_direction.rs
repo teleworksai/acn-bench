@@ -38,8 +38,7 @@ fn snapshot(dir: &Path) -> BTreeMap<String, Option<Vec<u8>>> {
 }
 
 /// TWO frozen under a workspace root: a spec, 20 replicates, and a falsifier
-/// that fires on the mock (no cell's effect is exactly zero there), so the
-/// loop ends on a `fail`.
+/// that fires whatever the effects are, so the loop ends on a `fail`.
 fn frozen_root() -> tempfile::TempDir {
     let text = TWO
         .replace(
@@ -47,7 +46,8 @@ fn frozen_root() -> tempfile::TempDir {
             "title = \"tool order and the cache\"\nspec = \"specs/100-x.md\"",
         )
         .replace("replicates = 4", "replicates = 20")
-        .replace("replicates < 4", "replicates < 20");
+        .replace("replicates < 4", "replicates < 20")
+        .replace("< 0.001", "< 1000");
     common::root(&[("hypotheses/zz.toml", &text), ("w.toml", &smoke())])
 }
 
@@ -66,7 +66,8 @@ fn a_loop_on_a_frozen_hypothesis_writes_only_under_runs() {
     let bin = ex.bin();
     let c = loop_run::run(&h, &args_in(r, args(3)), &r.join("runs"), bin, &mut ex).unwrap();
     assert_eq!(snapshot(r), before, "nothing outside runs/ changed");
-    // Whatever the verdict, it is a written result with the file's status.
+    // A `fail` on a frozen file is a written result like any other (HYP-25).
+    assert_eq!(c.verdict, acn_hyp::verdict::V::Fail);
     let v: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(
             r.join("runs/verdicts")
@@ -77,7 +78,19 @@ fn a_loop_on_a_frozen_hypothesis_writes_only_under_runs() {
     )
     .unwrap();
     assert_eq!(v["hypothesis"]["status"], "frozen");
-    assert_eq!(v["verdict"], c.verdict.as_str());
+    assert_eq!(v["verdict"], "fail");
+    // It regenerates, with the harness finding the same root as the loop did,
+    // wherever the process runs from (LOOP-14, LOOP-15).
+    let mut again = Exec::new(r);
+    again.engine = ex.engine;
+    let g = loop_run::regenerate(&c.report, bin, &mut again).unwrap();
+    assert!(g.identical(), "{:?}", g.differ);
+    assert!(
+        again
+            .requests
+            .iter()
+            .all(|q| q.start_dir == std::fs::canonicalize(r).unwrap())
+    );
 
     // A loop aimed elsewhere is refused before anything runs (HYP-4).
     for bad in ["hypotheses/runs", "runs/verdicts", "specs/runs"] {

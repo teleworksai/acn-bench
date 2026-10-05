@@ -337,31 +337,33 @@ fn an_existing_bundle_is_reused_on_its_build_and_refused_from_another() {
     assert_eq!(a.requests.len(), 1);
 }
 
-/// Cites: LOOP-15, LOOP-10
+/// Cites: LOOP-15, LOOP-10, LOOP-13
 #[test]
 fn an_executor_that_fails_or_returns_another_bundle_aborts_the_loop() {
-    let aborted = |ex: Exec, want: Code| {
+    // `bin`: the binary the runner believes it is, when not the executor's.
+    let aborted = |mut ex: Exec, bin: Option<&str>, want: Code| -> String {
         let dir = dir_with(TWO);
         let d = dir.path();
-        let mut ex = Exec {
-            start: d.to_path_buf(),
-            ..ex
-        };
-        let e = run_loop(d, args(10), &mut ex).unwrap_err();
+        let bin = bin.map_or_else(|| ex.bin(), |tag| Exec::with_build(d, tag).bin());
+        let h = acn_hyp::load_in(&d.join("zz.toml"), d).unwrap();
+        let e =
+            loop_run::run(&h, &args_in(d, args(10)), &d.join("runs"), bin, &mut ex).unwrap_err();
         assert_eq!(e.code, want, "{e}");
         assert!(!d.join("runs/loop").exists(), "no report");
         assert!(!d.join("runs/verdicts").exists(), "no verdict");
         assert!(!bundles(d).is_empty(), "the bundles made stay");
+        e.message
     };
-    let start = Path::new(".");
+    let here = Path::new(".");
     aborted(
-        Exec::new(start).hook(|n, _, dir| if n == 1 { Err("boom".into()) } else { Ok(dir) }),
+        Exec::new(here).hook(|n, _, dir| if n == 1 { Err("boom".into()) } else { Ok(dir) }),
+        None,
         Code::ExecutorFailed,
     );
     // The control's request answered with the treatment's bundle.
     let mut first = None;
     aborted(
-        Exec::new(start).hook(move |n, _, dir| {
+        Exec::new(here).hook(move |n, _, dir| {
             if n == 0 {
                 first = Some(dir.clone());
                 Ok(dir)
@@ -369,13 +371,80 @@ fn an_executor_that_fails_or_returns_another_bundle_aborts_the_loop() {
                 Ok(first.clone().unwrap())
             }
         }),
+        None,
         Code::ExecutorMismatch,
     );
     // A directory that is not a bundle.
     aborted(
-        Exec::new(start).hook(|_, _, dir| Ok(dir.join("logs"))),
+        Exec::new(here).hook(|_, _, dir| Ok(dir.join("logs"))),
+        None,
         Code::ExecutorMismatch,
     );
+    // A bundle from another build than the runner's (CON-31).
+    let m = aborted(
+        Exec::with_build(here, "b"),
+        Some("a"),
+        Code::ExecutorMismatch,
+    );
+    assert!(m.contains("from build"), "{m}");
+    // The hypothesis edited inside a batch: the control is made from other
+    // bytes, which its manifest shows (LOOP-13, LOOP-15).
+    let m = aborted(
+        Exec::new(here).hook(|n, r, dir| {
+            if n == 0 {
+                let text = std::fs::read_to_string(&r.hypothesis).unwrap();
+                std::fs::write(&r.hypothesis, format!("{text}# edited\n")).unwrap();
+            }
+            Ok(dir)
+        }),
+        None,
+        Code::HypothesisChanged,
+    );
+    assert!(m.contains("was made from hypothesis"), "{m}");
+}
+
+/// Cites: LOOP-10, LOOP-11
+#[test]
+fn existing_bundles_are_checked_before_a_batch_runs() {
+    let dir = dir_with(TWO);
+    let d = dir.path();
+    let c = run_loop(d, args(2), &mut Exec::with_build(d, "a")).unwrap();
+    let runs = d.join("runs");
+    // Only the control of the first batch is left from build `a`: the batch's
+    // treatment would be new, but nothing runs before the control is refused.
+    let mut ids: Vec<String> = c
+        .run_ids
+        .iter()
+        .map(acn_trace::identity::Digest::to_hex)
+        .collect();
+    let control = ids
+        .iter()
+        .position(|id| {
+            acn_trace::bundle::verify(&runs.join(id))
+                .unwrap()
+                .manifest
+                .params["arms"]
+                == "control"
+        })
+        .unwrap();
+    let control = ids.remove(control);
+    std::fs::remove_dir_all(runs.join(&ids[0])).unwrap();
+    let mut b = Exec::with_build(d, "b");
+    let e = run_loop(d, args(3), &mut b).unwrap_err();
+    assert_eq!(e.code, Code::BuildMismatch, "{e}");
+    assert!(b.requests.is_empty(), "checked before the batch ran");
+    // A bundle left without its manifest by a run that never finished.
+    std::fs::remove_file(runs.join(&control).join("manifest.json")).unwrap();
+    let e = run_loop(d, args(3), &mut Exec::with_build(d, "a")).unwrap_err();
+    assert_eq!(e.code, Code::BundleIncomplete, "{e}");
+    assert!(e.message.contains("Remove the directory"), "{e}");
+    // One whose files no longer match its manifest.
+    std::fs::remove_dir_all(runs.join(&control)).unwrap();
+    let c = run_loop(d, args(4), &mut Exec::with_build(d, "a")).unwrap();
+    let first = c.run_ids[0].to_hex();
+    std::fs::write(runs.join(&first).join("spans.parquet"), b"x").unwrap();
+    let e = run_loop(d, args(5), &mut Exec::with_build(d, "a")).unwrap_err();
+    assert_eq!(e.code, Code::BundleInvalid, "{e}");
 }
 
 /// Cites: LOOP-10
@@ -648,4 +717,118 @@ fn an_objects_layer_is_derived_from_what_it_records() {
     ];
     let v = verdict(&h, set, common::bundles::engine()).unwrap();
     assert_eq!(layer::of_verdict(&v), Layer::L2);
+}
+
+/// Cites: LOOP-10, LOOP-11
+#[test]
+fn a_budget_too_large_to_record_is_refused_by_name() {
+    let dir = dir_with(TWO);
+    let mut ex = Exec::new(dir.path());
+    let e = run_loop(dir.path(), args(u64::MAX), &mut ex).unwrap_err();
+    assert_eq!(e.code, Code::BudgetRefused, "{e}");
+    assert_eq!(e.code.as_str(), "budget_refused");
+    assert!(ex.requests.is_empty());
+}
+
+/// Cites: LOOP-10
+#[test]
+fn random_draws_stay_within_huge_ranges_and_refuse_an_overflowing_width() {
+    let text = |min: &str, max: &str| {
+        TWO.replace(
+            "tool_order_stable = { kind = \"bool\" }",
+            &format!(
+                "tool_order_stable = {{ kind = \"bool\" }}\nx = {{ kind = \"range\", min = {min}, max = {max} }}"
+            ),
+        )
+        .replace("search = \"grid\"", "search = \"random\"")
+    };
+    // A finite width as wide as a double allows: every draw lies in the domain.
+    let (h, _d) = common::candidate(&text("0.0", "1.7976931348623157e308"), "zz");
+    let h = h.unwrap();
+    for c in loop_run::random_draws(&h, 200).unwrap() {
+        let x = c["x"].num().unwrap();
+        assert!((0.0..=f64::MAX).contains(&x), "{x}");
+    }
+    // max − min overflows: refused before anything runs.
+    let dir = dir_with(&text("-1.7e308", "1.7e308"));
+    let mut ex = Exec::new(dir.path());
+    let e = run_loop(dir.path(), args(10), &mut ex).unwrap_err();
+    assert_eq!(e.code, Code::Search, "{e}");
+    assert!(e.message.contains("overflows"), "{e}");
+    assert!(ex.requests.is_empty());
+}
+
+/// Cites: LOOP-11, HYP-4
+#[test]
+fn the_report_is_written_all_or_nothing_and_never_through_a_link() {
+    // The loop_id of TWO with args(10), learnt from a run elsewhere.
+    let other = dir_with(TWO);
+    let id = run_loop(other.path(), args(10), &mut Exec::new(other.path()))
+        .unwrap()
+        .loop_id
+        .to_hex();
+    // A staging directory a crashed writer left behind blocks nothing.
+    let dir = dir_with(TWO);
+    let d = dir.path();
+    let stale = d.join(format!("runs/loop/.{id}.partial.0"));
+    std::fs::create_dir_all(&stale).unwrap();
+    std::fs::write(stale.join("report.json"), "x").unwrap();
+    let c = run_loop(d, args(10), &mut Exec::new(d)).unwrap();
+    assert_eq!(c.loop_id.to_hex(), id);
+    let names: BTreeSet<String> = std::fs::read_dir(c.report.parent().unwrap())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        names,
+        BTreeSet::from(["report.json".into(), "report.md".into()])
+    );
+    assert_eq!(
+        std::fs::read_to_string(stale.join("report.json")).unwrap(),
+        "x"
+    );
+    // `runs/loop` made a link to elsewhere: refused, and nothing lands there.
+    #[cfg(unix)]
+    {
+        let dir = dir_with(TWO);
+        let d = dir.path();
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.join("runs")).unwrap();
+        std::os::unix::fs::symlink(elsewhere.path(), d.join("runs/loop")).unwrap();
+        let e = run_loop(d, args(10), &mut Exec::new(d)).unwrap_err();
+        assert_eq!(e.code, Code::Path, "{e}");
+        assert_eq!(std::fs::read_dir(elsewhere.path()).unwrap().count(), 0);
+    }
+}
+
+/// Cites: LOOP-11
+#[test]
+fn the_rendering_says_when_no_effect_is_defined() {
+    let report = serde_json::json!({
+        "format": "acn-bench/loop-report/v1", "layer": "L1", "loop_id": "ab",
+        "hypothesis": {"id": "zz", "status": "candidate", "hash": "cd", "path": "zz.toml"},
+        "inputs": {"workloads": {"": {"path": "w.toml", "hash": "ef"}}, "models": {"": "mock-auto"},
+                   "strategy": "grid", "budget": 2},
+        "seed": "1", "engine_hash": "e", "build_hash": "b",
+        "batches": [], "bundles": [], "stop": "budget", "verdict_id": "v",
+        "verdict": "inconclusive", "reasons": [{"reason": "guard", "refers": []}],
+        "best": null, "worst": null,
+        "control_effect": [{"slice": "provider=p1", "cell": "x=1", "quantity": "q",
+                            "effect": null, "ci_low": null, "ci_high": null}],
+        "lab_note": {"question": "q?", "varied": {}, "next_layer": "L3",
+                     "observed": {"verdict": "inconclusive", "reasons": ["guard"], "batches": 0,
+                                  "bundles": 0, "stop": "budget"}},
+    });
+    let md = loop_run::markdown(&report.to_string()).unwrap();
+    assert!(md.contains("- best: none (no defined effect)."), "{md}");
+    assert!(md.contains("- worst: none (no defined effect)."), "{md}");
+    assert!(
+        md.contains("| `provider=p1` | x=1 | q | undefined | [undefined, undefined] |"),
+        "{md}"
+    );
+    assert!(md.contains("reasons: guard"), "{md}");
+    assert_eq!(
+        loop_run::markdown("not json").unwrap_err().code,
+        Code::Report
+    );
 }

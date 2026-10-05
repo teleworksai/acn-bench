@@ -45,7 +45,11 @@ fn a_report_regenerates_byte_for_byte_into_a_fresh_directory() {
     let r = loop_run::regenerate(&c.report, bin, &mut ex).unwrap();
     assert!(r.identical(), "{:?}", r.differ);
     assert_eq!(r.loop_id, c.loop_id);
-    let regen = d.join("runs/regen").join(c.loop_id.to_hex());
+    // Paths come back canonical: the report path is resolved first.
+    let regen = std::fs::canonicalize(d)
+        .unwrap()
+        .join("runs/regen")
+        .join(c.loop_id.to_hex());
     assert_eq!(r.dir, regen.join("1"));
     assert_eq!(ex.requests.len(), 3, "no bundle is reused");
     assert!(ex.requests.iter().all(|q| q.runs_dir == regen.join("1")));
@@ -117,4 +121,50 @@ fn a_difference_is_reported_and_a_changed_input_or_build_is_refused() {
     // A file that is not a loop report.
     let e = loop_run::regenerate(&vpath, bin, &mut ex).unwrap_err();
     assert_eq!(e.code, Code::Report, "{e}");
+}
+
+/// Cites: LOOP-14
+#[test]
+fn a_regeneration_that_makes_other_bytes_says_which() {
+    let dir = dir_with(TWO);
+    let d = dir.path();
+    let c = run_loop(d, args(10), &mut Exec::new(d)).unwrap();
+    // The same inputs on a mock that caches differently: every bundle, the
+    // report and the verdict come out with other bytes.
+    let mut ex = Exec::new(d);
+    ex.profiles = acn_mockllm::profile::Profiles::parse(
+        &acn_mockllm::profile::PROFILES_TOML
+            .replace("min_cacheable_tokens = 1024", "min_cacheable_tokens = 64"),
+    )
+    .unwrap();
+    let bin = ex.bin();
+    let r = loop_run::regenerate(&c.report, bin, &mut ex).unwrap();
+    assert!(!r.identical());
+    assert!(
+        r.differ.contains(&"report.json".to_owned()),
+        "{:?}",
+        r.differ
+    );
+    for id in &c.run_ids {
+        assert!(
+            r.differ.contains(&format!("bundle {}", id.to_hex())),
+            "{id}: {:?}",
+            r.differ
+        );
+    }
+}
+
+/// Cites: LOOP-14
+#[test]
+fn a_workload_gone_since_the_report_is_an_input_change() {
+    let dir = dir_with(TWO);
+    let d = dir.path();
+    let c = run_loop(d, args(10), &mut Exec::new(d)).unwrap();
+    std::fs::remove_file(d.join("w.toml")).unwrap();
+    let mut ex = Exec::new(d);
+    let bin = ex.bin();
+    let e = loop_run::regenerate(&c.report, bin, &mut ex).unwrap_err();
+    assert_eq!(e.code, Code::InputChanged, "{e}");
+    assert!(e.message.contains("can no longer be read"), "{e}");
+    assert!(ex.requests.is_empty());
 }

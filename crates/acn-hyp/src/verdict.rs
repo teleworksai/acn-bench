@@ -373,7 +373,7 @@ pub(crate) fn product(params: &[(String, Vec<Value>)]) -> Vec<Cell> {
     out
 }
 
-fn sub(c: &Cell, names: &BTreeSet<String>) -> Cell {
+pub(crate) fn sub(c: &Cell, names: &BTreeSet<String>) -> Cell {
     c.iter()
         .filter(|(k, _)| names.contains(*k))
         .map(|(k, v)| (k.clone(), v.clone()))
@@ -1795,9 +1795,9 @@ pub(crate) fn check_runs_dir(runs_dir: &Path) -> Result<()> {
 /// - HYP-4: `runs_dir` is checked as `check_runs_dir` says, and neither
 ///   `verdicts/` nor the verdict's directory may be a symbolic link.
 /// - HYP-20: an existing `verdict.json` is never overwritten.
-/// - Atomic: the bytes go to a sibling temporary file that is then linked into
-///   place (which fails if the target exists), so a crash leaves no partial
-///   verdict and never blocks a later attempt.
+/// - Atomic: the bytes go to a sibling temporary file of this writer's own,
+///   which is then linked into place (which fails if the target exists), so a
+///   crash leaves no partial verdict and never blocks a later attempt.
 pub fn write(runs_dir: &Path, v: &Verdict) -> Result<PathBuf> {
     check_runs_dir(runs_dir)?;
     let io = |path: &Path| {
@@ -1828,15 +1828,23 @@ pub fn write(runs_dir: &Path, v: &Verdict) -> Result<PathBuf> {
     if path.exists() {
         return Err(VerdictError::Exists(dir));
     }
-    let tmp = dir.join(".verdict.json.partial");
-    let _ = std::fs::remove_file(&tmp);
-    let result = (|| {
-        use std::io::Write as _;
-        let mut f = std::fs::OpenOptions::new()
+    // A temporary name of this writer's own: the first `.verdict.json.partial.<k>`
+    // it can create, so that two writers never share one.
+    let mut k = 0u64;
+    let (tmp, mut f) = loop {
+        let tmp = dir.join(format!(".verdict.json.partial.{k}"));
+        match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&tmp)
-            .map_err(io(&tmp))?;
+        {
+            Ok(f) => break (tmp, f),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => k += 1,
+            Err(e) => return Err(io(&tmp)(e)),
+        }
+    };
+    let result = (|| {
+        use std::io::Write as _;
         f.write_all(v.text().as_bytes()).map_err(io(&tmp))?;
         f.sync_all().map_err(io(&tmp))?;
         std::fs::hard_link(&tmp, &path).map_err(|e| {

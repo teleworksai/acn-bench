@@ -11,7 +11,6 @@ use acn_hyp::loop_run::{Executor, Request};
 use acn_trace::identity::{BuildInfo, Digest, Mode};
 
 pub struct HarnessExecutor {
-    pub start_dir: PathBuf,
     pub engine_hash: Digest,
     pub build: BuildInfo,
 }
@@ -29,7 +28,7 @@ impl Executor for HarnessExecutor {
             opts: Opts::default(),
             hypothesis: HypothesisArg::File(r.hypothesis.clone()),
             runs_dir: r.runs_dir.clone(),
-            start_dir: self.start_dir.clone(),
+            start_dir: r.start_dir.clone(),
             engine_hash: self.engine_hash,
             build: self.build.clone(),
             profiles: None,

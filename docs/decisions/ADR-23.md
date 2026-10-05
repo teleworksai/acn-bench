@@ -30,10 +30,14 @@ Implementing the runner needs these readings.
 - **Writes.** All of them are in `acn_hyp::loop_out`, beside `verdict::write`.
   - `loop_out` writes the report and creates the regeneration directory, under a `runs/` that `verdict::check_runs_dir` accepts.
   - Every level is created and then checked not to be a symbolic link.
+  - **The report is written all or nothing.** `report.json` and `report.md` go into a staging directory, `runs/loop/.<loop_id>.partial.<k>/`, with `k` the first index this writer can create. That directory is then renamed to `<loop_id>/`. A crash leaves at most a staging directory, which blocks nothing, so a loop can never be left with a report and no rendering. An existing `<loop_id>/` is never replaced: it is checked before staging and again just before the rename.
+  - **Temporary names are unique per writer**, here and in `verdict::write` (`.verdict.json.partial.<k>`), so two concurrent writers never share or delete each other's file.
   - xtask's `workspace.rs` writer scan now allows `loop_out.rs`, as ADR-21 said the loop runner's own Class C PR would.
 
 ### Paths and the base (LOOP-10, LOOP-11)
 - **The base.** Recorded paths are relative to the directory `runs/` lies in. Inside a workspace this is the root (CON-28), because `check_runs_dir` accepts only the root's own `runs/`. Outside one it is wherever `runs/` is.
+- **Resolution.** `acn loop run` resolves `--hypothesis`, `--runs-dir` and `--from-report` against the workspace root found from the current directory, or against the current directory outside a workspace (LOOP-10). The runner resolves relative workload paths against the base.
+- **Where the harness looks for the root.** Each `Request` carries `start_dir`, the base. The harness therefore decides a file's status (frozen or candidate) from the same root the loop did, wherever the process runs from. Otherwise a regeneration started outside the workspace would compute another run_id.
 - **Paths outside the base** are refused with `path_refused`: a report could not record them relative to the base, so it could not regenerate.
 
 ### Running a loop (LOOP-10)
@@ -44,12 +48,17 @@ Implementing the runner needs these readings.
   3. its `workload_hash` is the recorded file's, or `input_changed`, so an edit inside a batch is named as such;
   4. it is the directory asked for, its run_id is the one expected, and its `build_hash`, `engine_hash` and `seed` are the binary's and the file's, or `executor_mismatch`.
 
-  For a reused bundle, check 4 aborts with `build_mismatch` instead, and a reused bundle that does not verify aborts with `bundle_invalid`.
+  For a reused bundle, check 4 aborts with `build_mismatch` instead (`bundle_invalid` for a run_id that is not its directory's).
+- **Existing bundles first.** Every existing bundle a batch would use is found and checked before any of the batch runs (LOOP-10(f)), so an existing control from another build stops the batch before its treatment is made.
+  - An existing bundle that does not verify aborts with `bundle_invalid`.
+  - A directory with no manifest, left by a run that never finished, aborts with `bundle_incomplete`, and the message says to remove it. Staging bundles so that this cannot happen is `acn-trace`'s change, filed as issue #20.
 - **The first batch** is always two bundles, a treatment and a control the loop has not yet made, so the budget's floor is 2.
   - A frozen file's floor is the grid: its cells plus their distinct controls.
-  - A budget above 2^63 − 1 is refused, because the report writes it as an integer.
+  - A budget above 2^63 − 1 is refused with `budget_refused`, because the report writes it as an integer.
 - **A frozen file declaring `random`** cannot load (HYP-9), so the runner's own check is defence in depth and has no test of its own.
-- **`random`'s float draw** is `min + (max − min) × u`, with `u = (next_u64 >> 11) × 2⁻⁵³`, as LOOP-10(b) specifies. Its known-answer vector has an enum, a `range`, an `int_range` and a bool; `loop_run::random_draws` exposes the draws for it.
+- **`random`'s float draw** is `min + (max − min) × u`, with `u = (next_u64 >> 11) × 2⁻⁵³`, as LOOP-10(b) specifies.
+  - The result is clamped to `[min, max]`, because `max − min` can round up and carry the sum past `max`, which the harness would refuse (HYP-6).
+  - A `range` whose width `max − min` overflows a double is refused before anything runs (`search_refused`). Lint accepts such a range, but LOOP-10(b)'s formula cannot draw from it. Its known-answer vector has an enum, a `range`, an `int_range` and a bool; `loop_run::random_draws` exposes the draws for it.
 - **The trajectory** computes a full verdict after every batch, so a loop over *n* cells costs *n* verdicts, each with its bootstrap.
   - That is cheap for the test grids, but quadratic for POC 4's full grid (1 536 cells).
   - LOOP-10(c) asks for it, and LOOP-11's report records it. Cheaper trajectories are a later spec question, not a reading to make here.
@@ -77,6 +86,7 @@ Implementing the runner needs these readings.
 - **`next_layer`** is `L2` when `twin_required` holds and `L3` otherwise (ADR-22).
 - **`report.md`** is rendered from `report.json`'s text by `loop_run::markdown` and nothing else, and the test checks exactly that.
 - **`loop_exists`** is checked before anything runs, and again by the writer.
+- **Writing order.** The report is rendered before the final verdict is written. The verdict and the report are then written one after the other, each after the inputs are re-read (LOOP-13). An input change caught by the second re-read still leaves the verdict on disk, contrary to LOOP-10(f)'s "neither", because LOOP-13 asks for a re-read before each write. Rendering first narrows that window to the re-read itself.
 
 ### Regeneration (LOOP-14)
 - **The comparison.**
@@ -86,8 +96,17 @@ Implementing the runner needs these readings.
 - **The result.** `differ` names `report.json`, `report.md`, `verdict.json` or `bundle <run_id>`, and `ok` is true iff `differ` is empty (CON-8).
 - **`input_changed`** covers any of:
   - a hypothesis whose hash or status moved;
-  - a workload whose hash moved;
+  - a workload whose hash moved, or that can no longer be read;
   - inputs that give another `loop_id`.
+
+  The recorded files are hashed before anything else reads them, so a deleted or edited input is named `input_changed`, never `workload_refused` or `pins_refused`.
+- **The report path** is made canonical first, so `runs/` and the base are found however the path was given.
+
+### Threat model
+The loop protects against accidents and edits to its inputs, not against someone with write access to `runs/`:
+- **Swapping paths.** Such a person can swap a directory the writer has checked for a symbolic link before the next level is created. Closing that needs directory handles (`openat`), which the standard library does not offer.
+- **Planted bundles.** They can plant a bundle with fabricated traces under the run_id the loop expects, and `loop run` will reuse it, since every hash it checks can be computed by anyone.
+- **What proves a report.** Only `--from-report`, which reuses nothing, proves a report: a planted bundle shows there as `bundle <run_id>` in `differ`.
 
 ### A spec gap found (HYP-9, HYP-20)
 A file with `[design].pins` and no `provider` parameter can never be judged:

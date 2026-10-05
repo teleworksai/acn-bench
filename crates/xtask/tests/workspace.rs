@@ -1428,7 +1428,7 @@ fn acn_hyp_writes_files_only_in_verdict_write_and_loop_out() {
     assert!(
         found
             .iter()
-            .any(|f| f.starts_with("loop_out.rs:write_new:std::fs::OpenOptions")),
+            .any(|f| f.starts_with("loop_out.rs:write_file:std::fs::OpenOptions")),
         "{found:?}"
     );
     // The scan sees through the usual disguises.
