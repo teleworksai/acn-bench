@@ -61,6 +61,7 @@ pub enum Code {
     BundleInvalid,
     BundleIncomplete,
     BudgetRefused,
+    BadId,
     NoLoopReport,
     LayerMismatch,
     VerdictMismatch,
@@ -98,6 +99,7 @@ impl Code {
             Self::BundleInvalid => "bundle_invalid",
             Self::BundleIncomplete => "bundle_incomplete",
             Self::BudgetRefused => "budget_refused",
+            Self::BadId => "bad_id",
             Self::NoLoopReport => "no_loop_report",
             Self::LayerMismatch => "layer_mismatch",
             Self::VerdictMismatch => "verdict_mismatch",
@@ -1544,6 +1546,15 @@ pub fn regenerate(
     bin: Binary,
     exec: &mut dyn Executor,
 ) -> Result<Regenerated, LoopError> {
+    // The report is read from runs/ itself: neither it nor its loop directory
+    // may be a link to another tree (HYP-4).
+    let linked = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
+    if linked(report_path) || report_path.parent().is_some_and(linked) {
+        return Err(bad_report(format!(
+            "{} or its loop directory is a symbolic link; a report is read from runs/ itself",
+            report_path.display()
+        )));
+    }
     // Absolute, so `runs/` and its parent are found however the path is given.
     let report_path = &std::fs::canonicalize(report_path).map_err(|e| LoopError {
         code: Code::Report,

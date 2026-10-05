@@ -7,14 +7,13 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // CON-19: tests are exempt
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use acn_harness::agent::Opts;
-use acn_harness::run::{HypothesisArg, RunConfig, run};
-use acn_harness::wire::Backend;
+use acn_accept::build;
+use acn_cli::loop_exec::HarnessExecutor;
 use acn_hyp::evidence::{self, Checked};
-use acn_hyp::loop_run::{self, Args, Binary, Code, Completed, Executor, Request};
-use acn_trace::identity::{BuildInfo, BuildParts, Digest, Mode};
+use acn_hyp::loop_run::{self, Args, Binary, Code, Completed};
+use acn_trace::identity::Digest;
 
 const HYP: &str = r#"[poc]
 id = "zz"
@@ -47,76 +46,27 @@ inconclusive_if = "replicates < 4"
 outcome = "pass"
 "#;
 
-fn build(tag: &str) -> BuildInfo {
-    BuildParts {
-        cargo_lock: Digest::of(b"lock"),
-        rust_toolchain: Digest::of(b"toolchain"),
-        cargo_config: Digest::of(b"config"),
-        source_hash: Digest::of(tag.as_bytes()),
-        target: "accept",
-        profile: "debug",
-        features: "",
-        rustflags: "",
-    }
-    .info()
-    .unwrap()
-}
-
-/// The harness on the mock in `sim`, as `acn loop run`'s executor runs it.
-struct Harness {
-    build: BuildInfo,
-}
+/// The executor `acn` ships (LOOP-15), with a test build identity.
+struct Harness(HarnessExecutor);
 
 impl Harness {
     fn bin(&self) -> Binary {
         Binary {
-            engine_hash: Digest::of(b"engine"),
-            build_hash: Digest::from_hex(&self.build.build_hash).unwrap(),
+            engine_hash: self.0.engine_hash,
+            build_hash: Digest::from_hex(&self.0.build.build_hash).unwrap(),
         }
     }
 }
 
-impl Executor for Harness {
-    fn run(&mut self, r: &Request) -> Result<PathBuf, String> {
-        run(&RunConfig {
-            workload: r.workload.clone(),
-            backend: Backend::Mockllm,
-            model: r.model.clone(),
-            mode: Mode::Sim,
-            arm: r.arm.as_str().to_owned(),
-            replicates: r.replicates,
-            vary: r.vary.clone(),
-            opts: Opts::default(),
-            hypothesis: HypothesisArg::File(r.hypothesis.clone()),
-            runs_dir: r.runs_dir.clone(),
-            start_dir: r.start_dir.clone(),
-            engine_hash: Digest::of(b"engine"),
-            build: self.build.clone(),
-            profiles: None,
-        })
-        .map(|w| w.dir)
-        .map_err(|e| e.to_string())
-    }
-
-    fn check_model(&self, model: &str) -> Result<(), String> {
-        acn_mockllm::profile::embedded()
-            .map_err(|e| e.to_string())?
-            .get(model)
-            .map(|_| ())
-            .ok_or_else(|| "not a mock profile".into())
-    }
-
-    fn check_workload(&self, path: &Path) -> Result<(), String> {
-        acn_harness::workload::Workload::load(path)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    }
+fn harness_of(tag: &str) -> Harness {
+    Harness(HarnessExecutor {
+        engine_hash: Digest::of(b"engine"),
+        build: build(tag),
+    })
 }
 
 fn harness() -> Harness {
-    Harness {
-        build: build("accept"),
-    }
+    harness_of("accept")
 }
 
 /// A directory with the hypothesis and the smoke workload, and a loop run in
@@ -139,13 +89,13 @@ fn chain(dir: &Path, budget: u64) -> Completed {
         models: vec!["mock-auto".into()],
         budget,
     };
-    loop_run::run(&h, &args, &dir.join("runs"), bin, &mut x).unwrap()
+    loop_run::run(&h, &args, &dir.join("runs"), bin, &mut x.0).unwrap()
 }
 
 fn check(dir: &Path, id: &Digest) -> Checked {
     let mut x = harness();
     let bin = x.bin();
-    evidence::verify(&dir.join("runs"), &id.to_hex(), bin, &mut x).unwrap()
+    evidence::verify(&dir.join("runs"), &id.to_hex(), bin, &mut x.0).unwrap()
 }
 
 fn codes(c: &Checked) -> Vec<Code> {
@@ -174,7 +124,7 @@ fn an_l1_chain_verifies_from_its_loop_and_from_its_verdict() {
             models: vec!["mock-auto".into()],
             budget: 20,
         };
-        loop_run::run(&h, &args, &d.join("runs"), bin, &mut x).unwrap()
+        loop_run::run(&h, &args, &d.join("runs"), bin, &mut x.0).unwrap()
     };
     let k = check(d, &c.verdict_id);
     assert!(k.ok(), "{:?}", k.findings);
@@ -183,63 +133,157 @@ fn an_l1_chain_verifies_from_its_loop_and_from_its_verdict() {
     assert_eq!(k.loops, both);
 }
 
+/// A fresh directory with a completed loop of budget 10.
+fn fresh() -> (tempfile::TempDir, Completed) {
+    let dir = tempfile::tempdir().unwrap();
+    let c = chain(dir.path(), 10);
+    (dir, c)
+}
+
+/// Edit `report.json` of `c` as text.
+fn edit_report(c: &Completed, f: impl Fn(String) -> String) {
+    let text = std::fs::read_to_string(&c.report).unwrap();
+    std::fs::write(&c.report, f(text)).unwrap();
+}
+
 /// Cites: LOOP-2, LOOP-1
 #[test]
-fn breaking_any_link_fails_the_chain() {
-    // A bundle's file.
-    let dir = tempfile::tempdir().unwrap();
-    let d = dir.path();
-    let c = chain(d, 10);
-    let first = c.run_ids[0].to_hex();
-    std::fs::write(d.join("runs").join(&first).join("spans.parquet"), b"x").unwrap();
-    let k = check(d, &c.loop_id);
-    assert!(!k.ok());
-    assert!(codes(&k).contains(&Code::BundleInvalid), "{:?}", k.findings);
-    assert!(
-        codes(&k).contains(&Code::NotRegenerated),
-        "{:?}",
-        k.findings
+fn breaking_any_link_fails_the_chain_with_its_code() {
+    use Code::{
+        BundleInvalid, HypothesisChanged, LayerMismatch, NotRegenerable, NotRegenerated, Report,
+        VerdictMismatch,
+    };
+    let fails = |break_it: &dyn Fn(&Path, &Completed), want: &[Code]| {
+        let (dir, c) = fresh();
+        break_it(dir.path(), &c);
+        let k = check(dir.path(), &c.loop_id);
+        assert!(!k.ok());
+        assert_eq!(codes(&k), want, "{:?}", k.findings);
+    };
+    // A bundle's file: it does not verify, the verdict without it is another,
+    // and the report does not regenerate.
+    fails(
+        &|d, c| {
+            let first = c.run_ids[0].to_hex();
+            std::fs::write(d.join("runs").join(first).join("spans.parquet"), b"x").unwrap();
+        },
+        &[BundleInvalid, VerdictMismatch, NotRegenerated],
     );
-
+    // The digest a report records for a bundle that still verifies.
+    fails(
+        &|_, c| {
+            let first = c.run_ids[0].to_hex();
+            edit_report(c, |t| {
+                let at = t.find(&format!("\"run_id\":\"{first}\"")).unwrap();
+                let d = t[..at].rfind("\"bundle_digest\":\"").unwrap() + 17;
+                format!("{}{}{}", &t[..d], "0".repeat(64), &t[d + 64..])
+            });
+        },
+        &[BundleInvalid, NotRegenerated],
+    );
     // The layer a report records.
-    let dir = tempfile::tempdir().unwrap();
-    let d = dir.path();
-    let c = chain(d, 10);
-    let text = std::fs::read_to_string(&c.report).unwrap();
-    std::fs::write(
-        &c.report,
-        text.replace("\"layer\":\"L1\"", "\"layer\":\"L2\""),
+    fails(
+        &|_, c| edit_report(c, |t| t.replace("\"layer\":\"L1\"", "\"layer\":\"L2\"")),
+        &[LayerMismatch, NotRegenerated],
+    );
+    // The verdict's bytes, or the verdict itself.
+    let vpath = |d: &Path, c: &Completed| {
+        d.join("runs/verdicts")
+            .join(c.verdict_id.to_hex())
+            .join("verdict.json")
+    };
+    fails(
+        &|d, c| std::fs::write(vpath(d, c), "{}\n").unwrap(),
+        &[VerdictMismatch, NotRegenerated],
+    );
+    fails(
+        &|d, c| std::fs::remove_file(vpath(d, c)).unwrap(),
+        &[VerdictMismatch, NotRegenerated],
+    );
+    // A field the walk needs, missing: the report is refused, nothing guessed.
+    fails(
+        &|_, c| edit_report(c, |t| t.replace("\"build_hash\"", "\"no_build_hash\"")),
+        &[Report],
+    );
+    // A listed bundle with no run_id.
+    fails(
+        &|_, c| {
+            let first = c.run_ids[0].to_hex();
+            edit_report(c, |t| {
+                t.replacen(&format!("\"run_id\":\"{first}\""), "\"run\":\"x\"", 1)
+            });
+        },
+        // The regeneration refuses the malformed report too.
+        &[Report, VerdictMismatch, Report],
+    );
+    // The hypothesis edited: the walk ends there, once.
+    fails(
+        &|d, _| {
+            let p = d.join("zz.toml");
+            let t = std::fs::read_to_string(&p).unwrap();
+            std::fs::write(&p, format!("{t}# edited\n")).unwrap();
+        },
+        &[HypothesisChanged],
+    );
+    // Another binary cannot regenerate or recompute (CON-31).
+    let (dir, c) = fresh();
+    let mut other = harness_of("other");
+    let bin = other.bin();
+    let k = evidence::verify(
+        &dir.path().join("runs"),
+        &c.loop_id.to_hex(),
+        bin,
+        &mut other.0,
     )
     .unwrap();
-    let k = check(d, &c.loop_id);
-    assert!(codes(&k).contains(&Code::LayerMismatch), "{:?}", k.findings);
+    assert_eq!(codes(&k), [NotRegenerable], "{:?}", k.findings);
+}
 
-    // The verdict's bytes.
-    let dir = tempfile::tempdir().unwrap();
-    let d = dir.path();
-    let c = chain(d, 10);
-    let vpath = d
-        .join("runs/verdicts")
-        .join(c.verdict_id.to_hex())
-        .join("verdict.json");
-    std::fs::write(&vpath, "{}\n").unwrap();
-    let k = check(d, &c.loop_id);
-    assert!(
-        codes(&k).contains(&Code::VerdictMismatch),
-        "{:?}",
-        k.findings
-    );
+/// Cites: LOOP-2, HYP-4
+#[test]
+fn a_chain_is_read_from_runs_itself_and_never_through_a_link() {
+    // A loop directory replaced by a link to the same loop in another tree.
+    let (a, c) = fresh();
+    let (b, _) = fresh();
+    let loop_dir = a.path().join("runs/loop").join(c.loop_id.to_hex());
+    std::fs::remove_dir_all(&loop_dir).unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            b.path().join("runs/loop").join(c.loop_id.to_hex()),
+            &loop_dir,
+        )
+        .unwrap();
+        let k = check(a.path(), &c.loop_id);
+        assert_eq!(codes(&k), [Code::Report], "{:?}", k.findings);
+        assert!(
+            !b.path().join("runs/regen").exists(),
+            "nothing written there"
+        );
+        // `--from-report` through the link is refused the same way.
+        let mut x = harness();
+        let bin = x.bin();
+        let e = loop_run::regenerate(&loop_dir.join("report.json"), bin, &mut x.0).unwrap_err();
+        assert_eq!(e.code, Code::Report, "{e}");
+    }
+}
 
-    // Another binary cannot regenerate or recompute (CON-31).
-    let dir = tempfile::tempdir().unwrap();
-    let d = dir.path();
-    let c = chain(d, 10);
-    let mut other = Harness {
-        build: build("other"),
-    };
-    let bin = other.bin();
-    let k = evidence::verify(&d.join("runs"), &c.loop_id.to_hex(), bin, &mut other).unwrap();
-    assert_eq!(codes(&k), [Code::NotRegenerable], "{:?}", k.findings);
+/// Cites: LOOP-2
+#[test]
+fn a_report_that_cannot_be_read_is_named_not_skipped() {
+    let (dir, c) = fresh();
+    edit_report(&c, |_| "not json".into());
+    // By verdict_id: the unreadable report might have named it.
+    let k = check(dir.path(), &c.verdict_id);
+    assert_eq!(codes(&k), [Code::Report], "{:?}", k.findings);
+    assert!(k.loops.is_empty());
+    // By loop_id.
+    let k = check(dir.path(), &c.loop_id);
+    assert_eq!(codes(&k), [Code::Report], "{:?}", k.findings);
+    // A staging directory a crashed writer left is not a report.
+    let (dir, c) = fresh();
+    std::fs::create_dir(dir.path().join("runs/loop/.x.partial.0")).unwrap();
+    assert!(check(dir.path(), &c.verdict_id).ok());
 }
 
 /// Cites: LOOP-2
@@ -264,6 +308,8 @@ fn a_verdict_no_loop_report_names_cannot_be_verified() {
     // Not an id at all.
     let mut x = harness();
     let bin = x.bin();
-    let e = evidence::verify(&d.join("runs"), "nope", bin, &mut x).unwrap_err();
-    assert_eq!(e.code, Code::Report);
+    for bad in ["nope", &"A".repeat(64), "../../etc"] {
+        let e = evidence::verify(&d.join("runs"), bad, bin, &mut x.0).unwrap_err();
+        assert_eq!(e.code, Code::BadId, "{bad}");
+    }
 }

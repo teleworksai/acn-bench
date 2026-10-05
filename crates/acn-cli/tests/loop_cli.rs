@@ -150,6 +150,7 @@ fn loop_run_and_its_regeneration_print_one_object_each() {
     // regeneration, the chain verifies from its loop_id.
     let (code, v) = acn_in(d, &["evidence", "verify", loop_id]);
     assert_eq!(code, Some(1), "{v}");
+    assert_eq!(v["findings"].as_array().unwrap().len(), 1, "{v}");
     assert_eq!(v["findings"][0]["code"], "not_regenerated", "{v}");
     std::fs::copy(
         d.join(format!("runs/regen/{loop_id}/1/loop/{loop_id}/report.md")),

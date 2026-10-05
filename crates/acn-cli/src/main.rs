@@ -6,7 +6,8 @@
 #![forbid(unsafe_code)]
 
 mod build_info;
-mod loop_exec;
+
+use acn_cli::loop_exec;
 
 use std::path::PathBuf;
 

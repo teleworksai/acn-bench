@@ -30,7 +30,10 @@ fn a_twin_starts_only_from_a_report_that_regenerates() {
     std::fs::write(d.join("runs").join(&first).join("spans.parquet"), b"x").unwrap();
     let e = twin_gate(&c.report, bin, &mut Exec::new(d)).unwrap_err();
     assert_eq!(e.code, Code::TwinRefused, "{e}");
-    assert!(e.message.contains(&first), "{e}");
+    assert!(
+        e.message.contains(&first) && e.message.contains("differ"),
+        "a regeneration that completed and differs: {e}"
+    );
     // A report another build made.
     let mut other = Exec::with_build(d, "other");
     let other_bin = other.bin();
@@ -41,9 +44,13 @@ fn a_twin_starts_only_from_a_report_that_regenerates() {
 
 /// BASE with a twin required within 0.03 of `cached_token_ratio`.
 fn twin_file() -> Hypothesis {
+    twin_file_within("0.03")
+}
+
+fn twin_file_within(tol: &str) -> Hypothesis {
     let text = common::BASE.replace(
         "twin_required = false",
-        "twin_required = true\nsim_live_tolerance = { cached_token_ratio = { abs = 0.03 } }",
+        &format!("twin_required = true\nsim_live_tolerance = {{ cached_token_ratio = {{ abs = {tol} }} }}"),
     );
     let (h, _dir) = common::candidate(&text, "t1");
     h.unwrap()
@@ -163,7 +170,31 @@ fn a_provider_run_needs_an_l2_verdict_that_twins_every_decision_cell() {
     // (the other set lacks one sim treatment the L1 verdict read)
     b.extend(arms(&h, "live", 0.01, &every));
     let other = judge(&h, b);
-    assert!(refused(Some(&other)).contains("does not read the L1 bundle"));
+    assert!(refused(Some(&other)).contains("not exactly those of the L1 verdict"));
+    // An L2 verdict over more sim bundles than the L1 verdict read: not its twin.
+    let fewer = arms(&h, "sim", 0.0, &|k, m| !(k == "false" && m == "slow"));
+    let l1_fewer = judge(&h, fewer);
+    let e = promote_gate(&h, &l1_fewer, Some(&l2)).unwrap_err();
+    assert!(e.message.contains("not exactly those"), "{e}");
+    // An L2 verdict passed as the L1 one.
+    let e = promote_gate(&h, &l2, Some(&l2)).unwrap_err();
+    assert!(e.message.contains("not an L1 verdict"), "{e}");
+    // A verdict of another hypothesis: a copy with a looser tolerance, under
+    // which the far twins pass, does not open the gate for this one.
+    let loose = twin_file_within("0.5");
+    let mut b = arms(&loose, "sim", 0.0, &every);
+    b.extend(arms(&loose, "live", 0.2, &every));
+    let l2_loose = judge(&loose, b);
+    assert!(
+        !l2_loose
+            .reasons
+            .iter()
+            .any(|r| r.id == acn_hyp::verdict::ReasonId::TwinFailed)
+    );
+    assert!(refused(Some(&l2_loose)).contains("is not a verdict of"));
+    let l1_loose = judge(&loose, arms(&loose, "sim", 0.0, &every));
+    let e = promote_gate(&h, &l1_loose, Some(&l2)).unwrap_err();
+    assert!(e.message.contains("is not a verdict of"), "{e}");
 }
 
 /// Cites: LOOP-4
