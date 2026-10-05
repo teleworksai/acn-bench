@@ -51,7 +51,10 @@ T06 POC 4 spec+suite → SPEC 100 (P4) *(to write)*: protocol, knob grid, replic
                        expected outcome, **per provider**. tests/accept/p4.rs on mockllm
                        (mock-gated). Then `live` runs against ≥2 real providers with
                        cached-token counters; one bundle and one verdict per provider
-                       attached to the PR.
+                       attached to the PR. Lands in parts: T06a SPEC 100 (spec-change);
+                       T06b the three P4 workloads, tests/accept/p4.rs and the L1 run
+                       of record on the mock (P4-1..8); T06c live runs (P4-9..11),
+                       after the maintainer approves models and spend (SPEC 100 §7).
 T08 first trace      → lab/trace-capture graduates minimally: capture format + provenance
                        per CON-21; one phone-tethered 5G walk trace lands in
                        scenarios/measured/ (Class C from M0). Do not wait for M4.
