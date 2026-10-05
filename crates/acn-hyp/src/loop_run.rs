@@ -33,6 +33,8 @@ use crate::verdict::{
 pub const REPORT_FORMAT: &str = "acn-bench/loop-report/v1";
 /// The sub-stream of the run seed `random` draws from (LOOP-14, CON-30(b)).
 pub const SEARCH_STREAM: &str = "loop.search";
+/// The trajectory's verdicts before the last: at most this many (LOOP-10(c)).
+pub const TRAJECTORY_POINTS: u64 = 50;
 /// Consecutive draws of an already-run cell that exhaust `random` (LOOP-10(b)).
 pub const MAX_REDRAWS: u32 = 1000;
 /// `report.json` and its rendering, `report.md` (LOOP-11).
@@ -1017,7 +1019,8 @@ impl<'h> Setup<'h> {
 struct Batch {
     cell: Cell,
     run_ids: Vec<Digest>,
-    verdict: Verdict,
+    /// `None` between the batches LOOP-10(c) judges after.
+    verdict: Option<Verdict>,
 }
 
 /// A loop run to its stop.
@@ -1031,9 +1034,31 @@ impl Done {
     fn verdict(&self) -> Result<&Verdict, LoopError> {
         self.batches
             .last()
-            .map(|b| &b.verdict)
+            .and_then(|b| b.verdict.as_ref())
             .ok_or_else(|| internal("no batch ran"))
     }
+}
+
+/// LOOP-10(c)'s k: the trajectory is judged every ⌈budget / 50⌉ batches.
+#[must_use]
+pub fn trajectory_step(budget: u64) -> usize {
+    usize::try_from(budget.div_ceil(TRAJECTORY_POINTS).max(1)).unwrap_or(usize::MAX)
+}
+
+/// Whether batch `n` (1-based) of a loop that ran `count` batches carries a
+/// verdict (LOOP-10(c)): every k-th, and the last.
+#[must_use]
+pub fn judged(n: usize, count: usize, k: usize) -> bool {
+    n == count || (k > 0 && n % k == 0)
+}
+
+/// The verdict over `bundles`, by the one function `acn hyp verdict` uses
+/// (HYP-20); never written here, and never a stop rule (LOOP-10(c), (d)).
+fn judge(s: &Setup<'_>, bundles: &[BundleData]) -> Result<Verdict, LoopError> {
+    verdict::verdict(s.h, bundles.to_vec(), s.bin.engine_hash).map_err(|e| LoopError {
+        code: Code::VerdictRefused,
+        message: e.to_string(),
+    })
 }
 
 /// Run batches until the budget or the strategy stops the loop (LOOP-10).
@@ -1044,6 +1069,7 @@ fn execute(
     exec: &mut dyn Executor,
 ) -> Result<Done, LoopError> {
     let mut strategy = Strategy::new(s)?;
+    let every = trajectory_step(s.budget);
     let mut spent = 0u64;
     let mut controls: BTreeSet<String> = BTreeSet::new();
     let mut bundles: Vec<BundleData> = Vec::new();
@@ -1082,22 +1108,22 @@ fn execute(
             controls.insert(key(&control));
         }
         spent += cost;
-        // LOOP-10(c): the verdict over every bundle so far, by the one function
-        // `acn hyp verdict` uses (HYP-20); never written, never a stop rule.
-        let v =
-            verdict::verdict(s.h, bundles.clone(), s.bin.engine_hash).map_err(|e| LoopError {
-                code: Code::VerdictRefused,
-                message: e.to_string(),
-            })?;
+        // LOOP-10(c): every k-th batch, the verdict over every bundle so far.
+        let n = batches.len() + 1;
+        let v = (n % every == 0).then(|| judge(s, &bundles)).transpose()?;
         batches.push(Batch {
             cell,
             run_ids,
             verdict: v,
         });
     };
-    if batches.is_empty() {
+    // ... and after the last batch, whatever k.
+    let Some(last) = batches.last_mut() else {
         // Unreachable: setup refuses a budget below the first batch.
         return err(Code::Internal, "no batch fitted the budget");
+    };
+    if last.verdict.is_none() {
+        last.verdict = Some(judge(s, &bundles)?);
     }
     Ok(Done {
         batches,
@@ -1241,8 +1267,18 @@ fn report(s: &Setup<'_>, done: &Done) -> Result<J, LoopError> {
                         J::obj([
                             ("cell", cell_json(&b.cell)),
                             ("run_ids", J::Arr(b.run_ids.iter().map(hex).collect())),
-                            ("verdict", J::str(b.verdict.verdict.as_str())),
-                            ("reasons", reasons_json(&b.verdict.reasons)),
+                            (
+                                "verdict",
+                                b.verdict
+                                    .as_ref()
+                                    .map_or(J::Null, |v| J::str(v.verdict.as_str())),
+                            ),
+                            (
+                                "reasons",
+                                b.verdict
+                                    .as_ref()
+                                    .map_or(J::Null, |v| reasons_json(&v.reasons)),
+                            ),
                         ])
                     })
                     .collect(),
@@ -1430,8 +1466,16 @@ pub fn markdown(report_json: &str) -> Result<String, LoopError> {
             n + 1,
             cell(&b["cell"]),
             ids.join(" "),
-            s(&b["verdict"]),
-            reasons(&b["reasons"])
+            if b["verdict"].is_null() {
+                "not judged (LOOP-10(c))".to_owned()
+            } else {
+                s(&b["verdict"])
+            },
+            if b["reasons"].is_null() {
+                "-".to_owned()
+            } else {
+                reasons(&b["reasons"])
+            }
         );
     }
     let _ = writeln!(o, "\n## Control effect\n");

@@ -1,6 +1,6 @@
 # SPEC 085 — The layered, verifiable feedback loop
 
-**Status:** Draft v0.2 (October 2026; v0.2 makes L1 implementable: the layer of an evidence object, the chain `acn evidence verify` walks, the runner's strategies, batches, stop rule, refusals and aborts, the loop report and its regeneration on the build that made it, and where decisions are made; `bisect` is deferred). **Inherits:** SPEC 000, 010, 080. **Prefix:** LOOP. **Crates:** `acn-hyp` (loop runner, frozen set), `acn-ctl`, `acn-cli`.
+**Status:** Draft v0.3 (October 2026; v0.3 thins the verdict trajectory to at most fifty verdicts before the last (LOOP-10(c)), so a grid of a few thousand bundles runs in hours rather than days; v0.2 makes L1 implementable: the layer of an evidence object, the chain `acn evidence verify` walks, the runner's strategies, batches, stop rule, refusals and aborts, the loop report and its regeneration on the build that made it, and where decisions are made; `bisect` is deferred). **Inherits:** SPEC 000, 010, 080. **Prefix:** LOOP. **Crates:** `acn-hyp` (loop runner, frozen set), `acn-ctl`, `acn-cli`.
 **Purpose:** define how a POC moves from an idea to a citable result as a loop of five layers, where each layer is verified by a machine check before its output can feed the next, where feedback flows only to artifacts a layer is allowed to change, and where the whole chain from a cited number back to source, seed and scenario is verifiable by one command.
 
 ## 0. Why layered
@@ -58,7 +58,12 @@ A map MUST name every value of its parameter and nothing else.
 
     A cell already run is drawn again, and 1 000 consecutive redraws exhaust the strategy. The PR that implements `random` adds a known-answer vector of its first draws (CON-27(d)).
   - `bisect` is not specified yet (§6 question 2), and a file whose `search` is `bisect` is refused.
-- (c) **Verdict trajectory.** After each batch the verdict of HYP-20..24 MUST be computed over every bundle of the batches run so far, by the same `acn-hyp` function `acn hyp verdict` uses (HYP-20). Its value and reasons are appended to the trajectory. These intermediate verdicts are not written; the final verdict is written once, under `runs/verdicts/` (HYP-20). Two loops can end on the same bundle set:
+- (c) **Verdict trajectory.** After every k-th batch, with k = ⌈budget / 50⌉, and after the last batch, the verdict of HYP-20..24 MUST be computed over every bundle of the batches run so far, by the same `acn-hyp` function `acn hyp verdict` uses (HYP-20). Its value and reasons are appended to the trajectory, and the batches between record none.
+  - The verdict's cost grows with the bundles it reads, so a verdict after every batch makes a loop's cost quadratic in its grid.
+  - k depends on the budget alone. The budget is an input of `loop_id`, so k is fixed before the loop starts, and the trajectory is part of what a report regenerates (LOOP-14).
+  - A budget of 50 or fewer keeps a verdict after every batch.
+
+  These intermediate verdicts are not written; the final verdict is written once, under `runs/verdicts/` (HYP-20). Two loops can end on the same bundle set:
   - if `runs/verdicts/<verdict_id>/` already exists and its `verdict.json` is byte-identical to the one computed, it is referenced;
   - otherwise the loop aborts with `verdict_conflict`.
 - (d) **Stop rule.** The loop MUST stop when the next batch would exceed the budget or when the strategy has no cell left (every grid cell run, or the random draws exhausted).
@@ -107,7 +112,7 @@ The loop runner MUST NOT write anything outside `runs/`.
   - `layer` (`"L1"`) and the `loop_id`;
   - the inputs: the hypothesis path and every workload path relative to the workspace root, with their hashes, the model map, the strategy and the budget;
   - the run seed, `engine_hash` and `build_hash`;
-  - per batch, the cell, the run_ids of its bundles and the verdict after it;
+  - per batch, the cell, the run_ids of its bundles and, where LOOP-10(c) computes one, the verdict after it and its reasons, both `null` otherwise;
   - why the loop stopped;
   - the verdict_id of the final verdict.
 
