@@ -52,7 +52,7 @@ fn acn_in(dir: &Path, args: &[&str]) -> (Option<i32>, serde_json::Value) {
     )
 }
 
-/// Cites: LOOP-10, LOOP-11, LOOP-14, CON-8
+/// Cites: LOOP-10, LOOP-11, LOOP-14, LOOP-2, CON-8
 #[test]
 fn loop_run_and_its_regeneration_print_one_object_each() {
     let dir = tempfile::tempdir().unwrap();
@@ -145,4 +145,23 @@ fn loop_run_and_its_regeneration_print_one_object_each() {
     );
     assert_eq!(code, Some(1), "{e}");
     assert_eq!(e["ok"], false);
+
+    // The edited rendering breaks the chain (LOOP-2); restored from a
+    // regeneration, the chain verifies from its loop_id.
+    let (code, v) = acn_in(d, &["evidence", "verify", loop_id]);
+    assert_eq!(code, Some(1), "{v}");
+    assert_eq!(v["findings"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["findings"][0]["code"], "not_regenerated", "{v}");
+    std::fs::copy(
+        d.join(format!("runs/regen/{loop_id}/1/loop/{loop_id}/report.md")),
+        d.join(format!("runs/loop/{loop_id}/report.md")),
+    )
+    .unwrap();
+    let (code, v) = acn_in(d, &["evidence", "verify", loop_id]);
+    assert_eq!(code, Some(0), "{v}");
+    assert_eq!(v["loops"], serde_json::json!([loop_id]));
+    let zeros = "0".repeat(64);
+    let (code, v) = acn_in(d, &["evidence", "verify", &zeros]);
+    assert_eq!(code, Some(1), "{v}");
+    assert_eq!(v["findings"][0]["code"], "no_loop_report");
 }

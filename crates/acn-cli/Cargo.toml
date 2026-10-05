@@ -8,6 +8,11 @@ publish = false
 description = "The `acn` binary: subcommands over the substrate crates (CON-8)."
 build = "build.rs"
 
+# The library holds what the acceptance suites run as the CLI does: the
+# loop's harness executor (LOOP-15).
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "acn"
 path = "src/main.rs"

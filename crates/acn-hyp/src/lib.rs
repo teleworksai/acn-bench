@@ -1,5 +1,6 @@
 //! `acn-hyp` — hypothesis files, the falsifier language and verdicts (SPEC 080),
-//! and the L1 loop runner (SPEC 085, `loop_run`; ADR-23). Frozen set
+//! the L1 loop runner and the evidence chain (SPEC 085, `loop_run`, `evidence`;
+//! ADR-23, ADR-24). Frozen set
 //! (CON-7): every change here is a Class C change. T05 landed in parts (ADR-18 to
 //! ADR-21): this crate holds the file format (HYP-1..9), the
 //! predicate language, its static checks and its one evaluator (HYP-10..14), the
@@ -17,6 +18,7 @@ use std::path::{Path, PathBuf};
 pub mod bootstrap;
 pub mod check;
 pub mod eval;
+pub mod evidence;
 pub mod file;
 pub mod json;
 pub mod layer;

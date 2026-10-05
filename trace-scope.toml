@@ -38,10 +38,13 @@ ids = [
 
 [[implemented]]
 spec = "085"
-ids = ["LOOP-3", "LOOP-10", "LOOP-11", "LOOP-13", "LOOP-14", "LOOP-15"]
-# T05b lands in two parts (ADR-23): T05b.1 the L1 loop runner, `--from-report`
-# and the write direction; T05b.2 adds LOOP-1 (cited ahead of scope by
-# loop_run.rs), LOOP-2 (`acn evidence verify`) and LOOP-4 (the gates).
+ids = [
+  "LOOP-1", "LOOP-2", "LOOP-3", "LOOP-4", "LOOP-10", "LOOP-11", "LOOP-13", "LOOP-14",
+  "LOOP-15",
+]
+# T05b landed in two parts: T05b.1 the L1 loop runner, `--from-report` and the
+# write direction (ADR-23); T05b.2 `acn evidence verify` and the LOOP-4 gates
+# (ADR-24). The L2/L3 links of LOOP-2 come with T11b and T30.
 
 [[implemented]]
 spec = "040"
