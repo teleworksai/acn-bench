@@ -74,7 +74,9 @@ It is made only once P4-12 holds. Its loop report, its final verdict and the `ac
 - **(b) Forked children run their own tools.** Under `fork_from_prefix` (HAR-14), children call the tools of their child specification. Today they inherit the parent's tool list and call the `subagent` tool, which fails.
 - **(c) The tool-order confound is resolved or recorded.** The effect of `tool_order_stable` either does not change which tools the mock calls, or that confound is stated with the knob's effect.
 
-The SPEC 040 and SPEC 030 changes that settle these conditions are T06b2's (issues #24, #25 and #26).
+The SPEC 040 and SPEC 030 changes that settle these conditions are T06b2's (issues #24, #25 and #26). Two differences between the mock and the providers remain, and the run of record and any live comparison MUST state them with the knob effects they touch:
+- **`compaction_trigger`.** On `anthropic`, a compaction call's change of tool choice may invalidate cached message blocks the mock still reads (HAR-4).
+- **`fanout_prompting`.** Forked children are restricted by `allowed_tools` on `openai` and the mock, but only by their instruction on `anthropic`, `vllm` and `sglang` (HAR-14).
 
 ## 4. The acceptance suite
 

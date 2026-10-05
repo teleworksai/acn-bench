@@ -1,6 +1,6 @@
 # SPEC 030 — Mock inference: a deterministic model of prefill, decode and prompt caching
 
-**Status:** Draft v0.1 (October 2026). **Inherits:** SPEC 000, 010. **Prefix:** MLM. **Crate:** `acn-mockllm` (Class B).
+**Status:** Draft v0.2 (October 2026; v0.2: the reply policy honours a request's `tool_choice` of `none` and of `allowed_tools`, issues #24, #25). **Inherits:** SPEC 000, 010. **Prefix:** MLM. **Crate:** `acn-mockllm` (Class B).
 **Purpose:** define a deterministic, OpenAI-compatible inference server whose latency and cache accounting follow stated rules, so that the harness (SPEC 040), the generator (SPEC 050) and every POC suite can run end to end without a provider, in `sim` (in process, virtual time) and in `live` (real sockets, wall time) — and so that a result obtained on it is visibly a test of the harness against our own model of caching, never a measurement of a provider (CON-26, PLAN §8b).
 
 ## 0. What the mock is for, and what it is not
@@ -17,7 +17,7 @@ The mock exists so that tests and the L1 loop (SPEC 085) can exercise the harnes
 
 ## 2. Interface
 
-**MLM-1** The mock MUST serve the OpenAI Chat Completions interface: `POST /v1/chat/completions` with `model`, `messages` (roles `system`, `user`, `assistant`, `tool`; `content` as a string or an array of `{type: "text", text}` parts; assistant `tool_calls`; tool `tool_call_id`), optional `tools` (`{type: "function", function: {name, description, parameters}}`), `max_tokens` or `max_completion_tokens`, `stream`, and `stream_options.include_usage`; and `GET /v1/models`, which lists the profiles. Any other field MUST be accepted and ignored, except `cache_control` (MLM-21). A request it cannot parse, or naming an unknown profile, MUST get a 400 with an OpenAI-shaped error body.
+**MLM-1** The mock MUST serve the OpenAI Chat Completions interface: `POST /v1/chat/completions` with `model`, `messages` (roles `system`, `user`, `assistant`, `tool`; `content` as a string or an array of `{type: "text", text}` parts; assistant `tool_calls`; tool `tool_call_id`), optional `tools` (`{type: "function", function: {name, description, parameters}}`), `max_tokens` or `max_completion_tokens`, `stream`, `stream_options.include_usage`, and optional `tool_choice` (`"none"`, `{type: "none"}`, or `{type: "allowed_tools", allowed_tools: {mode, tools}}`, MLM-40); and `GET /v1/models`, which lists the profiles. Any other field MUST be accepted and ignored, except `cache_control` (MLM-21) and `tool_choice` (MLM-40). A request it cannot parse, or naming an unknown profile, MUST get a 400 with an OpenAI-shaped error body.
 
 **MLM-2** A non-streamed response MUST be a `chat.completion` object with one choice whose `finish_reason` is `stop`, `tool_calls` or `length`, and a `usage` object carrying `prompt_tokens` (the total prompt length, cached or not), `completion_tokens`, `total_tokens`, and `prompt_tokens_details` with both `cached_tokens` and `cache_write_tokens`, always present, `0` when none. These are the fields the frozen provider mapping for `mockllm` reads (TRC-21, `acn_attributes.toml`); a change to either side is a change to both.
 
@@ -59,7 +59,16 @@ The mock exists so that tests and the L1 loop (SPEC 085) can exercise the harnes
 
 ## 7. Replies
 
-**MLM-40** A reply MUST be decided by the profile's reply policy from the request alone: with `tools` present and fewer than `tool_calls_per_turn` (default 1) tool results since the last `user` message, the reply MUST be one tool call to the tool at index (number of those results) modulo the number of tools, with arguments `{}` and an id derived from the BLAKE3 of the prompt bytes, and `finish_reason = "tool_calls"`; otherwise a text answer with `finish_reason = "stop"`. The answer's length in tokens MUST be drawn uniformly from the profile's `[output_tokens_min, output_tokens_max]`, capped by the request's token limit, in which case `finish_reason = "length"`. Answer text MUST be made of 4-byte words drawn from a fixed list in the crate, so that its token count by MLM-11 equals `completion_tokens`.
+**MLM-40** A reply MUST be decided by the profile's reply policy from the request alone: with `tools` present and fewer than `tool_calls_per_turn` (default 1) tool results since the last `user` message, the reply MUST be one tool call to the tool at index (number of those results) modulo the number of tools, with arguments `{}` and an id derived from the BLAKE3 of the prompt bytes, and `finish_reason = "tool_calls"`; otherwise a text answer with `finish_reason = "stop"`. The answer's length in tokens MUST be drawn uniformly from the profile's `[output_tokens_min, output_tokens_max]`, capped by the request's token limit, in which case `finish_reason = "length"`. Answer text MUST be made of 4-byte words drawn from a fixed list in the crate, so that its token count by MLM-11 equals `completion_tokens`. A request's `tool_choice` MUST constrain this policy, and MUST NOT enter the prompt bytes (MLM-10).
+- `"none"`, or `{"type": "none"}`, makes the reply a text answer whatever the tools.
+- `{"type": "allowed_tools", "allowed_tools": {"tools": [...]}}` restricts the choice to the allowed tools, taken in the list's order:
+  - each name is an entry's `function.name`; `mode`, and any entry without that name, are ignored;
+  - a name that does not appear in `tools` is dropped;
+  - the reply calls the remaining tool at index (number of those results) modulo their number;
+  - when none remains, the reply is a text answer.
+
+  The list's order, not `tools`' order, decides, so a restricted request's choice does not depend on how the tools are presented (HAR-12).
+- Any other `tool_choice`, or none, leaves the policy as stated above.
 
 **MLM-41** A profile MAY inject faults, each with a rate in parts per million drawn per request from the `mockllm` sub-stream: `429` with a `retry-after` in whole seconds, `500`, and a stream cut after a drawn number of tokens without a final chunk. Faults default to off, and a fault MUST NOT change the cache state.
 
@@ -76,11 +85,11 @@ The mock exists so that tests and the L1 loop (SPEC 085) can exercise the harnes
 ## 10. Acceptance tests (names are normative)
 
 - `crates/acn-mockllm/tests/wire.rs` — MLM-1..4: request and response shapes, the stream assembling to the non-streamed response, the frozen `mockllm` mapping of TRC-21 normalising a response, the identity header and fingerprint.
-- `crates/acn-mockllm/tests/tokens.rs` — MLM-10, MLM-11: canonical prompt bytes, `cache_control` not changing them, numbers in one text form, the tokenizer.
+- `crates/acn-mockllm/tests/tokens.rs` — MLM-10, MLM-11: canonical prompt bytes, neither `cache_control` nor `tool_choice` changing them, numbers in one text form, the tokenizer.
 - `crates/acn-mockllm/tests/cache_models.rs` — MLM-20..23: each model on hand-computed request sequences, including TTL expiry, breakpoint limits, rounding, eviction order and tenant isolation.
 - `crates/acn-mockllm/tests/timing.rs` — MLM-30, MLM-31: time to first token, token cadence and jitter bounds, queueing with a finite `slots`, the timing header.
 - `crates/acn-mockllm/tests/determinism.rs` — MLM-5..8: the library and the HTTP server agree; two runs are byte-identical; delivery order does not matter.
-- `crates/acn-mockllm/tests/replies.rs` — MLM-40, MLM-41: the reply policy and the fault model.
+- `crates/acn-mockllm/tests/replies.rs` — MLM-40, MLM-41: the reply policy, including `tool_choice` `none` in both forms and `allowed_tools` (subset, order, modulo, missing names, an empty list), and the fault model.
 - `crates/acn-mockllm/tests/profiles.rs` — MLM-50: the shipped profiles load, state every parameter, and a malformed profile is refused.
 
 ## 11. Open questions (ADR candidates)
