@@ -20,4 +20,6 @@ The cause is issue #12.
 ## Consequences
 - **Superseded run.** The run of record `f3afab22…` is superseded and is redone on this build (P4-7).
 - **Bundle bytes.** Sim bundles on `mock-explicit` change wherever a request reads one marked prefix and writes a longer one.
-- **Tests.** The one hand-computed case in `cache_models.rs` changes from (16, 32) to (16, 16). A new test checks the partition over a rolling breakpoint.
+- **ADR-16.** Its reading that a write is "the length of the longest prefix the request wrote", flagged there as a possible spec erratum, is superseded by this ADR.
+- **Tests.** The one hand-computed case in `cache_models.rs` changes from (16, 32) to (16, 16). New tests check the partition over a rolling breakpoint exactly, and the zero-write case: a new breakpoint inside the prefix read is stored and costs nothing.
+- **A second gap, not fixed here.** Writing the rolling test showed that MLM-21 reads only prefixes the current request marks. Anthropic also looks back to earlier block boundaries, so each `rolling_tail` request on the mock reads only the system prefix. Issue #32 proposes a lookback parameter, and SPEC 100 P4-12 now lists the gap among the differences the mock deliverable states.
