@@ -125,6 +125,10 @@ T13 workload gen     → SPEC 050 (GEN): session/turn/call generator from Append
                        parameter sheet; fan-out; think-time; drives mockllm through
                        the proxy; replay from seed; plain-RPC control workload
                        (multi-step REST) as a first-class generator mode (CON-18).
+                       In PRs (ADR-38): T13.1 SPEC 050; T13.2 acn-gen sheet and
+                       draws; T13.3 the harness's driver seam, the generator's
+                       sessions, `acn gen run`. The plain-RPC control is T13b,
+                       after a SPEC 010 addition (env-change).
 T14 control plane    → SPEC 070 (CTL): axum HTTP/JSON API: create scenario, start run,
                        poll status, fetch bundle; run registry on disk; endpoints for
                        external inference nodes and partner endpoints; OpenAPI doc
