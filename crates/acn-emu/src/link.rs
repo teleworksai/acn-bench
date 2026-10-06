@@ -23,9 +23,10 @@ const UNITS_PER_BYTE: i128 = 8 * 1_000_000_000;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{reason}: {message}")]
 pub struct LinkError {
-    /// `name` (a link name that is not a name), `range` (a parameter or a time
-    /// out of range), `order` (a message sent before the one before it) or
-    /// `stream` (a sub-stream the seed cannot take).
+    /// `name` (a link name that is not a name), `parse` (a trace link with
+    /// another stage), `range` (a parameter or a time out of range), `trace`
+    /// (a trace that cannot drive a link), `order` (a message sent before the
+    /// one before it) or `stream` (a sub-stream the seed cannot take).
     pub reason: &'static str,
     pub message: String,
 }
@@ -138,6 +139,197 @@ pub struct Reorder {
     pub gap_ns: i64,
 }
 
+/// One segment of a trace schedule: one trace sample's parameters (EMU-12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Segment {
+    /// Where the segment starts, in trace time.
+    pub from_ns: i64,
+    pub loss_ppm: u64,
+    /// 0 in an outage segment.
+    pub rate_bps: u64,
+    pub delay_ns: i64,
+    pub jitter_ns: i64,
+    pub outage: bool,
+}
+
+/// A trace-driven schedule (EMU-10 to EMU-12): the trace's samples as
+/// segments, repeating with the trace's period, read from `start_ns` on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceSchedule {
+    /// Sorted by `from_ns`, the first at 0.
+    pub segments: Vec<Segment>,
+    pub period_ns: i64,
+    pub start_ns: i64,
+    pub burst_bytes: u64,
+    pub queue_bytes: u64,
+}
+
+/// `v` rounded to the nearest integer, ties away from zero, refused outside
+/// `[0, max]` (EMU-12).
+fn rounded(v: f64, max: i64, what: &str) -> Result<i64, LinkError> {
+    let r = v.round();
+    if r.is_finite() && r >= 0.0 && r <= max as f64 {
+        Ok(r as i64)
+    } else {
+        refuse("trace", format!("{what} {v} is outside [0, {max}]"))
+    }
+}
+
+impl TraceSchedule {
+    /// The schedule a measured trace gives a link in `direction` (EMU-12).
+    pub fn from_trace(
+        trace: &crate::trace::Trace,
+        direction: Direction,
+        start_s: u64,
+        burst_bytes: u64,
+        queue_bytes: u64,
+    ) -> Result<Self, LinkError> {
+        let mut segments = Vec::with_capacity(trace.samples.len());
+        for s in &trace.samples {
+            let kbps = match direction {
+                Direction::Up => s.ul_kbps,
+                Direction::Down => s.dl_kbps,
+            };
+            let rate = rounded(kbps * 1_000.0, MAX_NS, "a rate")?.cast_unsigned();
+            let outage = s.loss >= 1.0 || rate == 0;
+            let (delay_ns, jitter_ns) = match s.rtt_ms {
+                Some(r) => (
+                    rounded(r.avg * 1e6 / 2.0, MAX_NS, "a delay")?,
+                    rounded(r.stdev * 1e6 / 2.0, MAX_NS, "a jitter")?,
+                ),
+                None => (0, 0),
+            };
+            segments.push(Segment {
+                from_ns: rounded(s.t_s * 1e9, MAX_NS, "a sample time")?,
+                loss_ppm: rounded(s.loss * 1e6, 1_000_000, "a loss")?.cast_unsigned(),
+                rate_bps: if outage { 0 } else { rate },
+                delay_ns,
+                jitter_ns,
+                outage,
+            });
+        }
+        let last = trace.samples.last().map_or(0.0, |s| s.t_s);
+        let period_ns = rounded((last + trace.sample_interval_s) * 1e9, MAX_NS, "the period")?;
+        let start_ns = i64::try_from(start_s)
+            .ok()
+            .and_then(|s| s.checked_mul(1_000_000_000))
+            .unwrap_or(i64::MAX);
+        let t = Self {
+            segments,
+            period_ns,
+            start_ns,
+            burst_bytes,
+            queue_bytes,
+        };
+        t.validate()?;
+        Ok(t)
+    }
+
+    /// Check the schedule's shape (EMU-11, EMU-12, EMU-22).
+    pub fn validate(&self) -> Result<(), LinkError> {
+        let Some(first) = self.segments.first() else {
+            return refuse("trace", "a trace schedule has no segment");
+        };
+        if first.from_ns != 0
+            || self
+                .segments
+                .windows(2)
+                .any(|w| w[1].from_ns <= w[0].from_ns)
+            || self
+                .segments
+                .last()
+                .is_some_and(|s| s.from_ns >= self.period_ns)
+        {
+            return refuse("trace", "segments are not sorted within the period from 0");
+        }
+        if !(0..self.period_ns).contains(&self.start_ns) {
+            return refuse("trace", "start_s is outside the trace's period");
+        }
+        if !self.segments.iter().any(|s| s.rate_bps > 0) {
+            return refuse("trace", "the trace has no positive rate in this direction");
+        }
+        if self.burst_bytes == 0 || self.queue_bytes == 0 {
+            return refuse("range", "burst and queue must be positive");
+        }
+        if self.segments.iter().any(|s| s.loss_ppm > PPM) {
+            return refuse("trace", "a loss is above 10^6 ppm");
+        }
+        Ok(())
+    }
+
+    /// The segment in force at link time `tau >= 0`, and the link time at
+    /// which it ends.
+    fn at(&self, tau: i64) -> (usize, i64) {
+        let u = (i128::from(tau) + i128::from(self.start_ns)) % i128::from(self.period_ns);
+        // `u` is in [0, period), which fits i64.
+        let u = i64::try_from(u).unwrap_or(0);
+        let k = self
+            .segments
+            .partition_point(|s| s.from_ns <= u)
+            .saturating_sub(1);
+        let to = self
+            .segments
+            .get(k + 1)
+            .map_or(self.period_ns, |s| s.from_ns);
+        (k, tau.saturating_add(to - u))
+    }
+
+    /// Credit units gained in one whole period.
+    fn per_period(&self) -> i128 {
+        self.segments
+            .iter()
+            .enumerate()
+            .map(|(k, s)| {
+                let to = self
+                    .segments
+                    .get(k + 1)
+                    .map_or(self.period_ns, |n| n.from_ns);
+                i128::from(to - s.from_ns) * i128::from(s.rate_bps)
+            })
+            .sum()
+    }
+
+    /// Credit units gained over link time `[a, b)`, `a <= b` (EMU-11).
+    fn gained(&self, a: i64, b: i64) -> i128 {
+        let period = i128::from(self.period_ns);
+        let whole = (i128::from(b) - i128::from(a)) / period;
+        let mut total = whole * self.per_period();
+        let mut t = a.saturating_add(i64::try_from(whole * period).unwrap_or(i64::MAX));
+        while t < b {
+            let (k, end) = self.at(t);
+            let e = end.min(b);
+            total += i128::from(e - t) * i128::from(self.segments[k].rate_bps);
+            t = e;
+        }
+        total
+    }
+
+    /// The least `d >= 1` with `gained(start, start + d) >= x`, for `x > 0`
+    /// (EMU-11); `None` beyond 2^62 ns.
+    fn time_to(&self, start: i64, x: i128) -> Option<i64> {
+        let per = self.per_period();
+        // `validate` refused a schedule with no positive rate.
+        let whole = (x - 1) / per;
+        let mut rem = x - whole * per;
+        let skip = i64::try_from(whole * i128::from(self.period_ns)).ok()?;
+        let mut t = start.checked_add(skip)?;
+        loop {
+            if t > MAX_NS {
+                return None;
+            }
+            let (k, end) = self.at(t);
+            let r = i128::from(self.segments[k].rate_bps);
+            let gain = i128::from(end - t) * r;
+            if r > 0 && gain >= rem {
+                let d = i64::try_from((rem + r - 1) / r).ok()?;
+                return t.checked_add(d).map(|e| e - start);
+            }
+            rem -= gain;
+            t = end;
+        }
+    }
+}
+
 /// The parameters of one link: its name, direction and stages (EMU-2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkSpec {
@@ -149,6 +341,9 @@ pub struct LinkSpec {
     pub rate: Option<Rate>,
     pub delay: Option<Delay>,
     pub reorder: Option<Reorder>,
+    /// A trace-driven schedule (EMU-12), in place of outage, loss, rate and
+    /// delay.
+    pub trace: Option<TraceSchedule>,
 }
 
 impl LinkSpec {
@@ -163,6 +358,7 @@ impl LinkSpec {
             rate: None,
             delay: None,
             reorder: None,
+            trace: None,
         }
     }
 
@@ -231,6 +427,22 @@ impl LinkSpec {
             span("the delay", d.delay_ns)?;
             span("the jitter", d.jitter_ns)?;
         }
+        if let Some(t) = &self.trace {
+            if self.outage.is_some()
+                || self.loss.is_some()
+                || self.rate.is_some()
+                || self.delay.is_some()
+            {
+                return refuse(
+                    "parse",
+                    format!(
+                        "link {}: a trace link has no outage, loss, rate or delay stage",
+                        self.name
+                    ),
+                );
+            }
+            t.validate()?;
+        }
         if let Some(r) = self.reorder {
             ppm("reorder_ppm", r.reorder_ppm)?;
             span("the reorder gap", r.gap_ns)?;
@@ -266,6 +478,8 @@ pub struct Fate {
     pub delay_ns: i64,
     /// Whether the reorder stage selected the message.
     pub reordered: bool,
+    /// The trace sample in force when the message was sent (EMU-12).
+    pub sample: Option<usize>,
 }
 
 impl Fate {
@@ -278,6 +492,7 @@ impl Fate {
             rate_wait_ns: 0,
             delay_ns: 0,
             reordered: false,
+            sample: None,
         }
     }
 
@@ -311,10 +526,44 @@ pub fn chance(rng: &mut ChaCha20Rng, ppm: u64) -> bool {
     below(rng, PPM) < ppm
 }
 
-/// The token bucket of EMU-4.
+/// The rate a bucket accrues at: fixed, or a trace's schedule (EMU-11).
+#[derive(Debug, Clone)]
+enum RateSource {
+    Fixed(u64),
+    Trace(TraceSchedule),
+}
+
+impl RateSource {
+    /// Credit units gained over `[a, b)`.
+    fn gained(&self, a: i64, b: i64) -> i128 {
+        if b <= a {
+            return 0;
+        }
+        match self {
+            Self::Fixed(r) => i128::from(b - a) * i128::from(*r),
+            Self::Trace(s) => s.gained(a, b),
+        }
+    }
+
+    /// The least `d >= 1` with `gained(start, start + d) >= x`, for `x > 0`;
+    /// `None` beyond 2^62 ns.
+    fn time_to(&self, start: i64, x: i128) -> Option<i64> {
+        match self {
+            Self::Fixed(r) => {
+                let r = i128::from(*r);
+                i64::try_from((x + r - 1) / r).ok()
+            }
+            Self::Trace(s) => s.time_to(start, x),
+        }
+    }
+}
+
+/// The token bucket of EMU-4 and EMU-11.
 #[derive(Debug, Clone)]
 struct Bucket {
-    rate: Rate,
+    rate: RateSource,
+    burst_bytes: u64,
+    queue_bytes: u64,
     /// Credit in bit-nanoseconds at `at_ns`; `None` before the first message,
     /// when the bucket is full.
     credit: i128,
@@ -327,10 +576,12 @@ struct Bucket {
 }
 
 impl Bucket {
-    fn new(rate: Rate) -> Self {
+    fn new(rate: RateSource, burst_bytes: u64, queue_bytes: u64) -> Self {
         Self {
             rate,
-            credit: i128::from(rate.burst_bytes) * UNITS_PER_BYTE,
+            burst_bytes,
+            queue_bytes,
+            credit: i128::from(burst_bytes) * UNITS_PER_BYTE,
             at_ns: None,
             last_ns: None,
             queue: VecDeque::new(),
@@ -339,17 +590,14 @@ impl Bucket {
     }
 
     fn cap(&self) -> i128 {
-        i128::from(self.rate.burst_bytes) * UNITS_PER_BYTE
+        i128::from(self.burst_bytes) * UNITS_PER_BYTE
     }
 
     /// The credit at `t`, no earlier than `at_ns`.
     fn credit_at(&self, t: i64) -> i128 {
         match self.at_ns {
             None => self.credit,
-            Some(at) => {
-                let gained = i128::from(t - at) * i128::from(self.rate.rate_bps);
-                (self.credit + gained).min(self.cap())
-            }
+            Some(at) => (self.credit + self.rate.gained(at, t)).min(self.cap()),
         }
     }
 
@@ -364,23 +612,20 @@ impl Bucket {
         let have = self.credit_at(start);
         let need = i128::from(bytes) * UNITS_PER_BYTE;
         let threshold = need.min(self.cap());
-        let rate = i128::from(self.rate.rate_bps);
-        let wait = if have >= threshold {
-            0
+        let depart = if have >= threshold {
+            Some(start)
         } else {
-            (threshold - have + rate - 1) / rate
+            self.rate
+                .time_to(start, threshold - have)
+                .and_then(|w| start.checked_add(w))
         };
-        let depart = i64::try_from(wait)
-            .ok()
-            .and_then(|w| start.checked_add(w))
-            .filter(|d| *d <= MAX_NS);
-        let Some(depart) = depart else {
+        let Some(depart) = depart.filter(|d| *d <= MAX_NS) else {
             return refuse("range", "the rate stage takes a time beyond 2^62 ns");
         };
-        if depart > t && self.backlog + u128::from(bytes) > u128::from(self.rate.queue_bytes) {
+        if depart > t && self.backlog + u128::from(bytes) > u128::from(self.queue_bytes) {
             return Ok(None);
         }
-        let at_depart = (have + i128::from(depart - start) * rate).min(self.cap());
+        let at_depart = (have + self.rate.gained(start, depart)).min(self.cap());
         self.credit = at_depart - need;
         self.at_ns = Some(depart);
         self.last_ns = Some(depart);
@@ -399,11 +644,17 @@ enum GeState {
     Bad,
 }
 
-/// One message's entry in the impairment schedule (EMU-9).
+/// One message's entry in the impairment schedule (EMU-9, EMU-12).
 #[derive(Debug, Clone, Copy)]
 struct Draws {
+    /// A static loss stage's decision.
     lost: bool,
+    /// A trace link's loss draw over `0..10^6`, compared with the segment's.
+    loss_draw: Option<u64>,
+    /// A static delay stage's jitter.
     jitter_ns: i64,
+    /// A trace link's raw 64-bit jitter draw.
+    jitter_raw: Option<u64>,
     selected: bool,
 }
 
@@ -435,11 +686,24 @@ impl Link {
     /// The link `spec` describes, drawing from sub-streams of `replicate_seed`.
     pub fn new(spec: LinkSpec, replicate_seed: u64) -> Result<Self, LinkError> {
         spec.validate()?;
-        let jitter = spec.delay.is_some_and(|d| d.jitter_ns > 0);
+        let traced = spec.trace.is_some();
+        let jitter = traced || spec.delay.is_some_and(|d| d.jitter_ns > 0);
+        let bucket = match (&spec.trace, spec.rate) {
+            (Some(t), _) => Some(Bucket::new(
+                RateSource::Trace(t.clone()),
+                t.burst_bytes,
+                t.queue_bytes,
+            )),
+            (None, Some(r)) => Some(Bucket::new(
+                RateSource::Fixed(r.rate_bps),
+                r.burst_bytes,
+                r.queue_bytes,
+            )),
+            (None, None) => None,
+        };
         Ok(Self {
-            loss_rng: spec
-                .loss
-                .map(|_| stream(replicate_seed, &spec, "loss"))
+            loss_rng: (traced || spec.loss.is_some())
+                .then(|| stream(replicate_seed, &spec, "loss"))
                 .transpose()?,
             delay_rng: jitter
                 .then(|| stream(replicate_seed, &spec, "delay"))
@@ -449,7 +713,7 @@ impl Link {
                 .map(|_| stream(replicate_seed, &spec, "reorder"))
                 .transpose()?,
             ge: GeState::Good,
-            bucket: spec.rate.map(Bucket::new),
+            bucket,
             last_send_ns: None,
             last_fifo_ns: None,
             spec,
@@ -465,49 +729,62 @@ impl Link {
     /// This message's draws from every stage present (EMU-9), taken before
     /// the pipeline runs so that they depend on the message index alone.
     fn draw(&mut self) -> Draws {
-        let lost = match (self.spec.loss, self.loss_rng.as_mut()) {
-            (Some(Loss::Iid { loss_ppm }), Some(rng)) => chance(rng, loss_ppm),
-            (
+        let traced = self.spec.trace.is_some();
+        let mut d = Draws {
+            lost: false,
+            loss_draw: None,
+            jitter_ns: 0,
+            jitter_raw: None,
+            selected: false,
+        };
+        if let Some(rng) = self.loss_rng.as_mut() {
+            match self.spec.loss {
+                _ if traced => d.loss_draw = Some(below(rng, PPM)),
+                Some(Loss::Iid { loss_ppm }) => d.lost = chance(rng, loss_ppm),
                 Some(Loss::GilbertElliott {
                     p_good_bad_ppm,
                     p_bad_good_ppm,
                     loss_good_ppm,
                     loss_bad_ppm,
-                }),
-                Some(rng),
-            ) => {
-                let flip = below(rng, PPM);
-                let drop = below(rng, PPM);
-                self.ge = match self.ge {
-                    GeState::Good if flip < p_good_bad_ppm => GeState::Bad,
-                    GeState::Bad if flip < p_bad_good_ppm => GeState::Good,
-                    s => s,
-                };
-                drop < match self.ge {
-                    GeState::Good => loss_good_ppm,
-                    GeState::Bad => loss_bad_ppm,
+                }) => {
+                    let flip = below(rng, PPM);
+                    let drop = below(rng, PPM);
+                    self.ge = match self.ge {
+                        GeState::Good if flip < p_good_bad_ppm => GeState::Bad,
+                        GeState::Bad if flip < p_bad_good_ppm => GeState::Good,
+                        s => s,
+                    };
+                    d.lost = drop
+                        < match self.ge {
+                            GeState::Good => loss_good_ppm,
+                            GeState::Bad => loss_bad_ppm,
+                        };
                 }
+                None => {}
             }
-            _ => false,
-        };
-        let jitter_ns = match (self.spec.delay, self.delay_rng.as_mut()) {
-            (Some(d), Some(rng)) => {
-                // `jitter_ns <= 2^62`, so the span fits in u64 and the draw in i64.
-                let span = 2 * d.jitter_ns.unsigned_abs() + 1;
-                below(rng, span).cast_signed() - d.jitter_ns
-            }
-            _ => 0,
-        };
-        let selected = match (self.spec.reorder, self.reorder_rng.as_mut()) {
-            (Some(r), Some(rng)) => chance(rng, r.reorder_ppm),
-            _ => false,
-        };
-        Draws {
-            lost,
-            jitter_ns,
-            selected,
         }
+        if let Some(rng) = self.delay_rng.as_mut() {
+            if traced {
+                d.jitter_raw = Some(rng.next_u64());
+            } else if let Some(delay) = self.spec.delay {
+                // `jitter_ns <= 2^62`, so the span fits in u64 and the draw in i64.
+                let span = 2 * delay.jitter_ns.unsigned_abs() + 1;
+                d.jitter_ns = below(rng, span).cast_signed() - delay.jitter_ns;
+            }
+        }
+        if let (Some(r), Some(rng)) = (self.spec.reorder, self.reorder_rng.as_mut()) {
+            d.selected = chance(rng, r.reorder_ppm);
+        }
+        d
     }
+}
+
+/// The jitter of a raw 64-bit draw over `[-jitter_ns, jitter_ns]` (EMU-12).
+fn scaled_jitter(raw: u64, jitter_ns: i64) -> i64 {
+    let span = u128::from(2 * jitter_ns.unsigned_abs() + 1);
+    let k = (u128::from(raw) * span) >> 64;
+    // `k < span <= 2^63 + 1`, and `k` fits in i64 because `jitter_ns <= 2^62`.
+    i64::try_from(k).unwrap_or(0) - jitter_ns
 }
 
 impl LinkModel for Link {
@@ -530,7 +807,7 @@ impl LinkModel for Link {
         let mut t = send_ns;
 
         // Outage (EMU-7): a hold moves the message to the window's end, where
-        // the stage applies again.
+        // the stage applies again. A trace's outage segments drop (EMU-12).
         if let Some(ws) = &self.spec.outage {
             while let Some(i) = ws.iter().position(|w| w.start_ns <= t && t < w.end_ns) {
                 fate.window = Some(i);
@@ -543,13 +820,24 @@ impl LinkModel for Link {
                 }
             }
         }
+        if let Some(tr) = &self.spec.trace {
+            let (k, _) = tr.at(t);
+            fate.sample = Some(k);
+            if tr.segments[k].outage {
+                return Ok(fate.dropped(DropCause::Outage));
+            }
+        }
 
-        // Loss (EMU-5, EMU-6).
-        if draws.lost {
+        // Loss (EMU-5, EMU-6, EMU-12).
+        let lost = match (&self.spec.trace, draws.loss_draw) {
+            (Some(tr), Some(x)) => x < tr.segments[tr.at(t).0].loss_ppm,
+            _ => draws.lost,
+        };
+        if lost {
             return Ok(fate.dropped(DropCause::Loss));
         }
 
-        // Rate (EMU-4).
+        // Rate (EMU-4, EMU-11).
         if let Some(bucket) = self.bucket.as_mut() {
             let Some(depart) = bucket.admit(t, bytes)? else {
                 return Ok(fate.dropped(DropCause::Queue));
@@ -558,10 +846,17 @@ impl LinkModel for Link {
             t = depart;
         }
 
-        // Delay (EMU-3) and reorder (EMU-8).
-        let candidate = match self.spec.delay {
-            Some(d) => add(t, d.delay_ns, "the delay")?
-                .checked_add(draws.jitter_ns)
+        // Delay (EMU-3, EMU-12) and reorder (EMU-8).
+        let delay = match (&self.spec.trace, draws.jitter_raw) {
+            (Some(tr), Some(raw)) => {
+                let s = &tr.segments[tr.at(t).0];
+                Some((s.delay_ns, scaled_jitter(raw, s.jitter_ns)))
+            }
+            _ => self.spec.delay.map(|d| (d.delay_ns, draws.jitter_ns)),
+        };
+        let candidate = match delay {
+            Some((delay_ns, j)) => add(t, delay_ns, "the delay")?
+                .checked_add(j)
                 .map_or(t, |c| c.max(t)),
             None => t,
         };

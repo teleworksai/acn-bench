@@ -1,6 +1,6 @@
 # SPEC 020 — Link emulation: models, engine, proxy and measured traces
 
-**Status:** Draft v0.1 (October 2026). Partial: §2, link models, and §3, scenario files, are written for T10; §6, measured traces, for T08. The sim engine (§4, T11, numbered from 30) and the live proxy (§5, T12, numbered from 40) are to write. **Inherits:** SPEC 000, 010. **Prefix:** EMU. **Crate:** `acn-emu` (Class B); `scenarios/synthetic/` is Class A, and `scenarios/measured/` is in the frozen set (CON-7).
+**Status:** Draft v0.2 (October 2026; v0.2: trace-driven links, EMU-10 to EMU-12 and EMU-22, T10b). Partial: §2, link models, and §3, scenario files, are written for T10 and T10b; §6, measured traces, for T08. The sim engine (§4, T11, numbered from 30) and the live proxy (§5, T12, numbered from 40) are to write. **Inherits:** SPEC 000, 010. **Prefix:** EMU. **Crate:** `acn-emu` (Class B); `scenarios/synthetic/` is Class A, and `scenarios/measured/` is in the frozen set (CON-7).
 **Purpose:**
 - define a link model: what one direction of a link does to each message, as a pure function of its parameters, its random sub-stream and the messages sent so far (§2);
 - define the scenario file that names a run's links (§3);
@@ -48,6 +48,23 @@ A delivered message satisfies `deliver_ns = send_ns + hold_ns + rate_wait_ns + d
 - **What that makes the draws.** They form a schedule fixed by the seed and the message index before any traffic, the impairment schedule of CON-5(d). With the outage windows, it determines every fate from the send times and sizes alone. Changing one stage's parameters changes no draw of another stage, and no message's draws in its own stage.
 - **The draws themselves.** A uniform draw over `0..n` takes 64-bit outputs `x` of the stage's generator (`next_u64`) until `x < z`, with `z = (2⁶⁴ − 1) − ((2⁶⁴ − 1) mod n)`, and returns `x mod n`. A probability in parts per million is true when one uniform draw over `0..10⁶` is below the parameter. The jitter `j` is a uniform draw over `0..2·jitter_ns + 1`, minus `jitter_ns`. No floating point is used.
 
+**EMU-10** **Time-varying parameters.** The loss (independent only), rate and delay stages MAY take their parameters from a *schedule*: a list of segments, each in force over `[from_ns, to_ns)` on the link's time scale, with one value of each parameter. A static stage is one segment in force at all times. Each stage uses the segment in force when the message reaches it: the loss stage at the send time plus any hold, the rate stage as EMU-11 says, the delay stage at the time the message leaves the rate stage. An outage segment (EMU-12) drops every message sent inside it, with cause `outage`.
+
+**EMU-11** **Rate across segments.** Credit accrues at the rate in force at each instant, integrated exactly over the segments, and still up to the bucket's cap. A segment with rate 0 accrues nothing. The departure of EMU-4 is the earliest time at which the credit, so accrued, reaches the threshold, rounded up to the next nanosecond. The schedule of a trace repeats (EMU-12), and the loader refuses a trace with no positive rate in a direction (EMU-12), so every departure is finite. A departure beyond 2⁶² ns is refused with reason `range`.
+
+**EMU-12** **Trace-driven link.** A link with `[link.trace]` takes its loss, rate and delay schedule from a measured trace (§6), replayed sample by sample:
+- **Timing.** Sample `k` is in force over `[t_k, t_{k+1})` of trace time, and the last sample for `sample_interval_s` after its `t_s`. The trace's *period* is the last `t_s` plus `sample_interval_s`. Link time `τ` reads trace time `(τ + start) mod period`, where `start` is the link's `start_s` offset. So the trace repeats for as long as the run lasts.
+- **Values.** Each value converts with rounding to the nearest integer, ties away from zero, from the sample's `f64`:
+  - one-way delay: half the round-trip average (`rtt_ms.avg × 10⁶ / 2` ns);
+  - jitter: half the round-trip standard deviation (`rtt_ms.stdev × 10⁶ / 2` ns), drawn uniform as in EMU-3;
+  - independent loss: `loss × 10⁶` ppm;
+  - rate: `ul_kbps` for an `up` link or `dl_kbps` for a `down` link, times 1 000, in bits per second.
+- **Outages.** A sample whose `loss` is 1, or whose rate in the link's direction is 0, is an outage segment: messages sent in it are dropped with cause `outage`, its rate is 0 (queued messages wait it out), and TRC-15's outage event takes cause `trace`.
+- **What the trace does not give.** The bucket and queue come from the scenario (`burst_bytes`, `queue_bytes`), since a trace measures neither.
+- **No other stages.** A trace link MUST NOT also have an outage, loss, rate or delay stage. It MAY have a reorder stage.
+- **Draws.** Its loss and delay stages draw once per message index, whatever the segment's parameters, so the schedule of draws stays fixed by the seed (EMU-9). Loss uses EMU-9's draw over `0..10⁶`. Jitter cannot use EMU-9's rejection draw, whose number of generator outputs depends on the range, and the range here depends on the segment, so on timing. Instead it takes one 64-bit output `x` and uses `j = ⌊x · (2·jitter_ns + 1) / 2⁶⁴⌋ − jitter_ns`. Its bias is below `(2·jitter_ns + 1) / 2⁶⁴`, under 2⁻²⁰ for any jitter below 2⁴³ ns.
+- **The fate** also records the trace sample in force when the message was sent.
+
 ## 3. Scenario files
 
 **EMU-20** A synthetic scenario MUST be one TOML file `scenarios/synthetic/<name>.toml`, parsed with unknown keys refused at every level. Its hash is the BLAKE3 of the file's bytes (CON-27(a)).
@@ -60,7 +77,7 @@ A delivered message satisfies `deliver_ns = send_ns + hold_ns + rate_wait_ns + d
   - `[link.loss]`: `kind = "iid"` with `loss_ppm`, or `kind = "gilbert_elliott"` with `p_good_bad_ppm`, `p_bad_good_ppm`, `loss_good_ppm`, `loss_bad_ppm`, and no key of the other kind;
   - `[[link.outage.window]]`: `start_ms`, `end_ms`, `mode` (`drop` or `hold`), `cause` (`handover` or `scheduled`);
   - `[link.reorder]`: `reorder_ppm`, `gap_us`;
-  - `[link.trace]`: `dir` and `blake3` (EMU-22).
+  - `[link.trace]`: `dir`, `blake3`, `start_s`, `burst_bytes`, `queue_bytes` (EMU-22).
 
   The loader converts every duration to nanoseconds.
 
@@ -74,7 +91,13 @@ A delivered message satisfies `deliver_ns = send_ns + hold_ns + rate_wait_ns + d
 
 It MUST return the scenario's hash and its link parameters. `Scenario::build` MUST then build each link's model (EMU-1) under a given replicate seed.
 
-**EMU-22** A link that names a measured trace (§6) does so in `[link.trace]`, by the trace's directory and the BLAKE3 of its `trace.toml` (CON-27(a)). How a trace drives a link is §10's open question 1. Until it is settled, the loader MUST refuse a scenario that names a trace, with reason `trace`. The task that settles it adds the hash check.
+**EMU-22** A link that names a measured trace (§6) does so in `[link.trace]`, with these keys:
+- `dir`: the trace's directory, relative to the directory holding the scenario file (`../measured/<slug>` from `scenarios/synthetic/`);
+- `blake3`: the BLAKE3 of its `trace.toml`;
+- `start_s`: an integer offset in seconds into the trace, at least 0 and below its period;
+- `burst_bytes` and `queue_bytes`.
+
+The loader MUST load the trace under EMU-64 and MUST refuse it, with reason `trace`, when the trace does not load, when the hash differs (CON-27(a)), when `start_s` is outside the period, or when the trace has no positive rate in the link's direction. It MUST refuse a trace link that also has an outage, loss, rate or delay stage, with reason `parse`.
 
 ## 6. Measured traces
 
@@ -122,7 +145,8 @@ Every number MUST be finite. A trace MUST hold at least two samples.
     - throughput settling at `rate_bps`, a burst within the bucket leaving at once, and tail drop at the queue limit;
     - the reorder fraction against `reorder_ppm`.
   - **The structure**: FIFO delivery without reorder, outage `drop` and `hold`, the stage order of EMU-2, the refusal of a message sent out of order, the index-aligned schedule of EMU-9 (changing the loss rate leaves every delivered message's jitter unchanged, and changing the jitter leaves the losses unchanged), each stage's edge cases (the bucket cap after idle, the backlog boundary, a tail drop taking no credit, a message larger than the queue leaving at once, adjacent windows, the reordered message's exemption, the clamp at `t`), the exact draw algorithm, and refusals of out-of-range times, and a golden vector of fates for one seed.
-- `crates/acn-emu/tests/scenario.rs` — EMU-20 to EMU-22: every scenario under `scenarios/synthetic/` loads and reads as written, field by field; each malformed variant is refused by name; a scenario naming a trace is refused.
+- `crates/acn-emu/tests/trace_link.rs` — EMU-10 to EMU-12, EMU-22: the schedule built from the 5G-IANA trace (timing, values, rounding, outages, the period and `start_s`); rate integrated across segments, including a queue that waits through an outage segment; one draw per message whatever the segment; static links unchanged (the golden vector of `link_models.rs` holds); and a trace scenario that loads, builds and runs over more than one period.
+- `crates/acn-emu/tests/scenario.rs` — EMU-20 to EMU-22: every scenario under `scenarios/synthetic/` loads and reads as written, field by field; each malformed variant is refused by name; a trace reference that does not load, has another hash, an offset outside the period or extra stages is refused.
 
 ### §6
 
@@ -140,6 +164,6 @@ Every number MUST be finite. A trace MUST hold at least two samples.
 
 ## 10. Open questions (ADR candidates)
 
-1. How a scenario uses a measured trace: replayed sample by sample (each sample's loss, one-way delay and rate in force for its interval), or fitted to the models of §2. T10 leaves it open (ADR-32); T10b settles it and lifts EMU-22's refusal.
+1. ~~How a scenario uses a measured trace.~~ Settled by T10b (ADR-33): replayed sample by sample (EMU-10 to EMU-12). Fitting a trace to a Gilbert–Elliott model, for a scenario that wants the trace's statistics without its timeline, is a later option.
 2. Whether `scenarios/measured/` should also hold our own captures (T08's original plan, a phone-tethered walk) in the same format, with `mobility = "walk"`. That is expected; the format does not depend on the source.
 3. How the live proxy (§5, T12) cuts a byte stream into the messages of §2: by HTTP message, by streamed chunk, or by write. TRC-15 allows a message or a byte segment.

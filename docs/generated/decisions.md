@@ -36,3 +36,4 @@
 | [ADR-30](../decisions/ADR-30.md) | T08: the first measured trace, from the 5G-IANA drive test | accepted (T08; `spec-change`, SPEC 020 Draft v0.0 §6, and `env-change`, `scenarios/measured/`) | EMU-60 to EMU-65; CON-7, CON-21, CON-27(a) |
 | [ADR-31](../decisions/ADR-31.md) | T07: SPEC 095's gate rules and the M0 record | accepted (T07; `spec-change`, SPEC 095 Draft v0.1) | GATE-1 to GATE-6, GATE-10 to GATE-16; CON-7, CON-16, CON-22, CON-23 |
 | [ADR-32](../decisions/ADR-32.md) | T10: link models and synthetic scenarios | accepted (T10; `spec-change`, SPEC 020 Draft v0.1 §2 and §3; Class B, `acn-emu`) | EMU-1 to EMU-9, EMU-20 to EMU-22; CON-5, CON-27(a), CON-30(b); TRC-15 |
+| [ADR-33](../decisions/ADR-33.md) | T10b: a measured trace drives a link by replay | accepted (T10b; `spec-change`, SPEC 020 Draft v0.2; Class B, `acn-emu`) | EMU-10, EMU-11, EMU-12, EMU-22; EMU-9; CON-5(d), CON-27(a); TRC-15 |

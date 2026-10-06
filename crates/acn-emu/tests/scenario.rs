@@ -269,10 +269,12 @@ fn each_malformed_scenario_is_refused_by_name() {
             "parse",
         ),
         (
-            "trace",
-            format!("{BASE}\n[link.trace]\ndir = \"scenarios/measured/x\"\nblake3 = \"00\"\n"),
+            "trace with other stages",
+            format!(
+                "{BASE}\n[link.trace]\ndir = \"../measured/x\"\nblake3 = \"00\"\nburst_bytes = 1\nqueue_bytes = 1\n"
+            ),
             "t",
-            "trace",
+            "parse",
         ),
     ];
     for (what, text, stem, reason) in cases {
