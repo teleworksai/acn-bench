@@ -1,9 +1,10 @@
 # SPEC 020 — Link emulation: models, engine, proxy and measured traces
 
-**Status:** Draft v0.3 (October 2026; v0.3: the sim engine, §4, T11; v0.2: trace-driven links, EMU-10 to EMU-12 and EMU-22, T10b). Partial: §2, link models, and §3, scenario files, are written for T10 and T10b; §6, measured traces, for T08. §4, the sim engine, is written for T11 (implemented across T11.1 to T11.3). The live proxy (§5, T12, numbered from 40) is to write. **Inherits:** SPEC 000, 010. **Prefix:** EMU. **Crate:** `acn-emu` (Class B); `scenarios/synthetic/` is Class A, and `scenarios/measured/` is in the frozen set (CON-7).
+**Status:** Draft v0.4 (October 2026; v0.4: the live proxy, §5, T12; v0.3: the sim engine, §4, T11; v0.2: trace-driven links, EMU-10 to EMU-12 and EMU-22, T10b). Complete for M1: §2, link models, and §3, scenario files, written for T10 and T10b; §4, the sim engine, for T11 (implemented across T11.1 to T11.3); §5, the live proxy, for T12 (implemented in T12.2 and T12.3); §6, measured traces, for T08. **Inherits:** SPEC 000, 010. **Prefix:** EMU. **Crate:** `acn-emu` (Class B); `scenarios/synthetic/` is Class A, and `scenarios/measured/` is in the frozen set (CON-7).
 **Purpose:**
 - define a link model: what one direction of a link does to each message, as a pure function of its parameters, its random sub-stream and the messages sent so far (§2);
 - define the scenario file that names a run's links (§3);
+- define how a run's calls cross those links, on virtual time in `sim` (§4) and through a proxy on real sockets in `live` (§5);
 - define what a measured impairment trace is, so that CON-21's provenance rule and its ban on payload and identifiers can be checked by a machine, and how the first trace, a published 5G drive test (ADR-29), enters the repository (§6).
 
 ## 2. Link models
@@ -152,6 +153,38 @@ Waits that a queued message spent in an outage it was not sent in are visible in
 
 **EMU-39** **No scenario, no network.** A run with no scenario has no network: calls go straight to the server, as before T11. It MUST record a zero `scenario_hash`, no `acn-emu` resource and no link or scenario span, and MUST draw nothing for the network. So every file of its bundle is byte-identical to the same run before T11, except those that record the build (`manifest.json` and the build attributes of `resources.parquet`, CON-31), which change with any change to the code.
 
+## 5. The live proxy
+
+In `live` mode the same link models act on real sockets: the harness talks to its endpoint through a proxy that delays, holds and drops what crosses it, message by message, as the sim network does (§4). The proxy frames messages as EMU-32 does, so that a sim run and its live twin (CON-25) apply the same models to the same messages. T12.2 implements the proxy in `acn_emu::proxy`; T12.3 runs `acn harness run --mode live --scenario` through it.
+
+**EMU-40** **One proxy per replicate.** A live replicate with a scenario MUST carry its calls through a proxy of its own: an HTTP/1.1 listener on the loopback interface that forwards to the run's endpoint over the scenario's one path. The proxy's links MUST be built from the replicate seed before it accepts its first connection, so that its draws, the impairment schedule of EMU-9, are fixed before traffic starts (CON-5(d)). Its origin, time 0 of the links, is the replicate's start on the run's clock (TRC-26). It is shut down when the replicate ends.
+
+**EMU-41** **Messages.** The proxy frames messages as EMU-32 does:
+- a request is one message of its body's bytes;
+- a response that is not a `200` event stream is one message of its body's bytes;
+- each event of a `200` `text/event-stream` response is one message of its wire bytes, from its first line to the blank line that ends it.
+
+Headers and transfer framing (chunk sizes, `Content-Length`) are not counted. The proxy speaks HTTP/1.1 with keep-alive. It MUST refuse HTTP/2, `CONNECT` and protocol upgrades.
+
+**EMU-42** **Send times.** A message's send time is the run's clock, less the origin, at the moment the proxy has read the whole message. Reading the clock and offering the message to its link MUST happen together, one message at a time per link, so that send times reach a link in non-decreasing order (EMU-1).
+
+**EMU-43** **Delivery.** The proxy MUST write a delivered message no earlier than its delivery time, and writes the messages of one connection in order. The time it finishes writing is the message's receive time (EMU-34), and the time recorded. Timer slack makes it later than the delivery time by up to a few milliseconds.
+
+**EMU-44** **Drops.** A dropped message cannot be cut out of a TCP stream, so the proxy turns each drop into what the client of EMU-35 would see:
+- **A lost request.** It is not forwarded, and the connection stays silent, so the attempt ends at its deadline.
+- **A lost body**, or a lost first event before the response head was written. The head is not written either, and the connection stays silent.
+- **A lost event of a stream already started.** The connection is aborted at the delivery time of the next event that is delivered, so the client sees a broken stream. If no later event is delivered, the connection stays silent.
+
+**EMU-45** **After the client leaves.** A delivered request is forwarded even when its client has already given up, and its response still crosses the downlink, so it shapes later fates (EMU-33). It is recorded by no attempt.
+
+**EMU-46** **Transparency.** Apart from timing and drops, the proxy forwards requests and responses unchanged: the method, path, query, headers, status and bytes. The exceptions are hop-by-hop headers (RFC 9110) and the attempt header of EMU-47, which it strips before forwarding.
+
+**EMU-47** **Records.** The client tags each attempt with a header `x-acn-attempt: <n>`. The proxy keeps every message's fate, size and receive time by attempt, and every fate in the order it decided them. The harness collects an attempt's records when the attempt ends, keeping those carried by its end as EMU-36 says, and emits the link spans and the scenario span's events from them as in `sim` (EMU-36, EMU-37).
+
+**EMU-48** **Twins.** With the same seed and scenario, a sim run and a live run take the same draws per message index on each link (EMU-9). So, when both offer their messages in the same order, every message takes the same loss decision, reorder selection and jitter draw. Rates, holds and the order of concurrent messages depend on send times, which are the wall clock's in live: those are compared as distributions (CON-25, T11b).
+
+**EMU-49** **No scenario, no proxy.** A live run with no scenario goes straight to its endpoint, as before T12. EMU-39 holds for it. The run's `opt.endpoint` and endpoint host name the real endpoint whether or not a proxy carries the calls, so a proxy's ephemeral port never enters `run_id` (CON-29).
+
 ## 6. Measured traces
 
 **EMU-60** A measured trace MUST be a directory `scenarios/measured/<slug>/`, with `<slug>` lowercase ASCII letters, digits and `-`, holding exactly two files: `trace.toml` and `provenance.toml`. Both MUST be regular files, not links. Both are parsed with unknown keys refused at every level. `trace.toml` is the run input: scenarios name a trace by its hash (EMU-64), read as working-tree bytes (CON-27(a)). `provenance.toml` is not read by a run; it is committed by the frozen set's `env-hash` (CON-7), as the trace is.
@@ -189,6 +222,17 @@ Every number MUST be finite. A trace MUST hold at least two samples.
 - output that breaks EMU-62, rather than write it.
 
 ## 9. Acceptance tests
+
+- `crates/acn-emu/tests/live_proxy.rs` (T12.2) — EMU-40 to EMU-46:
+  - framing of requests, bodies and SSE events;
+  - send times in order under concurrent connections;
+  - delivery never early, within a loose upper tolerance;
+  - each drop of EMU-44 as the client sees it (a timeout, or a broken stream);
+  - a request forwarded after its client left;
+  - transparency of method, path, headers and bytes;
+  - HTTP/2 and upgrades refused;
+  - links built before the first connection.
+- The harness's live tests (T12.3) — EMU-47 to EMU-49: link spans and scenario events from a live run; a lost request timing out and a cut stream retried; a live run with no scenario unchanged; a sim run and a live run of one sequential session taking the same draws per message index.
 
 - `crates/acn-emu/tests/sim_engine.rs` — EMU-30 to EMU-32, EMU-34, EMU-38, and the network's part of EMU-35 (T11.1):
   - the queue's order, groups and refusal of the past;
@@ -255,4 +299,4 @@ Every number MUST be finite. A trace MUST hold at least two samples.
 
 1. ~~How a scenario uses a measured trace.~~ Settled by T10b (ADR-33): replayed sample by sample (EMU-10 to EMU-12). Fitting a trace to a Gilbert–Elliott model, for a scenario that wants the trace's statistics without its timeline, is a later option.
 2. Whether `scenarios/measured/` should also hold our own captures (T08's original plan, a phone-tethered walk) in the same format, with `mobility = "walk"`. That is expected; the format does not depend on the source.
-3. How the live proxy (§5, T12) cuts a byte stream into the messages of §2: by HTTP message, by streamed chunk, or by write. TRC-15 allows a message or a byte segment.
+3. ~~How the live proxy cuts a byte stream into messages.~~ Settled by T12 (ADR-36): by HTTP message and SSE event, as in sim (EMU-41).
