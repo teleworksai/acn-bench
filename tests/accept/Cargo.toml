@@ -60,3 +60,7 @@ path = "p4.rs"
 [[test]]
 name = "gates"
 path = "gates.rs"
+
+[[test]]
+name = "emu_sim"
+path = "emu_sim.rs"

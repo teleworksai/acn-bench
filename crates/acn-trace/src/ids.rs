@@ -66,3 +66,20 @@ impl IdGenerator for SeededIdGenerator {
         SpanId::from_bytes(self.draw::<8>())
     }
 }
+
+/// One [`SeededIdGenerator`] shared by several tracer providers, so that the
+/// `acn-emu` resource's link spans and the harness's spans of a replicate draw
+/// from one stream, in program order (SPEC 020 EMU-36). A sim run is
+/// single-threaded, so that order is the order the spans are started.
+#[derive(Debug, Clone)]
+pub struct SharedIdGenerator(pub std::sync::Arc<SeededIdGenerator>);
+
+impl IdGenerator for SharedIdGenerator {
+    fn new_trace_id(&self) -> TraceId {
+        self.0.new_trace_id()
+    }
+
+    fn new_span_id(&self) -> SpanId {
+        self.0.new_span_id()
+    }
+}

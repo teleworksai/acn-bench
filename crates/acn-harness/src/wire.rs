@@ -123,6 +123,19 @@ pub struct Exchange {
     /// Response body bytes received.
     pub bytes_down: u64,
     pub failure: Option<Failure>,
+    /// With a scenario, every message the attempt carried, as the network
+    /// carried it (SPEC 020 EMU-36); empty without one.
+    pub links: Vec<LinkRecord>,
+}
+
+/// One message of an attempt on the network (SPEC 020 EMU-36).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkRecord {
+    pub direction: acn_emu::link::Direction,
+    pub bytes: u64,
+    pub fate: acn_emu::link::Fate,
+    /// When it was received (EMU-34); `None` if dropped.
+    pub received_ns: Option<i64>,
 }
 
 impl Exchange {

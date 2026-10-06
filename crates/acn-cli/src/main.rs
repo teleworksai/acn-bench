@@ -204,6 +204,11 @@ struct HarnessRun {
     /// Where bundles go.
     #[arg(long, default_value = "runs")]
     runs_dir: PathBuf,
+    /// A scenario under scenarios/synthetic/ whose one path every call
+    /// crosses (SPEC 020 §4); sim only until the live proxy (T12). Without one,
+    /// calls reach the mock directly and `scenario_hash` is zero (EMU-39).
+    #[arg(long)]
+    scenario: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -470,7 +475,7 @@ fn harness_run(a: &HarnessRun) -> Value {
             build: build_info::build_info()?,
             profiles: None,
         };
-        let w = acn_harness::run::run(&cfg)?;
+        let w = acn_harness::run::run_with_scenario(&cfg, a.scenario.as_deref())?;
         Ok(json!({
             "ok": true,
             "run_id": w.run_id.to_hex(),

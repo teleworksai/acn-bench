@@ -1,7 +1,7 @@
 //! One run (HAR-50..52): one cell and one arm of a workload, every replicate in
 //! its seeded order (HAR-43), into one bundle.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ use acn_trace::env::RunHypothesis;
 use acn_trace::identity::{BuildInfo, Digest, HypStatus, Mode, Preimage, RunParams, Value};
 use acn_trace::otel::{Collector, producer_resource};
 use opentelemetry::KeyValue;
-use opentelemetry::trace::TracerProvider as _;
+use opentelemetry::trace::{Span as _, SpanKind, Tracer as _, TracerProvider as _};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 
 use crate::HarnessError;
@@ -209,17 +209,41 @@ fn headers(backend: Backend, marker: &str) -> Result<Vec<(String, String)>, Harn
 /// Run one cell and arm into one bundle (HAR-50), on a runtime of its own. From
 /// inside a tokio runtime, await [`run_async`] instead.
 pub fn run(cfg: &RunConfig) -> Result<Written, HarnessError> {
+    run_with_scenario(cfg, None)
+}
+
+/// [`run`] with the calls of a `sim` run crossing a scenario's network
+/// (SPEC 020 §4); `None` is [`run`].
+pub fn run_with_scenario(
+    cfg: &RunConfig,
+    scenario: Option<&Path>,
+) -> Result<Written, HarnessError> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| HarnessError::Internal(format!("runtime: {e}")))?
-        .block_on(run_async(cfg))
+        .block_on(run_async_with(cfg, scenario))
 }
 
 /// [`run`] on the caller's runtime. The future is not `Send`: the agent's
 /// lineages share their state through `RefCell`s, so it is awaited in place (or
 /// on a `LocalSet`), never spawned onto another thread.
 pub async fn run_async(cfg: &RunConfig) -> Result<Written, HarnessError> {
+    run_async_with(cfg, None).await
+}
+
+/// A scenario as a run uses it: its links, the file's bytes and hash.
+struct RunScenario {
+    scenario: acn_emu::scenario::Scenario,
+    toml: String,
+    hash: Digest,
+}
+
+/// [`run_with_scenario`] on the caller's runtime.
+pub async fn run_async_with(
+    cfg: &RunConfig,
+    scenario: Option<&Path>,
+) -> Result<Written, HarnessError> {
     if !matches!(cfg.arm.as_str(), "treatment" | "control") {
         return Err(HarnessError::Config(format!(
             "--arm is treatment or control, not `{}`",
@@ -242,6 +266,34 @@ pub async fn run_async(cfg: &RunConfig) -> Result<Written, HarnessError> {
         }
         _ => {}
     }
+    let scenario = match scenario {
+        None => None,
+        Some(_) if cfg.mode != Mode::Sim => {
+            return Err(HarnessError::Config(
+                "a scenario runs in sim only until the live proxy (SPEC 020 §5, T12)".into(),
+            ));
+        }
+        Some(path) => {
+            let sc = acn_emu::scenario::load(path)
+                .map_err(|e| HarnessError::Config(format!("scenario: {e}")))?;
+            let toml = std::fs::read_to_string(path)
+                .map_err(|e| HarnessError::Config(format!("scenario: {e}")))?;
+            let names: BTreeSet<&str> = sc.links.iter().map(|l| l.name.as_str()).collect();
+            if names.len() != 1 {
+                return Err(HarnessError::Config(format!(
+                    "scenario: a run's scenario has exactly one path, not {} (SPEC 020 EMU-32)",
+                    names.len()
+                )));
+            }
+            let hash = Digest::from_hex(&sc.hash)?;
+            Some(RunScenario {
+                scenario: sc,
+                toml,
+                hash,
+            })
+        }
+    };
+    let scenario_hash = scenario.as_ref().map_or(Digest::ZERO, |s| s.hash);
     let workload = Workload::load(&cfg.workload)?;
     let hyp = hypothesis(&cfg.hypothesis, &cfg.start_dir)?;
     let vary = typed_vary(&cfg.vary, hyp.varies.as_ref())?;
@@ -313,8 +365,9 @@ pub async fn run_async(cfg: &RunConfig) -> Result<Written, HarnessError> {
         RunSpec {
             seed: hyp.seed,
             mode: cfg.mode,
-            // No scenario: the harness calls its endpoint directly (ADR-17).
-            scenario_hash: Digest::ZERO,
+            // No scenario: the harness calls its endpoint directly (ADR-17,
+            // SPEC 020 EMU-39); with one, its calls cross the network (ADR-34).
+            scenario_hash,
             workload_hash: workload.hash,
             hypothesis: hyp.reference.clone(),
             params: RunParams {
@@ -335,7 +388,14 @@ pub async fn run_async(cfg: &RunConfig) -> Result<Written, HarnessError> {
     let dir = bundle.dir().to_path_buf();
     let result = async {
         let run_id = Digest::from_hex(bundle.run_id())?;
-        let session_attrs = session_attrs(cfg, &hyp, bundle.run_id(), &knobs, &workload.hash);
+        let session_attrs = session_attrs(
+            cfg,
+            &hyp,
+            bundle.run_id(),
+            &knobs,
+            &workload.hash,
+            &scenario_hash,
+        );
         let setup = Setup {
             workload,
             knobs,
@@ -350,30 +410,125 @@ pub async fn run_async(cfg: &RunConfig) -> Result<Written, HarnessError> {
         let collector = Collector::new();
         let seed = i64::try_from(hyp.seed)
             .map_err(|_| HarnessError::Config("the seed exceeds 2^63 - 1".into()))?;
+        let emu_resource = || {
+            producer_resource(
+                "acn-emu",
+                env!("CARGO_PKG_VERSION"),
+                &pf.engine_hash(),
+                &build_hash,
+            )
+        };
+        // EMU-37: the run's scenario span, its ids drawn from the run's stream
+        // before the first replicate, so every link span can link to it.
+        let scenario_run = match &scenario {
+            None => None,
+            Some(sc) => {
+                let provider = SdkTracerProvider::builder()
+                    .with_id_generator(acn_trace::ids::SeededIdGenerator::for_run(hyp.seed)?)
+                    .with_resource(emu_resource())
+                    .with_max_events_per_span(u32::MAX)
+                    .with_simple_exporter(collector.exporter())
+                    .build();
+                let tracer = provider.tracer("acn-emu");
+                let span = tracer
+                    .span_builder("acn.scenario")
+                    .with_kind(SpanKind::Internal)
+                    .with_start_time(crate::agent::at_ns(0))
+                    .with_attributes(vec![
+                        KeyValue::new("acn.scenario.toml", sc.toml.clone()),
+                        KeyValue::new("acn.scenario.hash", sc.hash.to_hex()),
+                    ])
+                    .start(&tracer);
+                Some((provider, span))
+            }
+        };
+        let scenario_cx = scenario_run
+            .as_ref()
+            .map(|(_, span)| span.span_context().clone());
+        let mut scenario_log = ScenarioLog::default();
         for &i in &order {
             let rseed = acn_trace::identity::replicate_seed(hyp.seed, i)?;
             let marker = isolation_marker(&run_id, &cfg.arm, i)?;
+            let harness_resource = producer_resource(
+                "acn-harness",
+                env!("CARGO_PKG_VERSION"),
+                &pf.engine_hash(),
+                &build_hash,
+            );
+            let streams = std::cell::RefCell::new(Streams::new(rseed)?);
+            let tasks = setup.workload.tasks.len();
+            if let (Some(sc), Some(scenario_cx)) = (&scenario, &scenario_cx) {
+                // EMU-36: the harness's and the network's spans draw from one
+                // replicate stream, in program order.
+                let ids = Arc::new(acn_trace::ids::SeededIdGenerator::for_replicate(
+                    hyp.seed, i,
+                )?);
+                let provider = SdkTracerProvider::builder()
+                    .with_id_generator(acn_trace::ids::SharedIdGenerator(Arc::clone(&ids)))
+                    .with_resource(harness_resource)
+                    .with_simple_exporter(collector.exporter())
+                    .build();
+                let emu = SdkTracerProvider::builder()
+                    .with_id_generator(acn_trace::ids::SharedIdGenerator(ids))
+                    .with_resource(emu_resource())
+                    .with_simple_exporter(collector.exporter())
+                    .build();
+                let tracer = provider.tracer("acn-harness");
+                let emu_tracer = emu.tracer("acn-emu");
+                let mock = Mock::with_profiles(profiles.clone(), rseed)
+                    .map_err(|e| HarnessError::Config(e.to_string()))?;
+                let env = SimEnv::with_scenario(mock, marker.clone(), &sc.scenario, rseed)?;
+                let model = |d| {
+                    sc.scenario
+                        .links
+                        .iter()
+                        .find(|l| l.direction == d)
+                        .map_or_else(|| "none".to_owned(), acn_emu::link::LinkSpec::model_name)
+                };
+                let rep = Replicate {
+                    setup: &setup,
+                    env: &env,
+                    tracer: &tracer,
+                    net: Some(crate::agent::NetSpans {
+                        tracer: &emu_tracer,
+                        scenario: scenario_cx.clone(),
+                        link_id: sc
+                            .scenario
+                            .links
+                            .first()
+                            .map(|l| l.name.clone())
+                            .unwrap_or_default(),
+                        up_model: model(acn_emu::link::Direction::Up),
+                        down_model: model(acn_emu::link::Direction::Down),
+                    }),
+                    marker,
+                    replicate: i,
+                    seed: rseed,
+                    streams,
+                };
+                env.drive(sessions(&rep, tasks, seed))??;
+                scenario_log.record(&sc.scenario, &env.fates(), env.now());
+                for p in [provider, emu] {
+                    p.shutdown()
+                        .map_err(|e| HarnessError::Internal(format!("tracer: {e}")))?;
+                }
+                continue;
+            }
             let provider = SdkTracerProvider::builder()
                 .with_id_generator(acn_trace::ids::SeededIdGenerator::for_replicate(
                     hyp.seed, i,
                 )?)
-                .with_resource(producer_resource(
-                    "acn-harness",
-                    env!("CARGO_PKG_VERSION"),
-                    &pf.engine_hash(),
-                    &build_hash,
-                ))
+                .with_resource(harness_resource)
                 .with_simple_exporter(collector.exporter())
                 .build();
             let tracer = provider.tracer("acn-harness");
-            let streams = std::cell::RefCell::new(Streams::new(rseed)?);
-            let tasks = setup.workload.tasks.len();
             if live {
                 let env = LiveEnv::new(Arc::clone(&clock), &url, headers(cfg.backend, &marker)?)?;
                 let rep = Replicate {
                     setup: &setup,
                     env: &env,
                     tracer: &tracer,
+                    net: None,
                     marker,
                     replicate: i,
                     seed: rseed,
@@ -388,6 +543,7 @@ pub async fn run_async(cfg: &RunConfig) -> Result<Written, HarnessError> {
                     setup: &setup,
                     env: &env,
                     tracer: &tracer,
+                    net: None,
                     marker,
                     replicate: i,
                     seed: rseed,
@@ -395,6 +551,14 @@ pub async fn run_async(cfg: &RunConfig) -> Result<Written, HarnessError> {
                 };
                 env.drive(sessions(&rep, tasks, seed))??;
             }
+            provider
+                .shutdown()
+                .map_err(|e| HarnessError::Internal(format!("tracer: {e}")))?;
+        }
+        if let Some((provider, mut span)) = scenario_run {
+            scenario_log.emit(&mut span);
+            span.end_with_timestamp(crate::agent::at_ns(scenario_log.end_ns));
+            drop(span);
             provider
                 .shutdown()
                 .map_err(|e| HarnessError::Internal(format!("tracer: {e}")))?;
@@ -464,6 +628,7 @@ fn session_attrs(
     run_id: &str,
     knobs: &Knobs,
     workload: &Digest,
+    scenario: &Digest,
 ) -> Vec<KeyValue> {
     vec![
         KeyValue::new("acn.run_id", run_id.to_owned()),
@@ -471,7 +636,7 @@ fn session_attrs(
         KeyValue::new("acn.hypothesis.status", hyp.status.as_str()),
         KeyValue::new("acn.backend", cfg.backend.as_str()),
         KeyValue::new("acn.mode", cfg.mode.as_str()),
-        KeyValue::new("acn.scenario.hash", Digest::ZERO.to_hex()),
+        KeyValue::new("acn.scenario.hash", scenario.to_hex()),
         KeyValue::new("acn.workload.hash", workload.to_hex()),
         KeyValue::new("acn.role", cfg.arm.clone()),
         KeyValue::new("acn.harness.knobs", knobs.to_json()),
@@ -485,4 +650,117 @@ fn session_attrs(
             float(cfg.opts.request_timeout_ms),
         ),
     ]
+}
+
+/// The events of the run's `acn.scenario` span (SPEC 020 EMU-37), gathered
+/// from every replicate's fates: one outage event per window in which a message
+/// was dropped or held, and per trace outage segment in which one was dropped;
+/// one step event the first time a message is sent in each trace segment.
+/// Replicates share the scenario's timeline, so an event met by several is
+/// recorded once.
+/// Where an event of the scenario span sorts: time, link name, direction,
+/// kind (outage before step) and window or sample.
+type EventKey = (i64, String, u8, u8, usize);
+
+/// An event of the scenario span: its name and fields.
+type ScenarioEvent = (&'static str, Vec<KeyValue>);
+
+#[derive(Default)]
+struct ScenarioLog {
+    /// The latest end of any replicate's sessions.
+    end_ns: i64,
+    /// By (time, link name, direction, kind, window or sample): the event.
+    events: BTreeMap<EventKey, ScenarioEvent>,
+    /// Trace segments stepped into: (link, direction, sample) to the first
+    /// send time and the segment's values as JSON.
+    stepped: BTreeMap<(String, u8, usize), (i64, String)>,
+}
+
+impl ScenarioLog {
+    fn record(
+        &mut self,
+        scenario: &acn_emu::scenario::Scenario,
+        fates: &[(acn_emu::link::Direction, acn_emu::link::Fate)],
+        end_ns: i64,
+    ) {
+        use acn_emu::link::{Direction, DropCause, OutageCause};
+        self.end_ns = self.end_ns.max(end_ns);
+        for (dir, f) in fates {
+            let Some(link) = scenario.links.iter().find(|l| l.direction == *dir) else {
+                continue;
+            };
+            let d = match dir {
+                Direction::Up => 0,
+                Direction::Down => 1,
+            };
+            let dropped_by_outage = f.outcome == Err(DropCause::Outage);
+            if let (Some(ws), Some(w)) = (&link.outage, f.window)
+                && (f.hold_ns > 0 || dropped_by_outage)
+                && let Some(win) = ws.get(w)
+            {
+                let cause = match win.cause {
+                    OutageCause::Handover => "handover",
+                    OutageCause::Scheduled => "scheduled",
+                };
+                self.events.insert(
+                    (win.start_ns, link.name.clone(), d, 0, w),
+                    (
+                        "acn.scenario.outage",
+                        vec![
+                            KeyValue::new("start_ns", win.start_ns),
+                            KeyValue::new("end_ns", win.end_ns),
+                            KeyValue::new("cause", cause),
+                        ],
+                    ),
+                );
+            }
+            if let (Some(tr), Some(k)) = (&link.trace, f.sample) {
+                let (_, start, end) = tr.segment_at(f.send_ns);
+                if dropped_by_outage && tr.segments.get(k).is_some_and(|s| s.outage) {
+                    self.events.insert(
+                        (start, link.name.clone(), d, 0, k),
+                        (
+                            "acn.scenario.outage",
+                            vec![
+                                KeyValue::new("start_ns", start),
+                                KeyValue::new("end_ns", end),
+                                KeyValue::new("cause", "trace"),
+                            ],
+                        ),
+                    );
+                }
+                if let Some(seg) = tr.segments.get(k) {
+                    let params = format!(
+                        "{{\"sample\":{k},\"loss_ppm\":{},\"rate_bps\":{},\"delay_ns\":{},\"jitter_ns\":{},\"outage\":{}}}",
+                        seg.loss_ppm, seg.rate_bps, seg.delay_ns, seg.jitter_ns, seg.outage
+                    );
+                    let first = self
+                        .stepped
+                        .entry((link.name.clone(), d, k))
+                        .or_insert((f.send_ns, params));
+                    first.0 = first.0.min(f.send_ns);
+                }
+            }
+        }
+    }
+
+    /// Add the events to the scenario span, in order (EMU-37).
+    fn emit(&mut self, span: &mut opentelemetry_sdk::trace::Span) {
+        for ((link, d, k), (t, params)) in std::mem::take(&mut self.stepped) {
+            let dir = if d == 0 { "up" } else { "down" };
+            self.events.insert(
+                (t, link.clone(), d, 1, k),
+                (
+                    "acn.scenario.step",
+                    vec![
+                        KeyValue::new("step", format!("{link}.{dir}.{k}")),
+                        KeyValue::new("params", params),
+                    ],
+                ),
+            );
+        }
+        for ((t, ..), (name, attrs)) in std::mem::take(&mut self.events) {
+            span.add_event_with_timestamp(name, crate::agent::at_ns(t), attrs);
+        }
+    }
 }

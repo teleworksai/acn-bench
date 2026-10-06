@@ -1,0 +1,24 @@
+# A downlink that loses a quarter of the messages: streamed responses are cut
+# (SPEC 020 EMU-35) and retried (HAR-24).
+schema_version = 1
+name = "lossy-down"
+
+[[link]]
+name = "path"
+direction = "up"
+
+[link.delay]
+delay_us = 5000
+jitter_us = 0
+
+[[link]]
+name = "path"
+direction = "down"
+
+[link.loss]
+kind = "iid"
+loss_ppm = 250000
+
+[link.delay]
+delay_us = 5000
+jitter_us = 1000
