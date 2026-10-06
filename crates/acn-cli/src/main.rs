@@ -698,17 +698,22 @@ fn loop_twin(loop_id: &str, top: u32) -> Value {
         Err(e) => return json!({ "ok": false, "code": "internal", "error": format!("{e:#}") }),
     };
     match acn_hyp::loop_twin::twin(&root.join("runs"), loop_id, top, bin, &mut exec) {
-        Ok(t) => json!({
-            "ok": true,
-            "loop_id": t.loop_id.to_hex(),
-            "twin": t.twin.display().to_string(),
-            "verdict_id": t.verdict_id.to_hex(),
-            "run_ids": t.run_ids.iter().map(acn_trace::identity::Digest::to_hex).collect::<Vec<_>>(),
-            "twinned": t.twinned,
-            "twin_failed": t.twin_failed,
-        }),
+        Ok(t) => twinned_json(&t),
         Err(e) => loop_failure(&e),
     }
+}
+
+/// The one JSON object of a completed twin (LOOP-12, CON-8).
+fn twinned_json(t: &acn_hyp::loop_twin::Twinned) -> Value {
+    json!({
+        "ok": true,
+        "loop_id": t.loop_id.to_hex(),
+        "twin": t.twin.display().to_string(),
+        "verdict_id": t.verdict_id.to_hex(),
+        "run_ids": t.run_ids.iter().map(acn_trace::identity::Digest::to_hex).collect::<Vec<_>>(),
+        "twinned": t.twinned,
+        "twin_failed": t.twin_failed,
+    })
 }
 
 /// `acn evidence verify` (LOOP-2): `ok` iff every link of every chain holds.
@@ -880,6 +885,38 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // CON-19: tests are exempt
     use super::Cli;
     use clap::CommandFactory as _;
+
+    /// Cites: LOOP-12
+    #[test]
+    fn a_completed_twin_prints_ok_and_the_keys_loop_12_names() {
+        use acn_trace::identity::Digest;
+        let t = acn_hyp::loop_twin::Twinned {
+            loop_id: Digest::of(b"l"),
+            twin: "runs/loop/l/twin/v/twin.json".into(),
+            verdict_id: Digest::of(b"v"),
+            run_ids: vec![Digest::of(b"a"), Digest::of(b"b")],
+            twinned: true,
+            twin_failed: true,
+        };
+        let v = super::twinned_json(&t);
+        // A divergence is a result: `ok` stays true (CON-8).
+        assert_eq!(v["ok"], true);
+        let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "loop_id",
+                "ok",
+                "run_ids",
+                "twin",
+                "twin_failed",
+                "twinned",
+                "verdict_id"
+            ]
+        );
+        assert_eq!(v["run_ids"].as_array().unwrap().len(), 2);
+    }
 
     /// Every argument of a subcommand, hidden or not: its id and its long and
     /// short names. (clap's `env` feature is off, so none reads the environment.)

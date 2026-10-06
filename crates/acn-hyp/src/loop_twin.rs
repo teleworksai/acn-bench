@@ -439,8 +439,21 @@ pub fn twin(
         );
     }
     // LOOP-4: nothing runs unless the report regenerates byte for byte.
-    crate::evidence::twin_gate(&report, bin, exec)?;
+    let gate = crate::evidence::twin_gate(&report, bin, exec)?;
     let rec = loop_run::read_report(&report, bin)?;
+    // The report read now is the one that just regenerated: its bytes are
+    // the regeneration's, which the gate compared with the original.
+    let regenerated = gate
+        .dir
+        .join("loop")
+        .join(loop_id)
+        .join(loop_run::REPORT_JSON);
+    if std::fs::read_to_string(&regenerated).ok().as_deref() != Some(rec.text.as_str()) {
+        return loop_run::err(
+            Code::TwinRefused,
+            format!("{} changed after it regenerated (LOOP-4)", report.display()),
+        );
+    }
     let s = rec.setup(bin, &*exec)?;
     let l1_data = report_bundles(&rec.runs, &rec.r)?;
     let l1 = verdict::verdict(&rec.h, l1_data.clone(), bin.engine_hash).map_err(|e| LoopError {
@@ -490,9 +503,10 @@ pub fn twin(
         );
     }
     let text = object(&rec.h, &rec.id, &l1, &l2, &planned, &live, top, &live_rel)?.render();
+    // LOOP-13, once before both writes, so nothing can fail between them but
+    // I/O and the existence check (LOOP-16).
     s.check_inputs()?;
     loop_run::write_or_keep(&rec.runs, &l2)?;
-    s.check_inputs()?;
     let twin = loop_out::write_twin(&rec.runs, &s.loop_id, &l2.verdict_id, &text)?;
     Ok(Twinned {
         loop_id: s.loop_id,
@@ -573,13 +587,59 @@ pub(crate) fn verify_twin(
         Ok(p) => p,
         Err(e) => return mismatch(c, e.to_string()),
     };
-    // Each live bundle verifies, is L2, and has the run_id its L1 bundle's
-    // inputs give in `live` (CON-29, HAR-26).
+    // The live directory is read from runs/ itself (HYP-4), and is this
+    // object's alone: a live measurement is never shared (LOOP-12).
     let live_dir = runs.join(live_rel);
+    let linked = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
+    if linked(&runs.join("live")) || linked(&live_dir) {
+        return mismatch(
+            c,
+            format!(
+                "runs/live or runs/{live_rel} is a symbolic link; a chain is read from runs/ itself"
+            ),
+        );
+    }
+    for other in claimants(runs, live_rel) {
+        if other != path {
+            mismatch(
+                c,
+                format!(
+                    "{} claims the same live_dir {live_rel} (LOOP-12)",
+                    other.display()
+                ),
+            );
+        }
+    }
+    let planned_ids: BTreeSet<String> = runs_of(&planned)
+        .iter()
+        .map(|a| a.live_run_id.to_hex())
+        .collect();
+    if let Ok(rd) = std::fs::read_dir(&live_dir) {
+        for e in rd.filter_map(Result::ok) {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if !planned_ids.contains(&n) {
+                mismatch(
+                    c,
+                    format!("{live_rel}/{n} is not a live bundle this twin runs (LOOP-12)"),
+                );
+            }
+        }
+    }
+    let recorded = (
+        rec.r["build_hash"].as_str().unwrap_or_default(),
+        rec.r["engine_hash"].as_str().unwrap_or_default(),
+    );
+    // Each live bundle verifies, is L2, comes from the report's build and
+    // engine (CON-31), and has the run_id its L1 bundle's inputs give in
+    // `live` (CON-29, HAR-26).
     let mut live = BTreeMap::new();
     for a in runs_of(&planned) {
         c.bundles += 1;
         let id = a.live_run_id.to_hex();
+        if linked(&live_dir.join(&id)) {
+            mismatch(c, format!("{live_rel}/{id} is a symbolic link"));
+            continue;
+        }
         match read::read(&live_dir.join(&id)) {
             Err(e) => c.findings.push(finding(
                 Code::BundleInvalid,
@@ -589,6 +649,19 @@ pub(crate) fn verify_twin(
                 ),
             )),
             Ok(b) => {
+                let made = (
+                    b.manifest.build.build_hash.as_str(),
+                    b.manifest.engine_hash.as_str(),
+                );
+                if made != recorded {
+                    c.findings.push(finding(
+                        Code::BuildMismatch,
+                        format!(
+                            "{live_rel}/{id} was made by build {} and engine {}, not the report's {} and {} (CON-31)",
+                            made.0, made.1, recorded.0, recorded.1
+                        ),
+                    ));
+                }
                 match layer::of_bundle(&b.manifest) {
                     Ok(layer::Layer::L2) => {}
                     Ok(l) => c.findings.push(finding(
@@ -657,4 +730,32 @@ pub(crate) fn verify_twin(
         ),
         Err(e) => mismatch(c, e.to_string()),
     }
+}
+
+/// Every twin object under `runs/loop/` whose `live_dir` is `live_rel`.
+fn claimants(runs: &Path, live_rel: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let loops = runs.join("loop");
+    for l in std::fs::read_dir(&loops)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+    {
+        for t in std::fs::read_dir(l.path().join("twin"))
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+        {
+            let p = t.path().join(TWIN_JSON);
+            let named = std::fs::read_to_string(&p)
+                .ok()
+                .and_then(|x| serde_json::from_str::<serde_json::Value>(&x).ok())
+                .is_some_and(|j| j["live_dir"].as_str() == Some(live_rel));
+            if named {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
 }

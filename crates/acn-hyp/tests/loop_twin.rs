@@ -443,6 +443,51 @@ fn evidence_verify_fails_on_a_twin_object_that_does_not_hold() {
         &|s| s.replace("\"layer\":\"L2\"", "\"layer\":\"L1\""),
         Code::LayerMismatch,
     );
+    // A twin directory not named by a verdict_id, and an extra directory in
+    // the live directory: neither is skipped silently.
+    let stray = t.twin.parent().unwrap().with_file_name("not-a-verdict");
+    std::fs::create_dir(&stray).unwrap();
+    let extra = runs.join("live/1/extra");
+    std::fs::create_dir(&extra).unwrap();
+    let k = acn_hyp::evidence::verify(&runs, &c.loop_id.to_hex(), bin, &mut v).unwrap();
+    for want in ["not-a-verdict", "live/1/extra"] {
+        assert!(
+            k.findings
+                .iter()
+                .any(|f| f.code == Code::TwinMismatch && f.message.contains(want)),
+            "{want}: {:?}",
+            k.findings
+        );
+    }
+    std::fs::remove_dir(&stray).unwrap();
+    std::fs::remove_dir(&extra).unwrap();
+    // A live directory that is a link elsewhere.
+    let live1 = runs.join("live/1");
+    let moved = d.join("elsewhere");
+    std::fs::rename(&live1, &moved).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&moved, &live1).unwrap();
+    let k = acn_hyp::evidence::verify(&runs, &c.loop_id.to_hex(), bin, &mut v).unwrap();
+    assert!(!k.ok(), "a linked live directory");
+    std::fs::remove_file(&live1).unwrap();
+    // A missing live bundle.
+    let one = std::fs::read_dir(&moved).unwrap().next().unwrap().unwrap();
+    std::fs::create_dir(&live1).unwrap();
+    for e in std::fs::read_dir(&moved).unwrap() {
+        let e = e.unwrap();
+        if e.file_name() != one.file_name() {
+            std::fs::rename(e.path(), live1.join(e.file_name())).unwrap();
+        }
+    }
+    let k = acn_hyp::evidence::verify(&runs, &c.loop_id.to_hex(), bin, &mut v).unwrap();
+    assert!(
+        k.findings.iter().any(|f| f.code == Code::BundleInvalid),
+        "a missing live bundle: {:?}",
+        k.findings
+    );
+    std::fs::rename(one.path(), live1.join(one.file_name())).unwrap();
+    let k = acn_hyp::evidence::verify(&runs, &c.loop_id.to_hex(), bin, &mut v).unwrap();
+    assert!(k.ok(), "restored: {:?}", k.findings);
     // An L2 verdict that does not recompute.
     let vpath = runs
         .join("verdicts")
@@ -506,4 +551,11 @@ fn a_divergent_twin_completes_and_records_twin_failed() {
         .flat_map(|s| s["cells"].as_array().unwrap())
         .any(|c| c["quantities"]["cached_token_ratio"]["within"] == false);
     assert!(outside, "{o}");
+    let v = std::fs::read_to_string(
+        d.join("runs/verdicts")
+            .join(t.verdict_id.to_hex())
+            .join("verdict.json"),
+    )
+    .unwrap();
+    assert!(v.contains("\"twin_failed\""), "{v}");
 }

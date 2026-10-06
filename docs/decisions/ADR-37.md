@@ -77,3 +77,13 @@ LOOP-15 puts every loop decision in `acn-hyp`, which is in the frozen set. Choos
   - It walks a loop's twin objects only when the L1 walk reached the final verdict; an L1 finding already fails the chain.
   - It resolves an L2 verdict_id to every loop with a twin object of that name.
 - **Where the L2 chain tests live.** They are in `crates/acn-hyp/tests/loop_twin.rs`, beside the twin tests, rather than in `tests/accept/evidence_chain.rs` as SPEC 085 §5 lists. They need live runs on fast mock profiles, which the acceptance tier's executor (the CLI's, on the embedded profiles) does not offer.
+- **After review (PR 48).**
+  - **The report read after the gate.** The twin reads the report again after the gate, and it must be byte-identical to the regenerated one, or the twin is refused. A report swapped between the gate and the read could otherwise send a twin's live runs against bundles that never regenerated.
+  - **Writes.** The inputs are checked once before the two writes. Only I/O, or a race on the object's existence check, can then leave an L2 `verdict.json` that no twin object names. `acn evidence verify` of that verdict_id reports `no_loop_report`; the verdict is a correct one, and a later twin of the same live bundles keeps it.
+  - **What verify fails on.** Nothing under `twin/` or `live/<n>/` is skipped silently. It fails on any of these:
+    - an entry under `twin/` that is not a verdict_id, other than a crash's staging directory;
+    - an unreadable `twin/`;
+    - a link at `twin/`, `runs/live`, `live/<n>` or a live bundle;
+    - a directory in `live/<n>` that the twin does not run;
+    - a second twin object claiming the same `live_dir`;
+    - a live bundle whose build or engine is not the report's (CON-31).

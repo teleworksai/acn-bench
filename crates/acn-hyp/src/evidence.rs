@@ -416,15 +416,55 @@ fn verify_loop(
         return Ok(());
     };
     let twin_root = dir.join("twin");
-    let mut names: Vec<String> = match std::fs::read_dir(&twin_root) {
-        Ok(rd) => rd
-            .filter_map(Result::ok)
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| is_hex_id(n))
-            .filter(|n| only_twin.is_none_or(|t| t == n))
-            .collect(),
-        Err(_) => Vec::new(),
-    };
+    // LOOP-16: every entry under twin/ is a twin object named by its verdict
+    // id; nothing there is skipped silently, and nothing is a link (HYP-4).
+    let mut names: Vec<String> = Vec::new();
+    match std::fs::symlink_metadata(&twin_root) {
+        Err(_) => {}
+        Ok(m) if m.file_type().is_symlink() || !m.is_dir() => {
+            c.findings.push(finding(
+                Code::TwinMismatch,
+                format!(
+                    "{} is a symbolic link or not a directory; a chain is read from runs/ itself",
+                    twin_root.display()
+                ),
+            ));
+            return Ok(());
+        }
+        Ok(_) => match std::fs::read_dir(&twin_root) {
+            Err(e) => c.findings.push(finding(
+                Code::TwinMismatch,
+                format!("{}: {e}", twin_root.display()),
+            )),
+            Ok(rd) => {
+                for e in rd {
+                    match e {
+                        Err(e) => c.findings.push(finding(
+                            Code::TwinMismatch,
+                            format!("{}: {e}", twin_root.display()),
+                        )),
+                        Ok(e) => {
+                            let n = e.file_name().to_string_lossy().into_owned();
+                            if n.starts_with('.') && n.contains(".partial.") {
+                                continue; // a staging directory a crash left (ADR-23)
+                            }
+                            if !is_hex_id(&n) {
+                                c.findings.push(finding(
+                                    Code::TwinMismatch,
+                                    format!(
+                                        "{} is not named by a verdict_id: a twin object's directory is (LOOP-16)",
+                                        e.path().display()
+                                    ),
+                                ));
+                            } else if only_twin.is_none_or(|t| t == n) {
+                                names.push(n);
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    }
     names.sort();
     if names.is_empty() {
         return Ok(());

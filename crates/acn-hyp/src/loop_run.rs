@@ -2077,6 +2077,57 @@ outcome = "pass"
         assert_ne!(sim.run_id, live.run_id);
     }
 
+    /// Cites: LOOP-12, LOOP-16
+    #[test]
+    fn an_arm_the_report_holds_no_bundle_for_is_planned_but_not_run() {
+        use crate::loop_twin::{Chosen, Why, plan, runs_of};
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("zz.toml"), ONE_KNOB).unwrap();
+        std::fs::write(d.join("w.toml"), "").unwrap();
+        let h = crate::load_in(&d.join("zz.toml"), d).unwrap();
+        let args = Args {
+            workloads: vec![d.join("w.toml").display().to_string()],
+            models: vec!["mock-auto".into()],
+            budget: 8,
+        };
+        let bin = Binary {
+            engine_hash: Digest::of(b"engine"),
+            build_hash: Digest::of(b"build"),
+        };
+        struct Any;
+        impl Executor for Any {
+            fn run(&mut self, _: &Request) -> Result<PathBuf, String> {
+                Err("not run".into())
+            }
+            fn check_model(&self, _: &str) -> Result<(), String> {
+                Ok(())
+            }
+            fn check_workload(&self, _: &Path) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        let s = Setup::new(&h, &args, &d.join("runs"), bin, &Any).unwrap();
+        let cell: Cell = [("tool_order_stable".to_owned(), Value::Bool(false))].into();
+        let chosen = || Chosen {
+            slice_index: 0,
+            slice: String::new(),
+            cell_index: 0,
+            cell: cell.clone(),
+            reasons: vec![Why::Decision],
+        };
+        let treatment = s.run_id(&cell, Role::Treatment, Mode::Sim).unwrap();
+        // The report holds the treatment's bundle but not its control's.
+        let p = plan(&s, vec![chosen()], &[treatment].into()).unwrap();
+        let arms = &p[0].arms;
+        assert_eq!(arms[0].derived_from, Some(treatment));
+        assert_eq!(arms[1].derived_from, None);
+        assert_eq!(runs_of(&p).len(), 1);
+        // Nothing of it in the report: nothing to run.
+        let p = plan(&s, vec![chosen()], &Default::default()).unwrap();
+        assert!(runs_of(&p).is_empty());
+    }
+
     fn r(slice: usize, cell: usize, effect: f64) -> Ranked {
         Ranked {
             slice,
