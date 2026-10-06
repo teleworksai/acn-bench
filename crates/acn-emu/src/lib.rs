@@ -2,12 +2,13 @@
 //!
 //! T03 added the injected [`clock`] of CON-5(b), the only place a run reads time
 //! (ADR-16). T08 added measured impairment [`trace`]s (SPEC 020 §6). T10 added
-//! the [`link`] models (§2) and the synthetic [`scenario`] loader (§3). T11 adds
-//! the [`sim`] engine (§4). The live proxy comes with T12.
+//! the [`link`] models (§2) and the synthetic [`scenario`] loader (§3). T11 added
+//! the [`sim`] engine (§4), and T12 the live [`proxy`] (§5).
 #![forbid(unsafe_code)]
 
 pub mod clock;
 pub mod link;
+pub mod proxy;
 pub mod scenario;
 pub mod sim;
 pub mod trace;
