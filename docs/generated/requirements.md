@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 9 · IDs: 225 · MUSTs: 194 · implemented: 175 · cited: 192
+Specs: 9 · IDs: 225 · MUSTs: 201 · implemented: 175 · cited: 192
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -98,15 +98,15 @@ Specs: 9 · IDs: 225 · MUSTs: 194 · implemented: 175 · cited: 192
 | EMU-38 | `020-emulation.md` | 4 | MUST | yes | `crates/acn-emu/tests/sim_engine.rs` `the_same_seed_and_calls_give_the_same_network`<br>`crates/acn-emu/tests/sim_engine.rs` `golden_exchange_on_cellular_handover`<br>`tests/accept/emu_sim.rs` `a_scenario_run_twice_is_byte_identical` |
 | EMU-39 | `020-emulation.md` | 4 | MUST | yes | `tests/accept/emu_sim.rs` `a_scenario_needs_one_path_and_sim`<br>`tests/accept/harness_sim.rs` `sim_bundles_without_a_scenario_are_pinned` |
 | EMU-40 | `020-emulation.md` | 5 | MUST | no | — |
-| EMU-41 | `020-emulation.md` | 5 | — | no | — |
+| EMU-41 | `020-emulation.md` | 5 | MUST | no | — |
 | EMU-42 | `020-emulation.md` | 5 | MUST | no | — |
 | EMU-43 | `020-emulation.md` | 5 | MUST | no | — |
-| EMU-44 | `020-emulation.md` | 5 | — | no | — |
-| EMU-45 | `020-emulation.md` | 5 | — | no | — |
-| EMU-46 | `020-emulation.md` | 5 | — | no | — |
-| EMU-47 | `020-emulation.md` | 5 | — | no | — |
-| EMU-48 | `020-emulation.md` | 5 | — | no | — |
-| EMU-49 | `020-emulation.md` | 5 | — | no | — |
+| EMU-44 | `020-emulation.md` | 5 | MUST | no | — |
+| EMU-45 | `020-emulation.md` | 5 | MUST | no | — |
+| EMU-46 | `020-emulation.md` | 5 | MUST | no | — |
+| EMU-47 | `020-emulation.md` | 5 | MUST | no | — |
+| EMU-48 | `020-emulation.md` | 5 | MUST | no | — |
+| EMU-49 | `020-emulation.md` | 5 | MUST | no | — |
 | EMU-60 | `020-emulation.md` | 6 | MUST | yes | `crates/acn-emu/tests/measured.rs` `every_committed_trace_loads`<br>`crates/acn-emu/tests/measured.rs` `a_broken_layout_is_refused`<br>`crates/acn-emu/tests/measured.rs` `a_malformed_trace_is_refused_by_name` |
 | EMU-61 | `020-emulation.md` | 6 | MUST | yes | `crates/acn-emu/src/trace.rs` `dates_are_calendar_dates`<br>`crates/acn-emu/tests/measured.rs` `every_committed_trace_loads`<br>`crates/acn-emu/tests/measured.rs` `a_provenance_that_breaks_emu_61_is_refused_by_name`<br>`crates/xtask/tests/import_5g_iana.rs` `the_committed_provenance_names_this_tool_by_its_hash` |
 | EMU-62 | `020-emulation.md` | 6 | MUST | yes | `crates/acn-emu/tests/measured.rs` `every_committed_trace_loads`<br>`crates/acn-emu/tests/measured.rs` `the_5g_iana_trace_holds_its_outages`<br>`crates/acn-emu/tests/measured.rs` `a_malformed_trace_is_refused_by_name`<br>`crates/acn-emu/tests/measured.rs` `rtt_is_present_exactly_below_total_loss`<br>`crates/xtask/tests/import_5g_iana.rs` `the_excerpt_converts_to_the_documented_samples`<br>`crates/xtask/tests/import_5g_iana.rs` `a_source_off_the_published_shape_or_off_emu_62_is_refused` |
