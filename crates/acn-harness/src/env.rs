@@ -19,7 +19,7 @@ use acn_emu::sim::EventQueue;
 use acn_mockllm::{Mock, Outcome};
 
 use crate::HarnessError;
-use crate::wire::{Exchange, Failure, sse_events};
+use crate::wire::{Exchange, Failure, LinkRecord, sse_events};
 
 /// One attempt at a call, and the clock (HAR-24, HAR-33, HAR-40).
 pub trait Env {
@@ -419,6 +419,17 @@ pub struct LiveEnv {
     clock: Arc<WallClock>,
     endpoint: String,
     headers: Vec<(String, String)>,
+    /// With a scenario, the replicate's proxy (SPEC 020 §5).
+    net: Option<LiveNet>,
+}
+
+/// A live replicate's proxy, its origin on the run's clock, and the next
+/// attempt's tag (EMU-47), shared by every clone of the environment.
+#[derive(Clone)]
+struct LiveNet {
+    proxy: Arc<acn_emu::proxy::Proxy>,
+    origin_ns: i64,
+    next: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl std::fmt::Debug for LiveEnv {
@@ -455,7 +466,47 @@ impl LiveEnv {
             clock,
             endpoint: endpoint.trim_end_matches('/').to_owned(),
             headers,
+            net: None,
         })
+    }
+
+    /// An environment whose calls cross `proxy` (SPEC 020 EMU-40), whose links
+    /// count from `origin_ns` on the run's clock. Every attempt is tagged, and
+    /// carries the proxy's records of it (EMU-47).
+    pub fn through_proxy(
+        clock: Arc<WallClock>,
+        proxy: Arc<acn_emu::proxy::Proxy>,
+        origin_ns: i64,
+        headers: Vec<(String, String)>,
+    ) -> Result<Self, HarnessError> {
+        let mut env = Self::new(clock, &format!("http://{}", proxy.addr()), headers)?;
+        env.net = Some(LiveNet {
+            proxy,
+            origin_ns,
+            next: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        });
+        Ok(env)
+    }
+
+    /// The records of attempt `n` carried by its end at `end_ns` on the run's
+    /// clock: received by then, or lost and sent by then (EMU-36, EMU-47).
+    fn carried(net: &LiveNet, n: u64, end_ns: i64) -> Vec<LinkRecord> {
+        let end = end_ns - net.origin_ns;
+        net.proxy
+            .records(n)
+            .into_iter()
+            .filter(|r| match (r.fate.outcome, r.received_ns) {
+                (Ok(_), Some(t)) => t <= end,
+                (Err(_), _) => r.fate.send_ns <= end,
+                (Ok(_), None) => false,
+            })
+            .map(|r| LinkRecord {
+                direction: r.direction,
+                bytes: r.bytes,
+                fate: r.fate,
+                received_ns: r.received_ns,
+            })
+            .collect()
     }
 
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
@@ -484,19 +535,20 @@ impl LiveEnv {
         body: Vec<u8>,
         stream: bool,
         start: i64,
+        tag: Option<u64>,
     ) -> Exchange {
         use futures_util::StreamExt as _;
         let mut ex = Exchange {
             start_ns: start,
             ..Exchange::default()
         };
-        let resp = match self
+        let mut req = self
             .request(reqwest::Method::POST, path)
-            .header("content-type", "application/json")
-            .body(body)
-            .send()
-            .await
-        {
+            .header("content-type", "application/json");
+        if let Some(n) = tag {
+            req = req.header(acn_emu::proxy::ATTEMPT_HEADER, n.to_string());
+        }
+        let resp = match req.body(body).send().await {
             Ok(r) => r,
             Err(e) => {
                 ex.end_ns = self.clock.now_ns();
@@ -579,15 +631,23 @@ impl Env for LiveEnv {
     ) -> Exchange {
         let start = self.now();
         let deadline = start.saturating_add(timeout_ns);
-        tokio::select! {
-            ex = self.attempt(path, body, stream, start) => ex,
+        let tag = self
+            .net
+            .as_ref()
+            .map(|n| n.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+        let mut ex = tokio::select! {
+            ex = self.attempt(path, body, stream, start, tag) => ex,
             () = self.clock.sleep_until(deadline) => Exchange {
                 start_ns: start,
                 end_ns: self.now(),
                 failure: Some(Failure::Timeout),
                 ..Exchange::default()
             },
+        };
+        if let (Some(net), Some(n)) = (&self.net, tag) {
+            ex.links = Self::carried(net, n, ex.end_ns);
         }
+        ex
     }
 }
 

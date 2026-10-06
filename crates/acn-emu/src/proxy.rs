@@ -246,7 +246,7 @@ pub struct Proxy {
     addr: SocketAddr,
     shared: Arc<Shared>,
     stop: watch::Sender<bool>,
-    accept: tokio::task::JoinHandle<()>,
+    accept: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl std::fmt::Debug for Proxy {
@@ -296,7 +296,7 @@ impl Proxy {
             addr,
             shared,
             stop,
-            accept,
+            accept: Mutex::new(Some(accept)),
         })
     }
 
@@ -336,9 +336,12 @@ impl Proxy {
     }
 
     /// Close every connection and abort every forward in flight (EMU-40).
-    pub async fn shutdown(self) {
+    pub async fn shutdown(&self) {
         let _ = self.stop.send(true);
-        let _ = self.accept.await;
+        let accept = self.accept.lock().ok().and_then(|mut a| a.take());
+        if let Some(a) = accept {
+            let _ = a.await;
+        }
         let mut tasks = self
             .shared
             .tasks
@@ -441,7 +444,7 @@ async fn serve(
         .map_err(|e| std::io::Error::other(e.to_string()))?
         .to_bytes();
     let len = u64::try_from(body.len()).unwrap_or(u64::MAX);
-    let Some((fate, _)) = shared.offer(Direction::Up, attempt, len) else {
+    let Some((fate, up_record)) = shared.offer(Direction::Up, attempt, len) else {
         return Err(std::io::Error::other("the uplink refused the request"));
     };
     let (head_tx, head_rx) = oneshot::channel();
@@ -459,7 +462,7 @@ async fn serve(
                 parts,
                 body,
                 attempt,
-                deliver,
+                (deliver, up_record),
                 head_tx,
             ));
             tokio::select! {
@@ -506,7 +509,7 @@ async fn forward(
     parts: http::request::Parts,
     body: Bytes,
     attempt: Option<u64>,
-    deliver: i64,
+    deliver: (i64, usize),
     head_tx: oneshot::Sender<Head>,
 ) {
     tokio::select! {
@@ -522,10 +525,12 @@ async fn carry(
     parts: http::request::Parts,
     body: Bytes,
     attempt: Option<u64>,
-    deliver: i64,
+    (deliver, up_record): (i64, usize),
     head_tx: oneshot::Sender<Head>,
 ) {
     shared.sleep_until(deliver).await;
+    // The request is received when the proxy forwards it (EMU-43, EMU-47).
+    shared.handed(up_record);
     // EMU-46: the request as sent, save hop-by-hop headers, the attempt
     // header, `Host` and the base path.
     let path = parts

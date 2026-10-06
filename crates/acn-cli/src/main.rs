@@ -204,8 +204,8 @@ struct HarnessRun {
     /// Where bundles go.
     #[arg(long, default_value = "runs")]
     runs_dir: PathBuf,
-    /// A scenario file (SPEC 020 §3) whose one path every call crosses
-    /// (SPEC 020 §4); sim only until the live proxy (T12). Without one,
+    /// A scenario file (SPEC 020 §3) whose one path every call crosses: on
+    /// virtual time in sim (SPEC 020 §4), through a proxy in live (§5). Without one,
     /// calls reach the mock directly and `scenario_hash` is zero (EMU-39).
     #[arg(long)]
     scenario: Option<PathBuf>,

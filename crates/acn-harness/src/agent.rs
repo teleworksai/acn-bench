@@ -192,6 +192,9 @@ pub struct NetSpans<'a> {
     /// `acn.link.model` of the up and the down link.
     pub up_model: String,
     pub down_model: String,
+    /// The links' time 0 on the run's clock: 0 in `sim`, the replicate's start
+    /// in `live` (SPEC 020 EMU-47).
+    pub origin_ns: i64,
 }
 
 /// One replicate in progress: everything its lineages share.
@@ -611,7 +614,8 @@ impl<E: Env> Replicate<'_, E> {
         for r in carried {
             let f = r.fate;
             let dropped = f.outcome.is_err();
-            let dequeue = r.received_ns.unwrap_or(f.send_ns);
+            let enqueue = net.origin_ns + f.send_ns;
+            let dequeue = net.origin_ns + r.received_ns.unwrap_or(f.send_ns);
             let applied = if dropped { 0 } else { f.hold_ns + f.delay_ns };
             let (direction, model) = match r.direction {
                 acn_emu::link::Direction::Up => ("up", net.up_model.clone()),
@@ -621,7 +625,7 @@ impl<E: Env> Replicate<'_, E> {
                 .tracer
                 .span_builder("acn.link")
                 .with_kind(SpanKind::Internal)
-                .with_start_time(at(f.send_ns))
+                .with_start_time(at(enqueue))
                 .with_links(vec![opentelemetry::trace::Link::with_context(
                     net.scenario.clone(),
                 )])
@@ -630,7 +634,7 @@ impl<E: Env> Replicate<'_, E> {
                     KeyValue::new("acn.link.direction", direction),
                     KeyValue::new("acn.link.model", model),
                     KeyValue::new("acn.link.bytes", int(r.bytes)),
-                    KeyValue::new("acn.link.enqueue_ns", f.send_ns),
+                    KeyValue::new("acn.link.enqueue_ns", enqueue),
                     KeyValue::new("acn.link.dequeue_ns", dequeue),
                     KeyValue::new("acn.link.applied_delay_ms", ms(applied)),
                     KeyValue::new("acn.link.rate_limited_ms", ms(f.rate_wait_ns)),

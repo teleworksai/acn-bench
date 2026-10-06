@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use acn_emu::clock::Clock as _;
 use acn_mockllm::Mock;
 use acn_mockllm::profile::Profiles;
 use acn_trace::bundle::{Bundle, HypothesisRef, RunSpec, Written};
@@ -268,11 +269,6 @@ pub async fn run_async_with(
     }
     let scenario = match scenario {
         None => None,
-        Some(_) if cfg.mode != Mode::Sim => {
-            return Err(HarnessError::Config(
-                "a scenario runs in sim only until the live proxy (SPEC 020 §5, T12)".into(),
-            ));
-        }
         Some(path) => {
             let sc = acn_emu::scenario::load(path)
                 .map_err(|e| HarnessError::Config(format!("scenario: {e}")))?;
@@ -481,9 +477,9 @@ pub async fn run_async_with(
                     .build();
                 let tracer = provider.tracer("acn-harness");
                 let emu_tracer = emu.tracer("acn-emu");
-                let mock = Mock::with_profiles(profiles.clone(), rseed)
-                    .map_err(|e| HarnessError::Config(e.to_string()))?;
-                let env = SimEnv::with_scenario(mock, marker.clone(), &sc.scenario, rseed)?;
+                // In `live` the links count from the replicate's start on the
+                // run's clock; in `sim` every replicate starts at 0 (EMU-40).
+                let origin_ns = if live { clock.now_ns() } else { 0 };
                 let model = |d| {
                     sc.scenario
                         .links
@@ -491,29 +487,92 @@ pub async fn run_async_with(
                         .find(|l| l.direction == d)
                         .map_or_else(|| "none".to_owned(), acn_emu::link::LinkSpec::model_name)
                 };
-                let rep = Replicate {
-                    setup: &setup,
-                    env: &env,
-                    tracer: &tracer,
-                    net: Some(crate::agent::NetSpans {
-                        tracer: &emu_tracer,
-                        scenario: scenario_cx.clone(),
-                        link_id: sc
-                            .scenario
-                            .links
-                            .first()
-                            .map(|l| l.name.clone())
-                            .unwrap_or_default(),
-                        up_model: model(acn_emu::link::Direction::Up),
-                        down_model: model(acn_emu::link::Direction::Down),
-                    }),
-                    marker,
-                    replicate: i,
-                    seed: rseed,
-                    streams,
+                let net = crate::agent::NetSpans {
+                    tracer: &emu_tracer,
+                    scenario: scenario_cx.clone(),
+                    link_id: sc
+                        .scenario
+                        .links
+                        .first()
+                        .map(|l| l.name.clone())
+                        .unwrap_or_default(),
+                    up_model: model(acn_emu::link::Direction::Up),
+                    down_model: model(acn_emu::link::Direction::Down),
+                    origin_ns,
                 };
-                env.drive(sessions(&rep, tasks, seed))??;
-                scenario_log.record(&sc.scenario, &env.fates(), env.now());
+                if live {
+                    // EMU-40: the replicate's own proxy, its links built from
+                    // the replicate seed before it takes a connection.
+                    let mut links = sc
+                        .scenario
+                        .build(rseed)
+                        .map_err(|e| HarnessError::Config(format!("scenario: {e}")))?;
+                    let up_at = links
+                        .iter()
+                        .position(|l| l.spec().direction == acn_emu::link::Direction::Up);
+                    let (up, down) = match up_at {
+                        Some(k) => {
+                            let up = links.remove(k);
+                            (up, links.pop())
+                        }
+                        None => (links.remove(0), None),
+                    };
+                    let Some(down) = down else {
+                        return Err(HarnessError::Config(
+                            "scenario: a path needs an up and a down link".into(),
+                        ));
+                    };
+                    let proxy = Arc::new(
+                        acn_emu::proxy::Proxy::start(
+                            up,
+                            down,
+                            &url,
+                            Arc::clone(&clock) as Arc<dyn acn_emu::clock::Clock>,
+                            origin_ns,
+                        )
+                        .await
+                        .map_err(|e| HarnessError::Config(format!("proxy: {e}")))?,
+                    );
+                    let env = LiveEnv::through_proxy(
+                        Arc::clone(&clock),
+                        Arc::clone(&proxy),
+                        origin_ns,
+                        headers(cfg.backend, &marker)?,
+                    )?;
+                    let rep = Replicate {
+                        setup: &setup,
+                        env: &env,
+                        tracer: &tracer,
+                        net: Some(net),
+                        marker,
+                        replicate: i,
+                        seed: rseed,
+                        streams,
+                    };
+                    let ran = sessions(&rep, tasks, seed).await;
+                    proxy.shutdown().await;
+                    ran?;
+                    if let Some(f) = proxy.fault() {
+                        return Err(HarnessError::Internal(format!("the live proxy: {f}")));
+                    }
+                    scenario_log.record(&sc.scenario, &proxy.fates(), clock.now_ns(), origin_ns);
+                } else {
+                    let mock = Mock::with_profiles(profiles.clone(), rseed)
+                        .map_err(|e| HarnessError::Config(e.to_string()))?;
+                    let env = SimEnv::with_scenario(mock, marker.clone(), &sc.scenario, rseed)?;
+                    let rep = Replicate {
+                        setup: &setup,
+                        env: &env,
+                        tracer: &tracer,
+                        net: Some(net),
+                        marker,
+                        replicate: i,
+                        seed: rseed,
+                        streams,
+                    };
+                    env.drive(sessions(&rep, tasks, seed))??;
+                    scenario_log.record(&sc.scenario, &env.fates(), env.now(), 0);
+                }
                 for p in [provider, emu] {
                     p.shutdown()
                         .map_err(|e| HarnessError::Internal(format!("tracer: {e}")))?;
@@ -689,6 +748,7 @@ impl ScenarioLog {
         scenario: &acn_emu::scenario::Scenario,
         fates: &[(acn_emu::link::Direction, acn_emu::link::Fate)],
         end_ns: i64,
+        origin_ns: i64,
     ) {
         use acn_emu::link::{Direction, DropCause, OutageCause};
         self.end_ns = self.end_ns.max(end_ns);
@@ -709,13 +769,16 @@ impl ScenarioLog {
                     OutageCause::Handover => "handover",
                     OutageCause::Scheduled => "scheduled",
                 };
+                // On the run's clock: the replicate's origin plus link time
+                // (EMU-47); the origin is 0 in `sim`.
+                let (a, b) = (origin_ns + win.start_ns, origin_ns + win.end_ns);
                 self.events.insert(
-                    (win.start_ns, link.name.clone(), d, 0, w),
+                    (a, link.name.clone(), d, 0, w),
                     (
                         "acn.scenario.outage",
                         vec![
-                            KeyValue::new("start_ns", win.start_ns),
-                            KeyValue::new("end_ns", win.end_ns),
+                            KeyValue::new("start_ns", a),
+                            KeyValue::new("end_ns", b),
                             KeyValue::new("cause", cause),
                         ],
                     ),
@@ -724,7 +787,7 @@ impl ScenarioLog {
             if let (Some(tr), Some(k)) = (&link.trace, f.sample) {
                 let (_, start, end) = tr.segment_at(f.send_ns);
                 // The first occurrence can begin before the replicate does.
-                let start = start.max(0);
+                let (start, end) = (origin_ns + start.max(0), origin_ns + end);
                 if dropped_by_outage && tr.segments.get(k).is_some_and(|s| s.outage) {
                     self.events.insert(
                         (start, link.name.clone(), d, 0, k),
@@ -746,8 +809,8 @@ impl ScenarioLog {
                     let first = self
                         .stepped
                         .entry((link.name.clone(), d, k, start))
-                        .or_insert((f.send_ns, params));
-                    first.0 = first.0.min(f.send_ns);
+                        .or_insert((origin_ns + f.send_ns, params));
+                    first.0 = first.0.min(origin_ns + f.send_ns);
                 }
             }
         }

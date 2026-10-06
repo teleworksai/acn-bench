@@ -102,6 +102,8 @@ async fn a_request_and_its_body_are_delayed_by_their_links_and_recorded() {
     // Never early (EMU-43): handed over no earlier than delivered.
     assert!(d.received_ns.unwrap() >= d.fate.outcome.unwrap());
     assert!(u.fate.outcome.unwrap() >= u.fate.send_ns + 50 * MS);
+    // A request is received when it is forwarded, no earlier than delivered.
+    assert!(u.received_ns.unwrap() >= u.fate.outcome.unwrap());
     assert!(p.records(4).is_empty());
     assert_eq!(p.fates().len(), 2);
     p.shutdown().await;
