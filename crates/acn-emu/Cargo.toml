@@ -11,7 +11,10 @@ description = "link models, scenario loader, sim engine and live proxy (SPEC 020
 workspace = true
 
 [dependencies]
+acn-trace.workspace = true
 blake3.workspace = true
+rand_chacha.workspace = true
+rand_core.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

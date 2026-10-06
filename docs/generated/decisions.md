@@ -35,3 +35,4 @@
 | [ADR-29](../decisions/ADR-29.md) | Maintainer decisions after the POC 4 mock run (2026-10-05) | accepted (maintainer decision, recorded by the agent; `spec-change`) | SPEC 080 §6 question 1; SPEC 100 P4-9, §7 questions 1 and 2; HAR-60 (issue #27); CON-21, CON-22; TASKS T06c, T06d, T07, T08 |
 | [ADR-30](../decisions/ADR-30.md) | T08: the first measured trace, from the 5G-IANA drive test | accepted (T08; `spec-change`, SPEC 020 Draft v0.0 §6, and `env-change`, `scenarios/measured/`) | EMU-60 to EMU-65; CON-7, CON-21, CON-27(a) |
 | [ADR-31](../decisions/ADR-31.md) | T07: SPEC 095's gate rules and the M0 record | accepted (T07; `spec-change`, SPEC 095 Draft v0.1) | GATE-1 to GATE-6, GATE-10 to GATE-16; CON-7, CON-16, CON-22, CON-23 |
+| [ADR-32](../decisions/ADR-32.md) | T10: link models and synthetic scenarios | accepted (T10; `spec-change`, SPEC 020 Draft v0.1 §2 and §3; Class B, `acn-emu`) | EMU-1 to EMU-9, EMU-20 to EMU-22; CON-5, CON-27(a), CON-30(b); TRC-15 |

@@ -1,0 +1,61 @@
+# A guessed cellular link with every stage of SPEC 020 §2, for tests and
+# exploratory runs. The numbers are plausible, not measured (ADR-29): a 5G
+# uplink and downlink around 25 ms one way, bursty loss up and independent loss
+# down, and one handover gap at 10 s from the start of the replicate, in which
+# uplink traffic is held and downlink traffic is dropped. 300 ms is long for a
+# 5G handover (often tens of ms); it is a stress case.
+schema_version = 1
+name = "cellular-handover"
+
+[[link]]
+name = "radio"
+direction = "up"
+
+[[link.outage.window]]
+start_ms = 10_000
+end_ms = 10_300
+mode = "hold"
+cause = "handover"
+
+[link.loss]
+kind = "gilbert_elliott"
+p_good_bad_ppm = 5_000
+p_bad_good_ppm = 200_000
+loss_good_ppm = 1_000
+loss_bad_ppm = 300_000
+
+[link.rate]
+rate_kbps = 20_000
+burst_bytes = 64_000
+queue_bytes = 1_000_000
+
+[link.delay]
+delay_us = 25_000
+jitter_us = 8_000
+
+[link.reorder]
+reorder_ppm = 2_000
+gap_us = 15_000
+
+[[link]]
+name = "radio"
+direction = "down"
+
+[[link.outage.window]]
+start_ms = 10_000
+end_ms = 10_300
+mode = "drop"
+cause = "handover"
+
+[link.loss]
+kind = "iid"
+loss_ppm = 2_000
+
+[link.rate]
+rate_kbps = 100_000
+burst_bytes = 256_000
+queue_bytes = 4_000_000
+
+[link.delay]
+delay_us = 25_000
+jitter_us = 5_000
