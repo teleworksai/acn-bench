@@ -110,8 +110,9 @@ T11b sim↔live twin   → CON-25 + LOOP-12: `acn loop twin` runs the decision-r
                        configs of a loop report in `live`, records per-quantity
                        divergence; tolerance from the hypothesis file; refuses
                        non-reproducible L1 input (LOOP-4). Standing test from here on.
-                       In two PRs (ADR-37): T11b.1 SPEC 085 v0.4 (LOOP-12, LOOP-16);
-                       T11b.2 `acn loop twin` in crates/acn-hyp, an env-change PR
+                       In three PRs (ADR-37): T11b.1 SPEC 085 v0.4 (LOOP-12, LOOP-16)
+                       and SPEC 040 HAR-26; T11b.2 the harness-served mock (HAR-26);
+                       T11b.3 `acn loop twin` in crates/acn-hyp, an env-change PR
                        the maintainer merges.
 T12 live proxy       → EMU part 3: tokio TCP proxy applying the same LinkModel to
                        real sockets; schedule precomputed from seed (CON-5d);

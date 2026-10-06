@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 9 · IDs: 226 · MUSTs: 203 · implemented: 185 · cited: 202
+Specs: 9 · IDs: 227 · MUSTs: 204 · implemented: 185 · cited: 202
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -153,6 +153,7 @@ Specs: 9 · IDs: 226 · MUSTs: 203 · implemented: 185 · cited: 202
 | HAR-23 | `040-harness.md` | 4 | MUST | yes | `crates/acn-harness/tests/wire.rs` `a_live_run_refuses_an_endpoint_that_is_not_what_it_was_configured_as`<br>`crates/acn-harness/tests/wire.rs` `every_response_to_a_provider_run_is_checked_for_the_mock` |
 | HAR-24 | `040-harness.md` | 4 | MUST | yes | `crates/acn-harness/tests/wire.rs` `retries_wait_as_told_count_and_end_the_turn_aborted`<br>`crates/acn-harness/tests/wire.rs` `an_attempt_past_its_timeout_is_abandoned_as_client_abort`<br>`crates/acn-harness/tests/wire.rs` `a_client_error_other_than_429_is_not_retried`<br>`crates/acn-harness/tests/wire.rs` `anthropic_events_assemble_into_a_message_the_frozen_mapping_reads`<br>`crates/acn-harness/tests/wire.rs` `live_retries_honour_retry_after_and_a_live_attempt_times_out`<br>`tests/accept/emu_sim.rs` `lost_stream_events_cut_the_stream_and_the_call_retries` |
 | HAR-25 | `040-harness.md` | 4 | MUST | yes | `crates/acn-cli/tests/harness_cli.rs` `proxy_variables_change_nothing_about_a_live_run`<br>`crates/acn-harness/tests/wire.rs` `the_options_are_run_parameters_recorded_with_their_defaults` |
+| HAR-26 | `040-harness.md` | 4 | MUST | no | — |
 | HAR-30 | `040-harness.md` | 5 | MUST | yes | `crates/acn-harness/tests/record.rs` `every_span_carries_what_its_trc_clause_requires` |
 | HAR-31 | `040-harness.md` | 5 | MUST | yes | `crates/acn-harness/tests/live_providers.rs` `anthropic_records_cache_reads_and_writes`<br>`crates/acn-harness/tests/live_providers.rs` `openai_records_cached_prompt_tokens`<br>`crates/acn-harness/tests/record.rs` `usage_is_normalised_by_the_frozen_mapping_and_raw_fields_are_kept`<br>`crates/acn-harness/tests/wire.rs` `anthropic_events_assemble_into_a_message_the_frozen_mapping_reads` |
 | HAR-32 | `040-harness.md` | 5 | MUST | yes | `crates/acn-harness/tests/record.rs` `the_mock_counts_new_input_tokens_on_its_own_token_sequences` |
