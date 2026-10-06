@@ -168,7 +168,7 @@ In `live` mode the same link models act on real sockets: the harness talks to it
 
 **EMU-42** **Send times.** A message's send time MUST be the run's clock, less the origin, at the moment the proxy has read the whole message. Reading the clock and offering the message to its link MUST happen together, one message at a time per link, so that send times reach a link in non-decreasing order (EMU-1). A response's send time is thus the upstream's emission time plus the hop to the proxy (the loopback for the mock; the real network path for a provider).
 
-**EMU-43** **Delivery.** The proxy MUST write a delivered message no earlier than its delivery time, and MUST write the messages of one connection in order. The time it hands the message's bytes to the connection's writer is its receive time in the proxy's records (EMU-47). Timer slack makes that later than the delivery time by up to a few milliseconds, and the kernel's send adds the loopback's own latency. The harness's own exchange timestamps (EMU-34) are its client's readings of the same clock as the bytes arrive, so they are no earlier than the proxy's.
+**EMU-43** **Delivery.** The proxy MUST write a delivered message no earlier than its delivery time, and MUST write the messages of one connection in order. The time it hands the message's bytes to the connection's writer (the client's for a response, the upstream's for a request) is its receive time in the proxy's records (EMU-47). Timer slack makes that later than the delivery time by up to a few milliseconds, and the kernel's send adds the loopback's own latency. The harness's own exchange timestamps (EMU-34) are its client's readings of the same clock as the bytes arrive, so they are no earlier than the proxy's.
 
 **EMU-44** **Drops.** A dropped message cannot be cut out of a TCP stream, so the proxy MUST turn each drop into what the client of EMU-35 sees in `sim`:
 - **A lost request.** It is not forwarded, and the connection stays silent, so the attempt ends at its deadline.
@@ -287,8 +287,8 @@ Every number MUST be finite. A trace MUST hold at least two samples.
   - a held request recording its hold and its window;
   - cut streams retried;
   - a trace run's step events, per direction, with their parameters, in time order, recorded once, with `link.parquet`'s step following each message's own direction;
-  - a scenario with two paths, or in `live`, refused.
-- Scenario runs in `sim` have no live twin until T12.3 (CON-25): until then their numbers are exploratory, not cited.
+  - a scenario with two paths refused.
+- A scenario run in `sim` has its live twin from T12.3 (CON-25); the twin's comparison as distributions is T11b's.
 
 ### §5: the live proxy
 

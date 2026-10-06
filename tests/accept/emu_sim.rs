@@ -279,7 +279,7 @@ fn lost_stream_events_cut_the_stream_and_the_call_retries() {
 
 /// Cites: EMU-32, EMU-39
 #[test]
-fn a_scenario_needs_one_path_and_sim() {
+fn a_scenario_needs_one_path() {
     let d = tempfile::tempdir().unwrap();
     let c = cfg(
         d.path(),
@@ -289,10 +289,6 @@ fn a_scenario_needs_one_path_and_sim() {
     );
     let e = run_with_scenario(&c, Some(&fixture("two-paths.toml"))).unwrap_err();
     assert!(e.to_string().contains("exactly one path"), "{e}");
-    let mut live = c.clone();
-    live.mode = Mode::Live;
-    let e = run_with_scenario(&live, Some(&fixture("uplink-down.toml"))).unwrap_err();
-    assert!(e.to_string().contains("sim only"), "{e}");
     assert!(
         std::fs::read_dir(d.path()).unwrap().next().is_none(),
         "nothing written"

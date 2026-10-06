@@ -55,6 +55,7 @@ ids = [
   "EMU-30", "EMU-31", "EMU-32", "EMU-33", "EMU-34", "EMU-35", "EMU-36", "EMU-37",
   "EMU-38", "EMU-39",
   "EMU-40", "EMU-41", "EMU-42", "EMU-43", "EMU-44", "EMU-45", "EMU-46",
+  "EMU-47", "EMU-48", "EMU-49",
   "EMU-60", "EMU-61", "EMU-62", "EMU-63", "EMU-64", "EMU-65",
 ]
 # T08 (ADR-30): §6, measured traces. T10 (ADR-32): §2, link models, and §3,
@@ -62,7 +63,7 @@ ids = [
 # engine (the network's part). T11.2: the harness's waits on its queue, and
 # EMU-39's pinned no-scenario bundles. T11.3 (ADR-35): the harness on the
 # network, and the link and scenario spans. T12.2 (ADR-36): the live proxy;
-# EMU-47 to EMU-49 come with T12.3, which runs the harness through it.
+# T12.3: live runs through it.
 
 [[implemented]]
 spec = "095"
