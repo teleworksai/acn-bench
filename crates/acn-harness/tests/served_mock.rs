@@ -10,7 +10,7 @@ use acn_harness::run::{run, run_with_scenario};
 use acn_harness::served::LOOPBACK;
 use acn_harness::wire::Backend;
 use acn_trace::identity::Mode;
-use common::{cached, fast_smoke, run_fixture, spans};
+use common::{fast_smoke, int, run_fixture, spans};
 
 fn manifest(dir: &std::path::Path) -> serde_json::Value {
     serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap()
@@ -37,10 +37,34 @@ fn a_served_mock_run_has_an_identity_that_does_not_depend_on_its_ports() {
     assert_eq!(ids[0], ids[1]);
 }
 
+/// Per replicate, every call's output tokens and cache reads, in a canonical
+/// order (by call index within a turn, then value). Output lengths are drawn
+/// from the mock's seeded stream, so they show which mock answered.
+fn per_replicate(t: &acn_trace::model::Trace) -> Vec<Vec<(i64, i64)>> {
+    let replicate: std::collections::BTreeMap<_, _> = spans(t, "acn.session")
+        .iter()
+        .map(|s| (s.trace_id, int(s, "acn.replicate").unwrap()))
+        .collect();
+    let mut out: std::collections::BTreeMap<i64, Vec<(i64, i64, i64)>> = Default::default();
+    for c in spans(t, "chat") {
+        out.entry(replicate[&c.trace_id]).or_default().push((
+            int(c, "acn.call.index").unwrap_or(c.start_ns),
+            int(c, "gen_ai.usage.output_tokens").unwrap(),
+            int(c, "acn.cache.read_tokens").unwrap(),
+        ));
+    }
+    out.into_values()
+        .map(|mut v| {
+            v.sort_unstable();
+            v.into_iter().map(|(_, o, r)| (o, r)).collect()
+        })
+        .collect()
+}
+
 /// Cites: HAR-26
 #[test]
-fn each_replicate_is_served_a_mock_built_as_in_sim() {
-    let reads = |mode: Mode| {
+fn each_replicate_is_served_a_fresh_mock_built_as_in_sim() {
+    let calls = |mode: Mode| {
         let mut f = run_fixture(&fast_smoke(), "auto");
         f.cfg.mode = mode;
         f.cfg.replicates = 3;
@@ -48,15 +72,16 @@ fn each_replicate_is_served_a_mock_built_as_in_sim() {
             f.cfg.opts.endpoint = LOOPBACK.into();
         }
         let w = run(&f.cfg).unwrap();
-        let mut r = cached(&common::read(&w.dir));
-        r.sort_unstable();
-        r
+        per_replicate(&common::read(&w.dir))
     };
-    // The same profiles and replicate seeds: the same cache accounting, call
-    // for call.
-    let sim = reads(Mode::Sim);
-    assert!(sim.iter().any(|&n| n > 0), "no cache read to compare");
-    assert_eq!(sim, reads(Mode::Live));
+    let sim = calls(Mode::Sim);
+    assert_eq!(sim.len(), 3);
+    assert!(sim.iter().flatten().any(|&(_, r)| r > 0), "no cache read");
+    // Replicates draw different lengths, so a mock shared by the replicates,
+    // whose stream would run on from one replicate into the next, would not
+    // give these numbers.
+    assert_ne!(sim[0], sim[1]);
+    assert_eq!(sim, calls(Mode::Live));
 }
 
 /// Cites: HAR-26, EMU-40
@@ -84,6 +109,9 @@ fn a_served_mock_is_refused_in_sim_and_on_other_backends() {
     f.cfg.opts.endpoint = LOOPBACK.into();
     let e = run(&f.cfg).unwrap_err().to_string();
     assert!(e.contains("HAR-26"), "{e}");
+    assert!(
+        !f.cfg.runs_dir.exists() || std::fs::read_dir(&f.cfg.runs_dir).unwrap().next().is_none()
+    );
 
     let mut f = run_fixture(&fast_smoke(), "auto");
     f.cfg.mode = Mode::Live;

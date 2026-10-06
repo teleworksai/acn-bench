@@ -206,11 +206,17 @@ fn endpoint(backend: Backend, opts: &Opts) -> Result<(String, String), HarnessEr
 /// HAR-23: whether the endpoint at `url` is the backend the run was
 /// configured with.
 async fn probe(
+    client: &reqwest::Client,
     backend: Backend,
     clock: &Arc<acn_emu::clock::WallClock>,
     url: &str,
 ) -> Result<(), HarnessError> {
-    let probe = LiveEnv::new(Arc::clone(clock), url, headers(backend, "-")?)?;
+    let probe = LiveEnv::with_client(
+        client.clone(),
+        Arc::clone(clock),
+        url,
+        headers(backend, "-")?,
+    );
     let is_mock = probe.probe_is_mock().await?;
     if is_mock != (backend == Backend::Mockllm) {
         return Err(HarnessError::BackendMismatch(format!(
@@ -361,9 +367,16 @@ pub async fn run_async_with(
     } else {
         (String::new(), None)
     };
-    if live && !served {
+    // One HTTP client for the run's live calls: building one is slow.
+    let live_client = if live {
+        Some(LiveEnv::http_client()?)
+    } else {
+        None
+    };
+    if let (Some(client), false) = (&live_client, served) {
         // HAR-23: the endpoint says what it is before the run gets an identity.
-        probe(cfg.backend, &clock, &url).await?;
+        // A served mock is probed per replicate instead, once it exists (HAR-26).
+        probe(client, cfg.backend, &clock, &url).await?;
     }
 
     let mut order_rng = acn_trace::identity::substream_rng(hyp.seed, "run.order")?;
@@ -477,29 +490,27 @@ pub async fn run_async_with(
             .as_ref()
             .map(|(_, span)| span.span_context().clone());
         let mut scenario_log = ScenarioLog::default();
-        // One client for the run's proxied replicates: building one is slow.
-        let live_client = if live && scenario.is_some() {
-            Some(LiveEnv::http_client()?)
-        } else {
-            None
-        };
         for &i in &order {
             let rseed = acn_trace::identity::replicate_seed(hyp.seed, i)?;
             let marker = isolation_marker(&run_id, &cfg.arm, i)?;
             // HAR-26: the replicate's own mock, built as in `sim`, served until
-            // the replicate ends (it is dropped with this iteration).
-            let mock_server = if served {
-                let mock = Mock::with_profiles(profiles.clone(), rseed)
-                    .map_err(|e| HarnessError::Config(e.to_string()))?;
-                let s = crate::served::ServedMock::start(
-                    mock,
-                    Arc::clone(&clock) as Arc<dyn acn_emu::clock::Clock>,
-                )
-                .await?;
-                probe(cfg.backend, &clock, &s.url()).await?;
-                Some(s)
-            } else {
-                None
+            // the replicate ends.
+            let mut mock_server = match (&live_client, served) {
+                (Some(client), true) => {
+                    let mock = Mock::with_profiles(profiles.clone(), rseed)
+                        .map_err(|e| HarnessError::Config(e.to_string()))?;
+                    let s = crate::served::ServedMock::start(
+                        mock,
+                        Arc::clone(&clock) as Arc<dyn acn_emu::clock::Clock>,
+                    )
+                    .await?;
+                    // HAR-23 against the replicate's server. It is the mock by
+                    // construction, so this checks that it answers; the probe
+                    // reads only the profiles, so the mock stays as built.
+                    probe(client, cfg.backend, &clock, &s.url()).await?;
+                    Some(s)
+                }
+                _ => None,
             };
             let url = mock_server
                 .as_ref()
@@ -620,6 +631,10 @@ pub async fn run_async_with(
                         return Err(HarnessError::Internal(format!("the live proxy: {f}")));
                     }
                     ran?;
+                    // After the proxy: no forward can still reach the mock.
+                    if let Some(s) = mock_server.take() {
+                        s.shutdown().await?;
+                    }
                     scenario_log.record(&sc.scenario, &proxy.fates(), ended, origin_ns);
                 } else {
                     let mock = Mock::with_profiles(profiles.clone(), rseed)
@@ -653,7 +668,15 @@ pub async fn run_async_with(
                 .build();
             let tracer = provider.tracer("acn-harness");
             if live {
-                let env = LiveEnv::new(Arc::clone(&clock), &url, headers(cfg.backend, &marker)?)?;
+                let client = live_client.clone().ok_or_else(|| {
+                    HarnessError::Internal("a live run without its client".into())
+                })?;
+                let env = LiveEnv::with_client(
+                    client,
+                    Arc::clone(&clock),
+                    &url,
+                    headers(cfg.backend, &marker)?,
+                );
                 let rep = Replicate {
                     setup: &setup,
                     env: &env,
@@ -665,6 +688,9 @@ pub async fn run_async_with(
                     streams,
                 };
                 sessions(&rep, tasks, seed).await?;
+                if let Some(s) = mock_server.take() {
+                    s.shutdown().await?;
+                }
             } else {
                 let mock = Mock::with_profiles(profiles.clone(), rseed)
                     .map_err(|e| HarnessError::Config(e.to_string()))?;
