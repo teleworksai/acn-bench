@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 9 · IDs: 227 · MUSTs: 204 · implemented: 185 · cited: 203
+Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 203
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -168,6 +168,21 @@ Specs: 9 · IDs: 227 · MUSTs: 204 · implemented: 185 · cited: 203
 | HAR-52 | `040-harness.md` | 7 | MUST | yes | `crates/acn-harness/tests/wire.rs` `the_mock_runs_in_process_and_nothing_else_runs_in_sim`<br>`tests/accept/harness_sim.rs` `sim_is_the_mock_only_and_netem_is_not_yet_defined` |
 | HAR-60 | `040-harness.md` | 8 | MUST | yes | `crates/acn-harness/tests/workload.rs` `the_smoke_workload_loads_and_exercises_every_clause`<br>`crates/acn-harness/tests/workload.rs` `a_workload_states_everything_and_names_only_what_exists`<br>`crates/acn-harness/tests/workload.rs` `workloads_are_hashed_as_working_tree_bytes`<br>`crates/acn-harness/tests/workload.rs` `a_child_tool_missing_from_a_task_that_spawns_it_is_refused` |
 | HAR-61 | `040-harness.md` | 8 | MUST | yes | `crates/acn-harness/tests/workload.rs` `the_smoke_workload_loads_and_exercises_every_clause` |
+| GEN-1 | `050-workload-generator.md` | 1 | MUST | no | — |
+| GEN-2 | `050-workload-generator.md` | 1 | MUST | no | — |
+| GEN-3 | `050-workload-generator.md` | 2 | MUST | no | — |
+| GEN-4 | `050-workload-generator.md` | 2 | MUST | no | — |
+| GEN-10 | `050-workload-generator.md` | 2 | MUST | no | — |
+| GEN-11 | `050-workload-generator.md` | 2 | MUST | no | — |
+| GEN-12 | `050-workload-generator.md` | 2 | MUST | no | — |
+| GEN-13 | `050-workload-generator.md` | 2 | MUST | no | — |
+| GEN-14 | `050-workload-generator.md` | 2 | MUST | no | — |
+| GEN-15 | `050-workload-generator.md` | 2 | MUST | no | — |
+| GEN-20 | `050-workload-generator.md` | 3 | MUST | no | — |
+| GEN-21 | `050-workload-generator.md` | 3 | MUST | no | — |
+| GEN-22 | `050-workload-generator.md` | 3 | MUST | no | — |
+| GEN-23 | `050-workload-generator.md` | 3 | MUST | no | — |
+| GEN-30 | `050-workload-generator.md` | 4 | MUST | no | — |
 | HYP-1 | `080-hypotheses.md` | 2 | MUST | yes | `crates/acn-hyp/tests/format.rs` `every_table_rejects_unknown_keys_and_names_the_key_path`<br>`crates/acn-hyp/tests/freeze.rs` `a_file_under_hypotheses_that_is_not_toml_never_loads_as_frozen`<br>`crates/xtask/tests/freeze.rs` `pr_check_enforces_the_shape_of_a_freeze`<br>`crates/xtask/tests/freeze.rs` `every_file_under_hypotheses_is_checked_and_each_bad_one_reported`<br>`tests/accept/hyp_lint.rs` `a_broken_file_is_reported_with_its_reason` |
 | HYP-2 | `080-hypotheses.md` | 2 | MUST | yes | `crates/acn-hyp/tests/format.rs` `the_tables_poc_and_stem_rules_hold`<br>`crates/acn-hyp/tests/format.rs` `a_frozen_file_names_a_real_spec_and_a_unique_id`<br>`crates/xtask/tests/freeze.rs` `pr_check_enforces_the_shape_of_a_freeze` |
 | HYP-3 | `080-hypotheses.md` | 2 | MUST | yes | `crates/acn-harness/tests/record.rs` `a_frozen_file_may_not_choose_its_seed`<br>`crates/acn-hyp/tests/format.rs` `status_is_decided_by_location_and_by_a_record_that_matches`<br>`crates/acn-hyp/tests/freeze.rs` `a_changed_hypothesis_file_breaks_the_record_and_is_no_longer_frozen`<br>`crates/xtask/tests/freeze.rs` `pr_check_enforces_the_shape_of_a_freeze` |

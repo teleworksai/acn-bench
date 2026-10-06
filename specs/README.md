@@ -7,7 +7,7 @@
 | 020 | 020-emulation.md | EMU | draft v0.4 (§2 link models and trace-driven links, §3 scenario files, §4 the sim engine, §5 the live proxy, for T10 to T12; §6 measured traces, for T08) |
 | 030 | 030-mock-inference.md | MLM | draft v0.1 (mock inference: wire format, prompt tokens, three cache models, timing, replies; implemented by T03) |
 | 040 | 040-harness.md | HAR | draft v0.3 (harness: agent loop, six cache-discipline knobs, two wire dialects, recording, isolation, workloads; implemented by T04) |
-| 050 | 050-workload-generator.md | GEN | to write (T13) |
+| 050 | 050-workload-generator.md | GEN | draft v0.1 (sheet of distributions, seeded sessions/turns/calls on the harness's run path; plain-RPC control deferred to T13b; for T13) |
 | 060 | 060-replayer.md | RPL | to write (T50) |
 | 070 | 070-control-plane.md | CTL | to write (T14) |
 | 080 | 080-hypotheses.md | HYP | draft v0.1 (format, typed predicate grammar, slices and verdicts; implemented by T05) |
