@@ -453,14 +453,7 @@ impl LiveEnv {
         endpoint: &str,
         headers: Vec<(String, String)>,
     ) -> Result<Self, HarnessError> {
-        // No proxy from the environment: `HTTP_PROXY` and friends would change
-        // what a run receives without changing its identity, and would receive
-        // its credentials (CON-29, HAR-22, HAR-25).
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| HarnessError::Config(format!("http client: {e}")))?;
+        let client = Self::http_client()?;
         Ok(Self {
             client,
             clock,
@@ -470,22 +463,41 @@ impl LiveEnv {
         })
     }
 
+    /// The HTTP client of a live run. Building one loads the system's root
+    /// certificates, which takes a while, so a run builds it once.
+    pub fn http_client() -> Result<reqwest::Client, HarnessError> {
+        // No proxy from the environment: `HTTP_PROXY` and friends would change
+        // what a run receives without changing its identity, and would receive
+        // its credentials (CON-29, HAR-22, HAR-25).
+        reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| HarnessError::Config(format!("http client: {e}")))
+    }
+
     /// An environment whose calls cross `proxy` (SPEC 020 EMU-40), whose links
-    /// count from `origin_ns` on the run's clock. Every attempt is tagged, and
-    /// carries the proxy's records of it (EMU-47).
+    /// count from `origin_ns` on the run's clock, over `client`. Every attempt
+    /// is tagged, and carries the proxy's records of it (EMU-47).
+    #[must_use]
     pub fn through_proxy(
+        client: reqwest::Client,
         clock: Arc<WallClock>,
         proxy: Arc<acn_emu::proxy::Proxy>,
         origin_ns: i64,
         headers: Vec<(String, String)>,
-    ) -> Result<Self, HarnessError> {
-        let mut env = Self::new(clock, &format!("http://{}", proxy.addr()), headers)?;
-        env.net = Some(LiveNet {
-            proxy,
-            origin_ns,
-            next: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        });
-        Ok(env)
+    ) -> Self {
+        Self {
+            client,
+            clock,
+            endpoint: format!("http://{}", proxy.addr()),
+            headers,
+            net: Some(LiveNet {
+                proxy,
+                origin_ns,
+                next: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            }),
+        }
     }
 
     /// The records of attempt `n` carried by its end at `end_ns` on the run's

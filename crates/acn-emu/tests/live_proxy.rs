@@ -618,3 +618,63 @@ async fn http2_is_refused_by_closing_the_connection() {
     assert!(p.fates().is_empty());
     p.shutdown().await;
 }
+
+/// A clock that runs backwards by a millisecond at every reading.
+#[derive(Debug)]
+struct Backwards(std::sync::atomic::AtomicI64);
+
+impl Clock for Backwards {
+    fn now_ns(&self) -> i64 {
+        self.0.fetch_sub(MS, Ordering::SeqCst)
+    }
+    fn sleep_until(&self, _t_ns: i64) -> acn_emu::clock::Sleep<'_> {
+        Box::pin(async {})
+    }
+}
+
+/// Cites: EMU-40, EMU-42
+#[tokio::test]
+async fn a_link_that_refuses_a_message_is_a_proxy_fault() {
+    let up = serve(hello()).await;
+    let p = Proxy::start(
+        Link::new(link(Direction::Up, 0), 7).unwrap(),
+        Link::new(link(Direction::Down, 0), 7).unwrap(),
+        &up,
+        Arc::new(Backwards(std::sync::atomic::AtomicI64::new(1_000_000 * MS))),
+        0,
+    )
+    .await
+    .unwrap();
+    assert!(p.fault().is_none());
+    let c = client(1_000);
+    // The second request is sent before the first, on the link's clock: the
+    // link refuses it, and the proxy says it is no measurement.
+    for _ in 0..2 {
+        let _ = c
+            .post(format!("http://{}/v1/x", p.addr()))
+            .body("ping")
+            .send()
+            .await;
+    }
+    let fault = p.fault().expect("a fault");
+    assert!(fault.contains("refused"), "{fault}");
+    p.shutdown().await;
+}
+
+/// Cites: EMU-40
+#[tokio::test]
+async fn a_dropped_proxy_stops_listening() {
+    let up = serve(hello()).await;
+    let (p, _) = proxy(link(Direction::Up, 0), link(Direction::Down, 0), &up).await;
+    let addr = p.addr();
+    drop(p);
+    let mut closed = false;
+    for _ in 0..100 {
+        if tokio::net::TcpStream::connect(addr).await.is_err() {
+            closed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(closed, "still listening");
+}

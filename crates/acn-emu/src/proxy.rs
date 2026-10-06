@@ -360,6 +360,14 @@ impl Proxy {
     }
 }
 
+impl Drop for Proxy {
+    /// A proxy dropped without `shutdown` still stops listening and lets its
+    /// tasks end (EMU-40).
+    fn drop(&mut self) {
+        let _ = self.stop.send(true);
+    }
+}
+
 async fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
     loop {
         let conn = tokio::select! {

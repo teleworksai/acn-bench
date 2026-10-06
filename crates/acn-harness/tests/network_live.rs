@@ -104,7 +104,7 @@ fn a_lost_live_request_times_out_and_a_lossy_stream_is_retried() {
     f.cfg.opts.endpoint = common::mock_server(common::three());
     // A stream whose last events are lost stays silent until the deadline
     // (EMU-44): on the wall clock, so keep it short.
-    f.cfg.opts.request_timeout_ms = 2_000;
+    f.cfg.opts.request_timeout_ms = 1_000;
     let lossy = scenario(
         f.dir.path(),
         "lossy",
@@ -134,7 +134,7 @@ fn a_sim_run_and_its_live_twin_take_the_same_draws_per_message() {
     // Messages sent at one instant in `sim` (forked children) were offered in
     // an order the spans do not keep, so such a group is compared as a set.
     type Groups = Vec<Vec<bool>>;
-    let selected = |mode: Mode| -> (Groups, Groups) {
+    let selected = |mode: Mode| -> (Groups, Groups, [usize; 2]) {
         let mut f = run_fixture(&fast_smoke(), "auto");
         f.cfg.mode = mode;
         if mode == Mode::Live {
@@ -169,10 +169,18 @@ fn a_sim_run_and_its_live_twin_take_the_same_draws_per_message() {
             }
             groups
         };
-        (of("up"), of("down"))
+        let count = |dir: &str| {
+            spans(&t, "acn.link")
+                .iter()
+                .filter(|l| text(l, "acn.link.direction") == Some(dir))
+                .count()
+        };
+        (of("up"), of("down"), [count("up"), count("down")])
     };
-    let (sim_up, sim_down) = selected(Mode::Sim);
-    let (live_up, live_down) = selected(Mode::Live);
+    let (sim_up, sim_down, sim_n) = selected(Mode::Sim);
+    let (live_up, live_down, live_n) = selected(Mode::Live);
+    // The same messages in each direction, before any regrouping.
+    assert_eq!(sim_n, live_n);
     // Live sends no two messages at one instant: regroup it as sim grouped.
     let regroup = |sim: &Groups, live: &Groups| -> (Groups, Groups) {
         let flat: Vec<bool> = live.iter().flatten().copied().collect();
@@ -199,13 +207,32 @@ fn a_sim_run_and_its_live_twin_take_the_same_draws_per_message() {
     }
 }
 
-/// Cites: EMU-49, EMU-39
+/// Cites: EMU-49, EMU-39, EMU-46
 #[test]
 fn a_live_run_without_a_scenario_goes_straight_to_its_endpoint() {
     let mut f = run_fixture(&fast_smoke(), "auto");
     f.cfg.mode = Mode::Live;
-    f.cfg.opts.endpoint = common::mock_server(common::three());
+    // The mock, noting whether each request carried an attempt tag.
+    let tagged = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::clone(&tagged);
+    let mock = acn_mockllm::Mock::with_profiles(common::three(), 3).unwrap();
+    f.cfg.opts.endpoint = common::serve(
+        acn_mockllm::server::router(mock, std::sync::Arc::new(acn_emu::clock::SimClock::new()))
+            .layer(axum::middleware::from_fn(
+                move |req: axum::extract::Request, next: axum::middleware::Next| {
+                    let seen = std::sync::Arc::clone(&seen);
+                    async move {
+                        let tag = req.headers().contains_key(acn_emu::proxy::ATTEMPT_HEADER);
+                        seen.lock().unwrap().push(tag);
+                        next.run(req).await
+                    }
+                },
+            )),
+    );
     let w = run_with_scenario(&f.cfg, None).unwrap();
+    let tagged = tagged.lock().unwrap().clone();
+    assert!(!tagged.is_empty());
+    assert!(tagged.iter().all(|t| !t), "an attempt tag without a proxy");
     let t = common::read(&w.dir);
     assert!(spans(&t, "acn.link").is_empty());
     assert!(spans(&t, "acn.scenario").is_empty());
@@ -216,5 +243,60 @@ fn a_live_run_without_a_scenario_goes_straight_to_its_endpoint() {
     );
     for s in spans(&t, "acn.session") {
         assert_eq!(text(s, "acn.scenario.hash"), Some("0".repeat(64).as_str()));
+    }
+}
+
+/// Cites: EMU-47, EMU-40, EMU-37, EMU-7
+#[test]
+fn a_live_hold_window_counts_from_the_replicate_start() {
+    let mut f = run_fixture(&fast_smoke(), "auto");
+    f.cfg.mode = Mode::Live;
+    f.cfg.replicates = 2;
+    f.cfg.opts.endpoint = common::mock_server(common::three());
+    let sc = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/accept/fixtures/scenarios/uplink-hold.toml");
+    let w = run_with_scenario(&f.cfg, Some(&sc)).unwrap();
+    let t = common::read(&w.dir);
+    // One outage event per replicate: each window is at its own origin on the
+    // run's clock, not at 0.
+    let attr = |e: &acn_trace::model::EventRow, k: &str| match e.attrs.get(k) {
+        Some(AttrValue::Int(v)) => *v,
+        other => panic!("{k}: {other:?}"),
+    };
+    let mut windows: Vec<(i64, i64)> = t
+        .events
+        .iter()
+        .filter(|e| e.name == "acn.scenario.outage")
+        .map(|e| (attr(e, "start_ns"), attr(e, "end_ns")))
+        .collect();
+    windows.sort_unstable();
+    assert_eq!(windows.len(), 2, "{windows:?}");
+    let mut starts: Vec<i64> = spans(&t, "acn.session")
+        .iter()
+        .map(|s| s.start_ns)
+        .collect();
+    starts.sort_unstable();
+    starts.dedup();
+    for &(a, b) in &windows {
+        assert!(a > 0);
+        assert_eq!(b - a, 50_000_000);
+        // The origin is read just before the replicate's sessions start, so
+        // the first request is sent inside the window.
+        let first = starts
+            .iter()
+            .copied()
+            .find(|&s| s >= a)
+            .expect("a session after the window opens");
+        assert!(first - a < 20_000_000, "origin {a}, first session {first}");
+        // That request is held to the window's end.
+        let held: Vec<_> = spans(&t, "acn.link")
+            .into_iter()
+            .filter(|l| text(l, "acn.link.direction") == Some("up"))
+            .filter(|l| (a..b).contains(&int(l, "acn.link.enqueue_ns").unwrap()))
+            .collect();
+        assert!(!held.is_empty());
+        for l in held {
+            assert!(int(l, "acn.link.dequeue_ns").unwrap() >= b);
+        }
     }
 }

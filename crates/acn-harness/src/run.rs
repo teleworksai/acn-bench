@@ -448,6 +448,12 @@ pub async fn run_async_with(
             .as_ref()
             .map(|(_, span)| span.span_context().clone());
         let mut scenario_log = ScenarioLog::default();
+        // One client for the run's proxied replicates: building one is slow.
+        let live_client = if live && scenario.is_some() {
+            Some(LiveEnv::http_client()?)
+        } else {
+            None
+        };
         for &i in &order {
             let rseed = acn_trace::identity::replicate_seed(hyp.seed, i)?;
             let marker = isolation_marker(&run_id, &cfg.arm, i)?;
@@ -477,9 +483,6 @@ pub async fn run_async_with(
                     .build();
                 let tracer = provider.tracer("acn-harness");
                 let emu_tracer = emu.tracer("acn-emu");
-                // In `live` the links count from the replicate's start on the
-                // run's clock; in `sim` every replicate starts at 0 (EMU-40).
-                let origin_ns = if live { clock.now_ns() } else { 0 };
                 let model = |d| {
                     sc.scenario
                         .links
@@ -487,7 +490,7 @@ pub async fn run_async_with(
                         .find(|l| l.direction == d)
                         .map_or_else(|| "none".to_owned(), acn_emu::link::LinkSpec::model_name)
                 };
-                let net = crate::agent::NetSpans {
+                let mut net = crate::agent::NetSpans {
                     tracer: &emu_tracer,
                     scenario: scenario_cx.clone(),
                     link_id: sc
@@ -498,7 +501,9 @@ pub async fn run_async_with(
                         .unwrap_or_default(),
                     up_model: model(acn_emu::link::Direction::Up),
                     down_model: model(acn_emu::link::Direction::Down),
-                    origin_ns,
+                    // In `sim` every replicate starts at 0; in `live` the
+                    // origin is read just before the proxy starts (EMU-40).
+                    origin_ns: 0,
                 };
                 if live {
                     // EMU-40: the replicate's own proxy, its links built from
@@ -522,6 +527,15 @@ pub async fn run_async_with(
                             "scenario: a path needs an up and a down link".into(),
                         ));
                     };
+                    let headers = headers(cfg.backend, &marker)?;
+                    let client = live_client.clone().ok_or_else(|| {
+                        HarnessError::Internal("a live run without its client".into())
+                    })?;
+                    // The links count from the replicate's start on the run's
+                    // clock, read as late as possible: everything slow is done,
+                    // and the sessions start next (EMU-40).
+                    let origin_ns = clock.now_ns();
+                    net.origin_ns = origin_ns;
                     let proxy = Arc::new(
                         acn_emu::proxy::Proxy::start(
                             up,
@@ -534,11 +548,12 @@ pub async fn run_async_with(
                         .map_err(|e| HarnessError::Config(format!("proxy: {e}")))?,
                     );
                     let env = LiveEnv::through_proxy(
+                        client,
                         Arc::clone(&clock),
                         Arc::clone(&proxy),
                         origin_ns,
-                        headers(cfg.backend, &marker)?,
-                    )?;
+                        headers,
+                    );
                     let rep = Replicate {
                         setup: &setup,
                         env: &env,
@@ -550,12 +565,15 @@ pub async fn run_async_with(
                         streams,
                     };
                     let ran = sessions(&rep, tasks, seed).await;
+                    let ended = clock.now_ns();
                     proxy.shutdown().await;
-                    ran?;
+                    // A proxy fault explains whatever the sessions saw: it
+                    // is reported first (EMU-40).
                     if let Some(f) = proxy.fault() {
                         return Err(HarnessError::Internal(format!("the live proxy: {f}")));
                     }
-                    scenario_log.record(&sc.scenario, &proxy.fates(), clock.now_ns(), origin_ns);
+                    ran?;
+                    scenario_log.record(&sc.scenario, &proxy.fates(), ended, origin_ns);
                 } else {
                     let mock = Mock::with_profiles(profiles.clone(), rseed)
                         .map_err(|e| HarnessError::Config(e.to_string()))?;
