@@ -3,7 +3,8 @@
 //! [`SimClock`], driven by a small deterministic scheduler — every lineage's
 //! pending wait or call is registered with it, and calls due at the same instant
 //! go to the mock together through `Mock::handle_batch`, so their order is MLM-7's
-//! and never a scheduler's (HAR-41). [`LiveEnv`] is `live`: HTTP on the wall clock.
+//! and never a scheduler's (HAR-41). Waits sit on the sim engine's event
+//! queue (SPEC 020 EMU-30, EMU-31), which T11.3's network shares. [`LiveEnv`] is `live`: HTTP on the wall clock.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -14,6 +15,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
 use acn_emu::clock::{Clock, SimClock, WallClock};
+use acn_emu::sim::EventQueue;
 use acn_mockllm::{Mock, Outcome};
 
 use crate::HarnessError;
@@ -52,8 +54,16 @@ struct SimState {
     mock: Mock,
     tenant: String,
     next: u64,
-    ops: BTreeMap<u64, Op>,
+    /// Pending waits, by due time then registration (EMU-30).
+    waits: EventQueue<u64>,
+    /// Calls registered at the current instant, in registration order.
+    calls: Vec<(u64, Vec<u8>)>,
     done: BTreeMap<u64, Done>,
+    /// A wait the queue refused, reported by `drive`. Unreachable today: a wait
+    /// is registered only for `t > clock.now`, and the queue's own now (the
+    /// last group it handed out) never passes the clock, which `drive` moves
+    /// only to the queue's next time.
+    fault: Option<String>,
 }
 
 /// The `sim` environment of one replicate: its mock, its tenant and its clock.
@@ -83,8 +93,14 @@ impl Future for OpFuture {
             None => {
                 let id = st.next;
                 st.next += 1;
-                if let Some(op) = this.op.take() {
-                    st.ops.insert(id, op);
+                match this.op.take() {
+                    Some(Op::Sleep(t)) => {
+                        if let Err(e) = st.waits.push(t, id) {
+                            st.fault = Some(e.to_string());
+                        }
+                    }
+                    Some(Op::Call(b)) => st.calls.push((id, b)),
+                    None => {}
                 }
                 this.id = Some(id);
                 Poll::Pending
@@ -104,8 +120,10 @@ impl SimEnv {
             mock,
             tenant,
             next: 0,
-            ops: BTreeMap::new(),
+            waits: EventQueue::new(),
+            calls: Vec::new(),
             done: BTreeMap::new(),
+            fault: None,
         })))
     }
 
@@ -126,29 +144,22 @@ impl SimEnv {
                 return Ok(v);
             }
             let mut st = self.0.borrow_mut();
+            if let Some(f) = st.fault.take() {
+                return Err(HarnessError::Internal(format!("the sim scheduler: {f}")));
+            }
             let now = st.clock.now_ns();
-            let due: Vec<u64> = st
-                .ops
-                .iter()
-                .filter(|(_, o)| matches!(o, Op::Sleep(t) if *t <= now))
-                .map(|(id, _)| *id)
-                .collect();
-            if !due.is_empty() {
-                for id in due {
-                    st.ops.remove(&id);
-                    st.done.insert(id, Done::Woke);
+            // Wake every wait due now (EMU-31: one group, in registration order).
+            if st.waits.next_time().is_some_and(|t| t <= now) {
+                if let Some((_, ids)) = st.waits.pop_group() {
+                    for id in ids {
+                        st.done.insert(id, Done::Woke);
+                    }
                 }
                 continue;
             }
-            let calls: Vec<(u64, Vec<u8>)> = st
-                .ops
-                .iter()
-                .filter_map(|(id, o)| match o {
-                    Op::Call(b) => Some((*id, b.clone())),
-                    Op::Sleep(_) => None,
-                })
-                .collect();
-            if !calls.is_empty() {
+            // Then hand every call made at this instant to the mock as one batch.
+            if !st.calls.is_empty() {
+                let calls = std::mem::take(&mut st.calls);
                 let tenant = st.tenant.clone();
                 let requests: Vec<(Vec<u8>, String, i64)> = calls
                     .iter()
@@ -156,20 +167,12 @@ impl SimEnv {
                     .collect();
                 let outcomes = st.mock.handle_batch(&requests);
                 for ((id, _), o) in calls.iter().zip(outcomes) {
-                    st.ops.remove(id);
                     st.done.insert(*id, Done::Called(Box::new(o)));
                 }
                 continue;
             }
-            let next = st
-                .ops
-                .values()
-                .filter_map(|o| match o {
-                    Op::Sleep(t) => Some(*t),
-                    Op::Call(_) => None,
-                })
-                .min();
-            match next {
+            // Only then move the clock to the next wait.
+            match st.waits.next_time() {
                 Some(t) => st.clock.advance_to(t),
                 None => {
                     return Err(HarnessError::Internal(
