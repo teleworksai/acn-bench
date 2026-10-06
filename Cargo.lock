@@ -7,6 +7,7 @@ name = "acn-accept"
 version = "0.1.0"
 dependencies = [
  "acn-cli",
+ "acn-emu",
  "acn-harness",
  "acn-hyp",
  "acn-mockllm",
@@ -14,6 +15,7 @@ dependencies = [
  "blake3",
  "serde_json",
  "tempfile",
+ "toml",
 ]
 
 [[package]]

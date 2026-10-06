@@ -53,6 +53,15 @@ ids = ["EMU-60", "EMU-61", "EMU-62", "EMU-63", "EMU-64", "EMU-65"]
 # and proxy (IDs below EMU-60) come with T10 to T12.
 
 [[implemented]]
+spec = "095"
+ids = [
+  "GATE-1", "GATE-2", "GATE-3", "GATE-4", "GATE-5", "GATE-6",
+  "GATE-10", "GATE-11", "GATE-12", "GATE-13", "GATE-14", "GATE-15", "GATE-16",
+]
+# T07 (ADR-31): §1, every gate, and §2, gate M0. M1 to M4 are written by the
+# tasks that close them.
+
+[[implemented]]
 spec = "040"
 ids = [
   "HAR-1", "HAR-2", "HAR-3", "HAR-4", "HAR-5",
