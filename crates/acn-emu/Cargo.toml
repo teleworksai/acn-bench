@@ -19,6 +19,7 @@ http.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+tracing.workspace = true
 rand_chacha.workspace = true
 rand_core.workspace = true
 serde.workspace = true
@@ -28,6 +29,9 @@ toml.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

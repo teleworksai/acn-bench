@@ -404,3 +404,215 @@ async fn concurrent_connections_reach_each_link_in_time_order() {
     }
     p.shutdown().await;
 }
+
+/// Cites: EMU-45, EMU-44
+#[tokio::test]
+async fn a_broken_upstream_stream_breaks_the_clients_response() {
+    let up = serve(Router::new().route(
+        "/{*p}",
+        any(|| async {
+            let s = futures_util::stream::iter(vec![
+                Ok(Bytes::from_static(b"data: a\n\n")),
+                Err(std::io::Error::other("upstream broke")),
+            ]);
+            Response::builder()
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .body(Body::from_stream(s))
+                .unwrap()
+        }),
+    ))
+    .await;
+    let c = client(5_000);
+    let (p, _) = proxy(link(Direction::Up, 0), link(Direction::Down, 0), &up).await;
+    let result = async {
+        c.post(format!("http://{}/v1/s", p.addr()))
+            .send()
+            .await?
+            .text()
+            .await
+    }
+    .await;
+    assert!(
+        result.is_err(),
+        "a broken upstream reached the client as {result:?}"
+    );
+    p.shutdown().await;
+}
+
+/// Cites: EMU-44
+#[tokio::test]
+async fn a_lost_middle_event_cuts_a_started_response() {
+    // Event 1 at once (delivered), event 2 at 150 ms (lost: [100, 200 ms)),
+    // event 3 at 300 ms (delivered): the head and event 1 arrive, then the
+    // response breaks.
+    let up = serve(streaming(vec![
+        (0, "data: a\n\n"),
+        (150, "data: b\n\n"),
+        (150, "data: c\n\n"),
+    ]))
+    .await;
+    let c = client(5_000);
+    let (p, _) = proxy(
+        link(Direction::Up, 0),
+        dropping(Direction::Down, 100, 200),
+        &up,
+    )
+    .await;
+    let r = c
+        .post(format!("http://{}/v1/s", p.addr()))
+        .send()
+        .await
+        .expect("the head arrives");
+    let e = r.text().await.unwrap_err();
+    assert!(!e.is_timeout(), "{e}");
+    p.shutdown().await;
+}
+
+/// Cites: EMU-44
+#[tokio::test]
+async fn lost_last_events_leave_the_response_silent() {
+    let up = serve(streaming(vec![(0, "data: a\n\n"), (150, "data: b\n\n")])).await;
+    let c = client(600);
+    let (p, _) = proxy(
+        link(Direction::Up, 0),
+        dropping(Direction::Down, 100, 60_000),
+        &up,
+    )
+    .await;
+    let result = async {
+        c.post(format!("http://{}/v1/s", p.addr()))
+            .send()
+            .await?
+            .text()
+            .await
+    }
+    .await;
+    assert!(result.unwrap_err().is_timeout());
+    p.shutdown().await;
+}
+
+/// Cites: EMU-43, EMU-41
+#[tokio::test]
+async fn every_event_is_held_until_its_delivery_time() {
+    let up = serve(streaming(vec![(0, "data: a\n\n"), (20, "data: b\n\n")])).await;
+    let c = client(5_000);
+    let (p, clock) = proxy(link(Direction::Up, 0), link(Direction::Down, 100), &up).await;
+    let t0 = clock.now_ns();
+    let body = c
+        .post(format!("http://{}/v1/s", p.addr()))
+        .header(ATTEMPT_HEADER, "1")
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(body, "data: a\n\ndata: b\n\n");
+    assert!(clock.now_ns() - t0 >= 120 * MS);
+    let down: Vec<_> = p
+        .records(1)
+        .into_iter()
+        .filter(|r| r.direction == Direction::Down)
+        .collect();
+    assert_eq!(down.len(), 2);
+    for r in down {
+        let deliver = r.fate.outcome.unwrap();
+        assert_eq!(deliver, r.fate.send_ns + 100 * MS);
+        assert!(r.received_ns.unwrap() >= deliver);
+    }
+    p.shutdown().await;
+}
+
+/// Cites: EMU-46, EMU-44
+#[tokio::test]
+async fn responses_keep_their_headers_but_not_hop_by_hop_ones_and_carry_a_length() {
+    let up = serve(Router::new().route(
+        "/{*p}",
+        any(|| async {
+            Response::builder()
+                .header("x-kept", "1")
+                .header("keep-alive", "timeout=5")
+                .header(header::CONNECTION, "x-hop")
+                .header("x-hop", "gone")
+                .body(Body::from("hello"))
+                .unwrap()
+        }),
+    ))
+    .await;
+    let c = client(5_000);
+    let (p, _) = proxy(link(Direction::Up, 0), link(Direction::Down, 0), &up).await;
+    let r = c
+        .get(format!("http://{}/v1/x", p.addr()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.headers().get("x-kept").unwrap(), "1");
+    assert!(r.headers().get("keep-alive").is_none());
+    assert!(r.headers().get("x-hop").is_none());
+    assert_eq!(r.headers().get(header::CONTENT_LENGTH).unwrap(), "5");
+    assert!(p.fault().is_none());
+    p.shutdown().await;
+}
+
+/// Cites: EMU-45
+#[tokio::test]
+async fn sequential_requests_reuse_one_upstream_connection() {
+    // An upstream that counts the connections it accepts.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let a = accepted.clone();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            a.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                let svc = hyper::service::service_fn(|_req| async {
+                    Ok::<_, std::convert::Infallible>(hyper::Response::new(
+                        http_body_util::Full::new(Bytes::from_static(b"ok")),
+                    ))
+                });
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(hyper_util::rt::TokioIo::new(stream), svc)
+                    .await;
+            });
+        }
+    });
+    let c = client(5_000);
+    let (p, _) = proxy(
+        link(Direction::Up, 0),
+        link(Direction::Down, 0),
+        &format!("http://{addr}"),
+    )
+    .await;
+    for _ in 0..5 {
+        let r = c
+            .post(format!("http://{}/v1/x", p.addr()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.text().await.unwrap(), "ok");
+    }
+    assert_eq!(accepted.load(Ordering::SeqCst), 1);
+    p.shutdown().await;
+}
+
+/// Cites: EMU-41
+#[tokio::test]
+async fn http2_is_refused_by_closing_the_connection() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let up = serve(hello()).await;
+    let (p, _) = proxy(link(Direction::Up, 0), link(Direction::Down, 0), &up).await;
+    let mut s = tokio::net::TcpStream::connect(p.addr()).await.unwrap();
+    s.write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+        .await
+        .unwrap();
+    let mut buf = Vec::new();
+    let read = tokio::time::timeout(Duration::from_secs(3), s.read_to_end(&mut buf))
+        .await
+        .expect("the connection stayed open");
+    // Closed, with at most an HTTP/1 error, never an h2 frame.
+    assert!(read.is_err() || !buf.starts_with(b"\x00"));
+    assert!(p.fates().is_empty());
+    p.shutdown().await;
+}
