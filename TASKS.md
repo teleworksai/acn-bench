@@ -113,6 +113,10 @@ T11b sim↔live twin   → CON-25 + LOOP-12: `acn loop twin` runs the decision-r
 T12 live proxy       → EMU part 3: tokio TCP proxy applying the same LinkModel to
                        real sockets; schedule precomputed from seed (CON-5d);
                        boundary timestamps emitted as TRC link-event records.
+                       In three PRs (ADR-36): T12.1 SPEC 020 §5 (EMU-40..49);
+                       T12.2 acn_emu::proxy, an HTTP/1.1 proxy framing messages as
+                       in sim; T12.3 `acn harness run --mode live --scenario`
+                       through a per-replicate proxy, link spans from its records.
 T13 workload gen     → SPEC 050 (GEN): session/turn/call generator from Appendix C
                        parameter sheet; fan-out; think-time; drives mockllm through
                        the proxy; replay from seed; plain-RPC control workload
