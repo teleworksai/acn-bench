@@ -13,6 +13,7 @@ pub mod env;
 pub mod knobs;
 mod net;
 pub mod run;
+pub mod served;
 pub mod wire;
 pub mod workload;
 

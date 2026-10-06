@@ -158,6 +158,17 @@ fn hypothesis(arg: &HypothesisArg, start: &Path) -> Result<Hyp, HarnessError> {
 
 /// The base URL a live run calls, and its host for the manifest (CON-26).
 fn endpoint(backend: Backend, opts: &Opts) -> Result<(String, String), HarnessError> {
+    // HAR-26: the mock the harness serves itself, a fresh one per replicate.
+    if opts.endpoint == crate::served::LOOPBACK {
+        if backend != Backend::Mockllm {
+            return Err(HarnessError::Config(format!(
+                "{} serves the mock, not `{}` (HAR-26)",
+                crate::served::LOOPBACK,
+                backend.as_str()
+            )));
+        }
+        return Ok((String::new(), crate::served::LOOPBACK_HOST.to_owned()));
+    }
     let url = if opts.endpoint.is_empty() {
         match backend {
             Backend::Openai => "https://api.openai.com".to_owned(),
@@ -190,6 +201,25 @@ fn endpoint(backend: Backend, opts: &Opts) -> Result<(String, String), HarnessEr
         .ok_or_else(|| HarnessError::Config("--endpoint has no host".into()))?
         .to_owned();
     Ok((url, host))
+}
+
+/// HAR-23: whether the endpoint at `url` is the backend the run was
+/// configured with.
+async fn probe(
+    backend: Backend,
+    clock: &Arc<acn_emu::clock::WallClock>,
+    url: &str,
+) -> Result<(), HarnessError> {
+    let probe = LiveEnv::new(Arc::clone(clock), url, headers(backend, "-")?)?;
+    let is_mock = probe.probe_is_mock().await?;
+    if is_mock != (backend == Backend::Mockllm) {
+        return Err(HarnessError::BackendMismatch(format!(
+            "configured `{}`, but the endpoint {} the mock's marker (CON-26, HAR-23)",
+            backend.as_str(),
+            if is_mock { "shows" } else { "does not show" }
+        )));
+    }
+    Ok(())
 }
 
 /// The headers of every live request: the tenant on the mock (HAR-42), the
@@ -317,6 +347,13 @@ pub async fn run_async_with(
     let pf = acn_trace::env::preflight(&cfg.start_dir, cfg.engine_hash, hyp.run.clone())?;
 
     let live = cfg.mode == Mode::Live;
+    let served = cfg.opts.endpoint == crate::served::LOOPBACK;
+    if served && !live {
+        return Err(HarnessError::Config(format!(
+            "{} is a `live` endpoint; `sim` calls the mock in process (HAR-26)",
+            crate::served::LOOPBACK
+        )));
+    }
     let clock = Arc::new(acn_emu::clock::WallClock::start());
     let (url, host) = if live {
         let (u, h) = endpoint(cfg.backend, &cfg.opts)?;
@@ -324,17 +361,9 @@ pub async fn run_async_with(
     } else {
         (String::new(), None)
     };
-    if live {
+    if live && !served {
         // HAR-23: the endpoint says what it is before the run gets an identity.
-        let probe = LiveEnv::new(Arc::clone(&clock), &url, headers(cfg.backend, "-")?)?;
-        let is_mock = probe.probe_is_mock().await?;
-        if is_mock != (cfg.backend == Backend::Mockllm) {
-            return Err(HarnessError::BackendMismatch(format!(
-                "configured `{}`, but the endpoint {} the mock's marker (CON-26, HAR-23)",
-                cfg.backend.as_str(),
-                if is_mock { "shows" } else { "does not show" }
-            )));
-        }
+        probe(cfg.backend, &clock, &url).await?;
     }
 
     let mut order_rng = acn_trace::identity::substream_rng(hyp.seed, "run.order")?;
@@ -457,6 +486,24 @@ pub async fn run_async_with(
         for &i in &order {
             let rseed = acn_trace::identity::replicate_seed(hyp.seed, i)?;
             let marker = isolation_marker(&run_id, &cfg.arm, i)?;
+            // HAR-26: the replicate's own mock, built as in `sim`, served until
+            // the replicate ends (it is dropped with this iteration).
+            let mock_server = if served {
+                let mock = Mock::with_profiles(profiles.clone(), rseed)
+                    .map_err(|e| HarnessError::Config(e.to_string()))?;
+                let s = crate::served::ServedMock::start(
+                    mock,
+                    Arc::clone(&clock) as Arc<dyn acn_emu::clock::Clock>,
+                )
+                .await?;
+                probe(cfg.backend, &clock, &s.url()).await?;
+                Some(s)
+            } else {
+                None
+            };
+            let url = mock_server
+                .as_ref()
+                .map_or_else(|| url.clone(), |s| s.url());
             let harness_resource = producer_resource(
                 "acn-harness",
                 env!("CARGO_PKG_VERSION"),
