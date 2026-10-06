@@ -3,8 +3,8 @@
 //! [`SimClock`], driven by a small deterministic scheduler — every lineage's
 //! pending wait or call is registered with it, and calls due at the same instant
 //! go to the mock together through `Mock::handle_batch`, so their order is MLM-7's
-//! and never a scheduler's (HAR-41). Waits sit on the sim engine's event queue
-//! (SPEC 020 EMU-30, EMU-31), which T11.3's network shares. [`LiveEnv`] is `live`: HTTP on the wall clock.
+//! and never a scheduler's (HAR-41). Waits sit on the sim engine's event
+//! queue (SPEC 020 EMU-30, EMU-31), which T11.3's network shares. [`LiveEnv`] is `live`: HTTP on the wall clock.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -59,7 +59,10 @@ struct SimState {
     /// Calls registered at the current instant, in registration order.
     calls: Vec<(u64, Vec<u8>)>,
     done: BTreeMap<u64, Done>,
-    /// A wait the queue refused, reported by `drive`.
+    /// A wait the queue refused, reported by `drive`. Unreachable today: a wait
+    /// is registered only for `t > clock.now`, and the queue's own now (the
+    /// last group it handed out) never passes the clock, which `drive` moves
+    /// only to the queue's next time.
     fault: Option<String>,
 }
 

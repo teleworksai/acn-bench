@@ -143,9 +143,10 @@ fn tree_digest(dir: &Path) -> String {
 
 /// The sim scheduler's behaviour, pinned: the bundles of fixed runs (fixed
 /// build parts, so the manifest does not move with the code) that exercise
-/// waits, retries and same-instant batches of forked children. A change to the
-/// scheduler that changes any of these bytes is a change to every sim run
-/// (SPEC 020 EMU-39, T11.2).
+/// think-time waits, same-instant batches of forked and per-child sub-agents,
+/// and retries with their backoff waits (a mock that answers 429 and 500 a
+/// third of the time). A change to the scheduler that changes any of these
+/// bytes is a change to every sim run (SPEC 020 EMU-39, T11.2).
 ///
 /// Cites: HAR-41, TRC-24, EMU-39
 #[test]
@@ -172,11 +173,25 @@ fn sim_bundles_without_a_scenario_are_pinned() {
         let w = run(&c).unwrap();
         got.push(tree_digest(&w.dir));
     }
+    // Retries: the mock fails 429 and 500 often, so the harness backs off and
+    // retries, and those waits sit on the scheduler too.
+    let faulty = acn_mockllm::profile::PROFILES_TOML
+        .replacen("fault_429_ppm = 0", "fault_429_ppm = 200000", 1)
+        .replacen("fault_500_ppm = 0", "fault_500_ppm = 150000", 1);
+    let d = tempfile::tempdir().unwrap();
+    let mut c = cfg(d.path(), "mock-explicit", &[]);
+    c.replicates = 2;
+    c.profiles = Some(acn_mockllm::profile::Profiles::parse(&faulty).unwrap());
+    let w = run(&c).unwrap();
+    let calls = std::fs::read(w.dir.join("views/call.parquet")).unwrap();
+    assert!(!calls.is_empty());
+    got.push(tree_digest(&w.dir));
     assert_eq!(got, PINNED, "{got:#?}");
 }
 
-const PINNED: [&str; 3] = [
+const PINNED: [&str; 4] = [
     "870dca80719bed383e9bc6546623879046bf60f945847b9bdf044632547b3da9",
     "52475bde2d18c5088835bef35c8b4ddcaeec1b6b2382426d7e26be16128dd6b0",
     "15a1a1cfbcd61ed41b56cd664029ee248b8ee7f26069b990e7114b62eb37afb1",
+    "19e3543ab09f66400fc154e7d6f80a8d5d2527e6e5d212f2c00d488c032664d6",
 ];
