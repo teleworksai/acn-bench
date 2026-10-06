@@ -1,0 +1,29 @@
+# The 5G-IANA drive test (scenarios/measured/5g-iana-2023-01-29) replayed on
+# both directions of one link, sample by sample (SPEC 020 EMU-12): each
+# sample's one-way delay (half the RTT), jitter, loss and rate are in force for
+# its interval, outages drop, and the trace repeats every 5 147 s. The bucket
+# and queue are not in the trace; these sizes are guessed (ADR-29).
+schema_version = 1
+name = "5g-iana-replay"
+
+[[link]]
+name = "radio"
+direction = "up"
+
+[link.trace]
+dir = "../measured/5g-iana-2023-01-29"
+blake3 = "638293c8c9a92a010dd51785a79c1b0d3e55e41ada74f065a0304148fbdc9c42"
+start_s = 0
+burst_bytes = 64000
+queue_bytes = 1000000
+
+[[link]]
+name = "radio"
+direction = "down"
+
+[link.trace]
+dir = "../measured/5g-iana-2023-01-29"
+blake3 = "638293c8c9a92a010dd51785a79c1b0d3e55e41ada74f065a0304148fbdc9c42"
+start_s = 0
+burst_bytes = 256000
+queue_bytes = 4000000
