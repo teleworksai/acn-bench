@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 10 · IDs: 241 · MUSTs: 218 · implemented: 185 · cited: 203
+Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 203
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -170,7 +170,8 @@ Specs: 10 · IDs: 241 · MUSTs: 218 · implemented: 185 · cited: 203
 | HAR-61 | `040-harness.md` | 8 | MUST | yes | `crates/acn-harness/tests/workload.rs` `the_smoke_workload_loads_and_exercises_every_clause` |
 | GEN-1 | `050-workload-generator.md` | 1 | MUST | no | — |
 | GEN-2 | `050-workload-generator.md` | 1 | MUST | no | — |
-| GEN-3 | `050-workload-generator.md` | 1 | MUST | no | — |
+| GEN-3 | `050-workload-generator.md` | 2 | MUST | no | — |
+| GEN-4 | `050-workload-generator.md` | 2 | MUST | no | — |
 | GEN-10 | `050-workload-generator.md` | 2 | MUST | no | — |
 | GEN-11 | `050-workload-generator.md` | 2 | MUST | no | — |
 | GEN-12 | `050-workload-generator.md` | 2 | MUST | no | — |
