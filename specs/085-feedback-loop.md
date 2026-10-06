@@ -1,6 +1,6 @@
 # SPEC 085 — The layered, verifiable feedback loop
 
-**Status:** Draft v0.3 (October 2026; v0.3 thins the verdict trajectory to at most fifty verdicts before the last (LOOP-10(c)), so a grid of a few thousand bundles runs in hours rather than days; v0.2 makes L1 implementable: the layer of an evidence object, the chain `acn evidence verify` walks, the runner's strategies, batches, stop rule, refusals and aborts, the loop report and its regeneration on the build that made it, and where decisions are made; `bisect` is deferred). **Inherits:** SPEC 000, 010, 080. **Prefix:** LOOP. **Crates:** `acn-hyp` (loop runner, frozen set), `acn-ctl`, `acn-cli`.
+**Status:** Draft v0.4 (October 2026; v0.4 specifies L2: what `acn loop twin` runs, the twin object it writes, and how `acn evidence verify` walks it (LOOP-12, LOOP-16); v0.3 thins the verdict trajectory to at most fifty verdicts before the last (LOOP-10(c)), so a grid of a few thousand bundles runs in hours rather than days; v0.2 makes L1 implementable: the layer of an evidence object, the chain `acn evidence verify` walks, the runner's strategies, batches, stop rule, refusals and aborts, the loop report and its regeneration on the build that made it, and where decisions are made; `bisect` is deferred). **Inherits:** SPEC 000, 010, 080. **Prefix:** LOOP. **Crates:** `acn-hyp` (loop runner, frozen set), `acn-ctl`, `acn-cli`.
 **Purpose:** define how a POC moves from an idea to a citable result as a loop of five layers, where each layer is verified by a machine check before its output can feed the next, where feedback flows only to artifacts a layer is allowed to change, and where the whole chain from a cited number back to source, seed and scenario is verifiable by one command.
 
 ## 0. Why layered
@@ -121,14 +121,28 @@ The loop runner MUST NOT write anything outside `runs/`.
 - If `runs/loop/<loop_id>/report.json` exists, it is never overwritten: the loop refuses to start, with `loop_exists`.
 - If a bundle the loop would make already exists, it is verified (TRC-23) and used instead of being re-run, but only when its manifest's `build_hash` and `engine_hash` equal the binary's, since only then does the same run_id regenerate the same bytes (CON-5c, CON-31). Otherwise the loop aborts with `build_mismatch`, naming the bundle; a re-run after a code change starts from a `runs/` without it.
 
-**LOOP-12** `acn loop twin --loop <loop_id> [--top k]` executes L2:
-- it runs the decision cells of the final verdict (`decision_cells`, HYP-22) and the *k* best and worst configurations;
-- it records divergence per quantity;
-- it writes a new L2 object under `runs/loop/<loop_id>/twin/`.
+**LOOP-12** `acn loop twin --loop <loop_id> [--top k] [--runs-dir <dir>]` MUST execute L2 for a loop report, as follows:
+- **Gate.** It first passes the L2 gate of LOOP-4: the report regenerates byte for byte (LOOP-14), or the twin is refused with `twin_refused` and nothing is run.
+- **Cells.** The loop runner chooses the cells to twin from the report and its final verdict, and from nothing else (LOOP-15): the decision cells of every slice (`decision_cells`, HYP-22), then the *k* best and the *k* worst cells, ranked as LOOP-11 ranks the best and worst configurations. `k` defaults to 1, so the report's own best and worst are always twinned; `--top 0` twins the decision cells alone. A cell chosen twice is twinned once. Cells are taken in slice-key order and then in HYP-14 order.
+- **Runs.** For each chosen cell, each arm is run once in `live`, on the mock, with the inputs of the L1 bundle it twins: the same hypothesis, workload, model, parameter values, arm and replicate count (LOOP-15), so the replicate seeds and indices pair by index (HYP-22). The mock is served by `acn loop twin` on the loopback interface, from the embedded profiles, on the run's wall clock, and every run option is at its default (LOOP-10). Without a scenario in the L1 bundles (`scenario_hash` zero), the live runs have none either (HYP-20).
+- **Reuse.** A live bundle whose run_id already exists under the runs directory is verified (TRC-23) and used, when its `build_hash` and `engine_hash` equal the binary's; otherwise the twin aborts with `build_mismatch`. A live bundle does not regenerate, so measuring again means a runs directory without it (`--runs-dir`).
+- **Verdict.** It computes the L2 verdict over the L1 final verdict's bundles and the live bundles, through the function of HYP-20, and writes it under `runs/verdicts/` as `acn hyp verdict` would. That verdict records the divergence per quantity (HYP-22).
+- **Object.** It writes the twin object of LOOP-16 and prints one JSON object with `ok`, `loop_id`, `twin` (the object's path), `verdict_id`, `run_ids` (the live bundles, ascending), `twinned` (every decision cell twinned) and `twin_failed` (CON-8). `ok` reports that the twin completed, whatever the divergence: a simulator shown to diverge is a result, recorded as `twin_failed` in the verdict.
 
-`acn loop promote --loop <loop_id> --provider <name>` executes L3 for one provider and writes its per-provider verdicts as a new L3 object under `runs/loop/<loop_id>/promote/<provider>/`.
+`acn loop promote --loop <loop_id> --provider <name>` executes L3 for one provider and writes its per-provider verdicts as a new L3 object under `runs/loop/<loop_id>/promote/<provider>/`. Its format lands with real providers, T30.
 
-Each of these objects is a separate file with its own `layer` and `derived_from` (LOOP-1, LOOP-2); `report.json` and `report.md` are never changed. Their formats land with the live twin, T11b, and with real providers, T30.
+Each of these objects is a separate file with its own `layer` and `derived_from` (LOOP-1, LOOP-2); `report.json` and `report.md` are never changed.
+
+**LOOP-16** The twin object MUST be written to `runs/loop/<loop_id>/twin/<verdict_id>/twin.json`, the verdict_id being the L2 verdict's, as JSON in the form of `verdict.json` (HYP-15) with `"format": "acn-bench/loop-twin/v1"`. If the file exists it is never overwritten, and the twin fails with `twin_exists`. It records:
+- `layer`, a copy of the derived layer: `"L2"`, because its live bundles run on the mock (LOOP-1);
+- the `loop_id` it extends and the L1 final verdict's `verdict_id`;
+- `top`, the *k* it ran with;
+- per twinned cell, in the order of LOOP-12: the slice key, the cell's parameter values, why it was chosen (`decision`, `best`, `worst`, every reason that applies), and per arm the L1 run_id it twins (`derived_from`) and the live bundle's run_id and bundle_digest;
+- the L2 `verdict_id`, its verdict and reasons, and its twin label (none, `partially-twinned`; HYP-22);
+- per slice, per twinned cell, per quantity with a tolerance: the tolerance, the treatment, control and effect divergences (`null` where undefined or not measured), and whether all are within it;
+- the `engine_hash` and `build_hash` of the binary that ran it.
+
+`acn evidence verify <loop_id>` MUST also walk every twin object under `runs/loop/<loop_id>/twin/`: its `layer` equals the derived one, its `loop_id` and L1 verdict_id are the report's, each `derived_from` run_id is a bundle of the report, each live bundle verifies with its views recomputed (TRC-23, TRC-35) and is the twin of its L1 bundle (the same inputs, in `live`), and its L2 verdict recomputes byte for byte (HYP-15). A live bundle is not regenerated: it is a measurement, and its chain ends in the L1 bundles it twins (LOOP-2).
 
 **LOOP-13** The loop runner MUST treat the hypothesis file and the workload files as read-only input and MUST record the hypothesis hash in every bundle. If the hypothesis file changes between batches, the loop MUST abort with `hypothesis_changed`; if a workload file changes, it MUST abort with `input_changed`. The files are re-read:
 - before every batch;
@@ -196,7 +210,13 @@ So the frozen code decides, and the run path only runs.
 - `tests/accept/evidence_chain.rs` — LOOP-1, LOOP-2:
   - an L1 chain (report → verdict → bundles) verifies;
   - verification fails on a broken hash, on a recorded `layer` that differs from the derived one, and on a verdict no report names.
-  - The L2 and L3 links are added with T11b and T30, and the evidence pages (LOOP-30) with T07.
+  - an L2 chain (twin object → L2 verdict → live bundles → the L1 bundles they twin) verifies, and fails on a twin object whose `derived_from` names a bundle the report does not, or whose L2 verdict does not recompute.
+  - The L3 links are added with T30, and the evidence pages (LOOP-30) with T07.
+- `crates/acn-hyp/tests/loop_twin.rs` — LOOP-12, LOOP-16:
+  - the cells chosen are the decision cells and the *k* best and worst, once each, in order;
+  - a twin on a report that does not regenerate is refused before any run;
+  - the twin object records the pairs, the divergence and the derived layer, and is never overwritten;
+  - an existing live bundle from another build aborts with `build_mismatch`.
 - `crates/acn-hyp/tests/hypothesis_changed.rs` — LOOP-13, HYP-4.
 - `crates/acn-hyp/tests/loop_run.rs` — LOOP-1, LOOP-10, LOOP-11, LOOP-15:
   - the layer derived for each kind of object;
