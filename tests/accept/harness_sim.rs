@@ -122,6 +122,13 @@ fn sim_is_the_mock_only_and_netem_is_not_yet_defined() {
     );
 }
 
+/// A model, a workload and the knobs varied.
+type Case = (
+    &'static str,
+    PathBuf,
+    &'static [(&'static str, &'static str)],
+);
+
 /// The digest of every file of a bundle but `logs/`, in path order.
 fn tree_digest(dir: &Path) -> String {
     let mut h = blake3::Hasher::new();
@@ -147,7 +154,7 @@ fn sim_bundles_without_a_scenario_are_pinned() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../workloads/p4-fanout.toml"
     ));
-    let cases: [(&str, PathBuf, &[(&str, &str)]); 3] = [
+    let cases: [Case; 3] = [
         ("mock-explicit", smoke(), &[]),
         (
             "mock-auto",
