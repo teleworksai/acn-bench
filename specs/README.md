@@ -6,7 +6,7 @@
 | 010 | 010-trace-schema.md | TRC | draft v0.2 (ACN profile of OpenTelemetry; ADR-2) |
 | 020 | 020-emulation.md | EMU | draft v0.3 (§2 link models and trace-driven links, §3 scenario files, §4 the sim engine, for T10 to T11; §6 measured traces, for T08; the live proxy to write in T12) |
 | 030 | 030-mock-inference.md | MLM | draft v0.1 (mock inference: wire format, prompt tokens, three cache models, timing, replies; implemented by T03) |
-| 040 | 040-harness.md | HAR | draft v0.1 (harness: agent loop, six cache-discipline knobs, two wire dialects, recording, isolation, workloads; implemented by T04) |
+| 040 | 040-harness.md | HAR | draft v0.3 (harness: agent loop, six cache-discipline knobs, two wire dialects, recording, isolation, workloads; implemented by T04) |
 | 050 | 050-workload-generator.md | GEN | to write (T13) |
 | 060 | 060-replayer.md | RPL | to write (T50) |
 | 070 | 070-control-plane.md | CTL | to write (T14) |

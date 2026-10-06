@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::link::{Direction, Fate, Link, LinkError, LinkModel as _};
+use crate::link::{Direction, Fate, Link, LinkError, LinkModel as _, MAX_NS};
 use crate::scenario::Scenario;
 
 /// Why the engine refused something.
@@ -82,7 +82,10 @@ impl<T> EventQueue<T> {
             );
         }
         let seq = self.seq;
-        self.seq += 1;
+        self.seq = seq.checked_add(1).ok_or_else(|| SimError {
+            reason: "past",
+            message: "the queue's sequence numbers are exhausted".into(),
+        })?;
         self.events.insert((time_ns, seq), item);
         Ok(seq)
     }
@@ -162,7 +165,6 @@ pub enum CallOutcome {
 #[derive(Debug, Clone)]
 struct Response {
     path: String,
-    count: usize,
     received: Vec<Option<Received>>,
     last_received_ns: Option<i64>,
 }
@@ -189,10 +191,14 @@ impl Network {
         let mut downs = BTreeMap::new();
         for l in links {
             let name = l.spec().name.clone();
-            match l.spec().direction {
-                Direction::Up => ups.insert(name, l),
-                Direction::Down => downs.insert(name, l),
+            let dir = l.spec().direction;
+            let previous = match dir {
+                Direction::Up => ups.insert(name.clone(), l),
+                Direction::Down => downs.insert(name.clone(), l),
             };
+            if previous.is_some() {
+                return refuse("path", format!("two links are named {name} {dir}"));
+            }
         }
         let mut paths = BTreeMap::new();
         for (name, up) in ups {
@@ -244,7 +250,9 @@ impl Network {
 
     /// Register call `call`'s response on `path`'s downlink: one message per
     /// `(send_ns, bytes)`, in order (EMU-32). Each is offered when the clock
-    /// reaches its send time.
+    /// reaches its send time. Everything is checked before anything is
+    /// registered: the call's request must have been delivered, and the send
+    /// times must not decrease, precede the clock or exceed 2^62 ns.
     pub fn respond(
         &mut self,
         call: u64,
@@ -252,11 +260,33 @@ impl Network {
         messages: &[(i64, u64)],
     ) -> Result<(), SimError> {
         self.path(path)?;
-        if messages.is_empty() {
-            return refuse("call", format!("call {call}'s response has no message"));
+        match self.requests.get(&call) {
+            None => return refuse("call", format!("call {call} sent no request")),
+            Some(f) if f.outcome.is_err() => {
+                return refuse("call", format!("call {call}'s request was not delivered"));
+            }
+            Some(_) => {}
         }
         if self.responses.contains_key(&call) {
             return refuse("call", format!("call {call} already has a response"));
+        }
+        let Some(first) = messages.first() else {
+            return refuse("call", format!("call {call}'s response has no message"));
+        };
+        if first.0 < self.pending.now() {
+            return refuse(
+                "past",
+                format!("call {call}'s response starts before the clock"),
+            );
+        }
+        if messages.windows(2).any(|w| w[1].0 < w[0].0) {
+            return refuse("call", format!("call {call}'s send times decrease"));
+        }
+        if messages.last().is_some_and(|m| m.0 > MAX_NS) {
+            return refuse(
+                "range",
+                format!("call {call}'s response ends beyond 2^62 ns"),
+            );
         }
         for (i, (t, b)) in messages.iter().enumerate() {
             self.pending.push(*t, (call, i, *b))?;
@@ -265,7 +295,6 @@ impl Network {
             call,
             Response {
                 path: path.to_owned(),
-                count: messages.len(),
                 received: vec![None; messages.len()],
                 last_received_ns: None,
             },
@@ -283,6 +312,9 @@ impl Network {
     /// downlink, in `(time, seq)` order, and return them with their receive
     /// times (EMU-32, EMU-34).
     pub fn advance(&mut self, t_ns: i64) -> Result<Vec<Received>, SimError> {
+        if t_ns > MAX_NS {
+            return refuse("range", format!("{t_ns} ns is beyond 2^62 ns"));
+        }
         let mut out = Vec::new();
         while self.pending.next_time().is_some_and(|n| n <= t_ns) {
             let Some((t, group)) = self.pending.pop_group() else {
@@ -317,6 +349,42 @@ impl Network {
         Ok(out)
     }
 
+    /// The fate of call `call`'s request.
+    #[must_use]
+    pub fn request_fate(&self, call: u64) -> Option<Fate> {
+        self.requests.get(&call).copied()
+    }
+
+    /// Call `call`'s response messages so far, by index; `None` for one not
+    /// yet carried (EMU-36 needs every message's fate).
+    #[must_use]
+    pub fn messages(&self, call: u64) -> Option<&[Option<Received>]> {
+        self.responses.get(&call).map(|r| r.received.as_slice())
+    }
+
+    /// The link of `path` in `direction`: its name, stages and windows, for the
+    /// spans and events of EMU-36 and EMU-37.
+    #[must_use]
+    pub fn link(&self, path: &str, direction: Direction) -> Option<&Link> {
+        self.paths.get(path).map(|p| match direction {
+            Direction::Up => &p.up,
+            Direction::Down => &p.down,
+        })
+    }
+
+    /// Forget a finished call. A call with messages still to carry is kept.
+    pub fn forget(&mut self, call: u64) -> bool {
+        let pending = self
+            .responses
+            .get(&call)
+            .is_some_and(|r| r.received.iter().any(Option::is_none));
+        if pending {
+            return false;
+        }
+        self.responses.remove(&call);
+        self.requests.remove(&call).is_some()
+    }
+
     /// How call `call` ended, once its request and every response message
     /// have been carried (EMU-35); `None` until then.
     #[must_use]
@@ -336,16 +404,10 @@ impl Network {
                 .last()
                 .and_then(|m| m.received_ns)
                 .map(CallOutcome::Received),
-            Some(first_lost) => Some(
-                got[first_lost..]
-                    .iter()
-                    .find_map(|m| m.received_ns)
-                    .filter(|_| r.count > 1)
-                    .map_or(CallOutcome::Lost, |at_ns| CallOutcome::Cut {
-                        first_lost,
-                        at_ns,
-                    }),
-            ),
+            Some(first_lost) => Some(got[first_lost..].iter().find_map(|m| m.received_ns).map_or(
+                CallOutcome::Lost,
+                |at_ns| CallOutcome::Cut { first_lost, at_ns },
+            )),
         }
     }
 }
