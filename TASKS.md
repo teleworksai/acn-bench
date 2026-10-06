@@ -101,6 +101,11 @@ T10b trace-driven link → SPEC 020 §10 Q1 (ADR-32): how a measured trace drive
                        scenarios/synthetic/5g-iana-replay.toml.
 T11 sim engine       → EMU part 2: discrete-event engine on SimClock; message-level
                        transport abstraction; bit-identical replay test (CON-5c).
+                       In three PRs (ADR-34): T11.1 SPEC 020 §4 and acn_emu::sim
+                       (event queue, network); T11.2 the harness's sim scheduler on
+                       the queue, bundles unchanged; T11.3 `acn run --scenario`,
+                       link and scenario spans (EMU-36, EMU-37, EMU-39). Scenarios
+                       in `acn loop run` touch crates/acn-hyp: an env-change PR.
 T11b sim↔live twin   → CON-25 + LOOP-12: `acn loop twin` runs the decision-relevant
                        configs of a loop report in `live`, records per-quantity
                        divergence; tolerance from the hypothesis file; refuses

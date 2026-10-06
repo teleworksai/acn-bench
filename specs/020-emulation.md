@@ -1,6 +1,6 @@
 # SPEC 020 — Link emulation: models, engine, proxy and measured traces
 
-**Status:** Draft v0.2 (October 2026; v0.2: trace-driven links, EMU-10 to EMU-12 and EMU-22, T10b). Partial: §2, link models, and §3, scenario files, are written for T10 and T10b; §6, measured traces, for T08. The sim engine (§4, T11, numbered from 30) and the live proxy (§5, T12, numbered from 40) are to write. **Inherits:** SPEC 000, 010. **Prefix:** EMU. **Crate:** `acn-emu` (Class B); `scenarios/synthetic/` is Class A, and `scenarios/measured/` is in the frozen set (CON-7).
+**Status:** Draft v0.3 (October 2026; v0.3: the sim engine, §4, T11; v0.2: trace-driven links, EMU-10 to EMU-12 and EMU-22, T10b). Partial: §2, link models, and §3, scenario files, are written for T10 and T10b; §6, measured traces, for T08. §4, the sim engine, is written for T11 (implemented across T11.1 to T11.3). The live proxy (§5, T12, numbered from 40) is to write. **Inherits:** SPEC 000, 010. **Prefix:** EMU. **Crate:** `acn-emu` (Class B); `scenarios/synthetic/` is Class A, and `scenarios/measured/` is in the frozen set (CON-7).
 **Purpose:**
 - define a link model: what one direction of a link does to each message, as a pure function of its parameters, its random sub-stream and the messages sent so far (§2);
 - define the scenario file that names a run's links (§3);
@@ -99,6 +99,38 @@ It MUST return the scenario's hash and its link parameters. `Scenario::build` MU
 
 The loader MUST load the trace under EMU-64 and MUST refuse it, with reason `trace`, when the trace does not load, when the hash differs (CON-27(a)), when `start_s` is outside the period, or when the trace has no positive rate in the link's direction. It MUST refuse a trace link that also has an outage, loss, rate or delay stage, with reason `parse`, before it reads those stages.
 
+## 4. The sim engine
+
+The sim engine runs a replicate's traffic over a scenario's links on virtual time (CON-5(c)). It has two parts: an event queue, which the harness's scheduler is built on, and a *network*, which carries a call's request and response across a path. T11.1 implements both in `acn_emu::sim`; T11.2 rebuilds the harness's sim scheduler on the queue; T11.3 wires a scenario into `acn run` and emits the spans of EMU-36 and EMU-37.
+
+**EMU-30** **The event queue.** Events are ordered by `(time_ns, seq)`, where `seq` is the order in which they were added. The queue's clock starts at 0 and moves only forward, to the time of the earliest pending event. An event for a time earlier than the clock MUST be refused.
+
+**EMU-31** **Groups.** The queue MUST hand out every event due at the earliest pending time as one group, in `seq` order, and only then move on. The harness takes calls due at one instant from one group, which is what lets it submit them together (HAR-41).
+
+**EMU-32** **Paths and messages.** A *path* is the pair of links of one name in a scenario, `up` and `down`, and every call crosses exactly one path. A call's request is one message on the uplink, sent when the call is made. Its response is one or more messages on the downlink: a body that is not streamed is one message of the body's bytes, sent when the server responds. Each event of a streamed response is one message of its wire bytes (`data: …` and the blank line), sent at the time the server emits it. A response message is offered to the downlink when the network's clock reaches its send time, so the messages of concurrent calls meet the link in time order (EMU-1), and messages with the same send time in the order the responses were registered.
+
+**EMU-33** **Arrival.** The server MUST see a request at its uplink delivery time, not its send time. Requests delivered at the same instant MUST reach the server together, in the order they were sent (HAR-41, MLM-7).
+
+**EMU-34** **Order within a response.** A response's messages are received in order: a message is received at the later of its delivery time and the time the message before it in the same response was received. A response is received when its last message is.
+
+**EMU-35** **Drops.**
+- **A dropped request or body.** The call's response never arrives, so the call ends at its deadline as a timeout.
+- **A dropped event of a streamed response.** The events before it are received. The stream ends with a transport failure when the next event of that response would have been received, or at the deadline as a timeout if there is no later event.
+
+**EMU-36** **Link spans.** In a run with a scenario, every message MUST be recorded as an `acn.link` span (TRC-15) under the call it belongs to, with these attributes:
+- `enqueue_ns`: the send time;
+- `dequeue_ns`: the delivery time, or the send time for a dropped message;
+- `applied_delay_ms`: the hold and the delay of EMU-1, in milliseconds;
+- `rate_limited_ms`: the rate wait;
+- `dropped` and `reordered`;
+- the link's name and direction.
+
+**EMU-37** **The scenario span.** A run with a scenario MUST record one `acn.scenario` span (TRC-16), with ids from the run's `trace.ids` stream (TRC-27). It carries the scenario file's bytes and hash, and an `acn.scenario.outage` event for each outage window or trace outage segment that a message met, with cause `handover`, `scheduled` or `trace`.
+
+**EMU-38** **Determinism.** The same seed, scenario and sequence of offered calls MUST give the same fates, the same groups and the same receive times, on every machine (CON-5(c)).
+
+**EMU-39** **No scenario, no network.** A run with no scenario has no network: calls go straight to the server, as before T11. It MUST record a zero `scenario_hash` and no link or scenario span, and MUST draw nothing for the network, so its bundles are byte-identical to the same run before T11.
+
 ## 6. Measured traces
 
 **EMU-60** A measured trace MUST be a directory `scenarios/measured/<slug>/`, with `<slug>` lowercase ASCII letters, digits and `-`, holding exactly two files: `trace.toml` and `provenance.toml`. Both MUST be regular files, not links. Both are parsed with unknown keys refused at every level. `trace.toml` is the run input: scenarios name a trace by its hash (EMU-64), read as working-tree bytes (CON-27(a)). `provenance.toml` is not read by a run; it is committed by the frozen set's `env-hash` (CON-7), as the trace is.
@@ -136,6 +168,16 @@ Every number MUST be finite. A trace MUST hold at least two samples.
 - output that breaks EMU-62, rather than write it.
 
 ## 9. Acceptance tests
+
+- `crates/acn-emu/tests/sim_engine.rs` — EMU-30 to EMU-35, EMU-38 (T11.1):
+  - the queue's order, groups and refusal of the past;
+  - a request delivered later than sent, and requests delivered at one instant;
+  - response messages of concurrent calls offered to the downlink in time order;
+  - the order rule within a response;
+  - each drop of EMU-35;
+  - a golden vector of a network's events on `cellular-handover`;
+  - two runs on `5g-iana-replay` giving identical results.
+- The harness's acceptance suites (T11.2, T11.3) — EMU-36, EMU-37, EMU-39: a run with no scenario unchanged byte for byte, a scenario run twice byte-identical, `link.parquet` filled, a timeout recorded for a drop.
 
 - `crates/acn-emu/tests/link_models.rs` — EMU-1 to EMU-9:
   - **The statistics of each stage**, over many messages and several seeds:

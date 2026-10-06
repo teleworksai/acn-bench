@@ -52,10 +52,12 @@ ids = [
   "EMU-1", "EMU-2", "EMU-3", "EMU-4", "EMU-5", "EMU-6", "EMU-7", "EMU-8", "EMU-9",
   "EMU-10", "EMU-11", "EMU-12",
   "EMU-20", "EMU-21", "EMU-22",
+  "EMU-30", "EMU-31", "EMU-32", "EMU-33", "EMU-34", "EMU-35", "EMU-38",
   "EMU-60", "EMU-61", "EMU-62", "EMU-63", "EMU-64", "EMU-65",
 ]
 # T08 (ADR-30): §6, measured traces. T10 (ADR-32): §2, link models, and §3,
-# scenario files; T10b (ADR-33): trace-driven links. The sim engine (§4) and the live proxy (§5) come with T11, T12.
+# scenario files; T10b (ADR-33): trace-driven links. T11.1 (ADR-34): the sim
+# engine; EMU-36, EMU-37 and EMU-39 come with T11.2 and T11.3. The sim engine (§4) and the live proxy (§5) come with T11, T12.
 
 [[implemented]]
 spec = "095"
