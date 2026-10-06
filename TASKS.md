@@ -96,6 +96,9 @@ T10 link models      → SPEC 020 (EMU) part 1: LinkModel trait; delay/jitter, r
                        token bucket, i.i.d. and Gilbert–Elliott burst loss, reorder,
                        scheduled outages (handover gaps); scenario TOML loader with
                        deny_unknown_fields; property tests on model statistics.
+T10b trace-driven link → SPEC 020 §10 Q1 (ADR-32): how a measured trace drives a link
+                       (replay per sample, or fit to the §2 models); lifts EMU-22's
+                       refusal and adds its hash check.
 T11 sim engine       → EMU part 2: discrete-event engine on SimClock; message-level
                        transport abstraction; bit-identical replay test (CON-5c).
 T11b sim↔live twin   → CON-25 + LOOP-12: `acn loop twin` runs the decision-relevant

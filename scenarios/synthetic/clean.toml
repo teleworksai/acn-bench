@@ -1,0 +1,12 @@
+# A link that does nothing: every message is delivered when it is sent
+# (SPEC 020 EMU-2). The baseline for a treatment that impairs the link.
+schema_version = 1
+name = "clean"
+
+[[link]]
+name = "path"
+direction = "up"
+
+[[link]]
+name = "path"
+direction = "down"
