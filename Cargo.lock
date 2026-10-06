@@ -52,14 +52,24 @@ name = "acn-emu"
 version = "0.1.0"
 dependencies = [
  "acn-trace",
+ "axum",
  "blake3",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "rand_chacha 0.10.0",
  "rand_core 0.10.1",
+ "reqwest",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
  "toml",
+ "tracing",
 ]
 
 [[package]]
