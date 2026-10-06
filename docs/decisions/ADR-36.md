@@ -24,7 +24,7 @@ On a TCP byte stream the questions are different:
   - A write waits for the delivery time on the clock, and is never early. Timer slack makes it later by up to a few milliseconds, and the recorded receive time is the actual write time. A spin-wait for sub-millisecond accuracy is not done; if it ever is, it is a run option (CON-29).
 - **The impairment schedule is precomputed (CON-5(d), EMU-40).** EMU-9 makes every draw depend on the message index alone. Building each link from the replicate seed before the proxy accepts a connection therefore fixes the whole schedule before traffic starts. What remains time-dependent (rates, holds, the order of concurrent messages) is the network's response to the traffic itself, not a random choice.
 - **Upstream (EMU-45).**
-  - One upstream connection per downstream connection, opened at its first forward. Its setup, TLS included, counts as server time after the delivery, not as uplink time.
+  - Upstream connections are kept per downstream connection: an idle one is reused, and another is opened when a late forward still holds the first. Its setup, TLS included, counts as server time after the delivery, not as uplink time.
   - A refused or reset upstream closes the downstream connection, so the client sees a transport error.
   - Forwarding runs apart from the downstream connection's task. A client that gives up does not cancel a request already delivered (EMU-33).
   - TLS to a provider is compiled only with `real-api` (HAR-20), through `hyper-rustls`, which the lock file already holds.

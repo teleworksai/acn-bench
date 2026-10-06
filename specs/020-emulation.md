@@ -168,7 +168,7 @@ In `live` mode the same link models act on real sockets: the harness talks to it
 
 **EMU-42** **Send times.** A message's send time MUST be the run's clock, less the origin, at the moment the proxy has read the whole message. Reading the clock and offering the message to its link MUST happen together, one message at a time per link, so that send times reach a link in non-decreasing order (EMU-1). A response's send time is thus the upstream's emission time plus the hop to the proxy (the loopback for the mock; the real network path for a provider).
 
-**EMU-43** **Delivery.** The proxy MUST write a delivered message no earlier than its delivery time, and MUST write the messages of one connection in order. The time it finishes writing the message is its receive time in the proxy's records (EMU-47). Timer slack makes that later than the delivery time by up to a few milliseconds. The harness's own exchange timestamps (EMU-34) are its client's readings of the same clock as the bytes arrive, so they are no earlier than the proxy's.
+**EMU-43** **Delivery.** The proxy MUST write a delivered message no earlier than its delivery time, and MUST write the messages of one connection in order. The time it hands the message's bytes to the connection's writer is its receive time in the proxy's records (EMU-47). Timer slack makes that later than the delivery time by up to a few milliseconds, and the kernel's send adds the loopback's own latency. The harness's own exchange timestamps (EMU-34) are its client's readings of the same clock as the bytes arrive, so they are no earlier than the proxy's.
 
 **EMU-44** **Drops.** A dropped message cannot be cut out of a TCP stream, so the proxy MUST turn each drop into what the client of EMU-35 sees in `sim`:
 - **A lost request.** It is not forwarded, and the connection stays silent, so the attempt ends at its deadline.
@@ -177,7 +177,7 @@ In `live` mode the same link models act on real sockets: the harness talks to it
 
 The proxy writes the response head with the response's first delivered message, and frames the body as chunks, or with the upstream's `Content-Length` when the body is one message, never delimited by closing the connection, so that an abort always reaches the client as an error.
 
-**EMU-45** **Upstream.** The proxy MUST open one upstream connection for each downstream connection, when that connection's first request is forwarded, and close it with it.
+**EMU-45** **Upstream.** The proxy MUST keep upstream connections for each downstream connection: it forwards a request over an idle one of that connection, opens a new one when none is idle (a late forward, EMU-33, may still hold one), and closes them with it.
 - **Time.** The connection's setup, including TLS, is part of the request's time at the server, after its delivery, not of the uplink.
 - **Failure.** A refused, failed or reset upstream connection makes the proxy close the downstream connection at once, so the client sees a transport error. A request already offered keeps its fate.
 - **After the client leaves.** A delivered request MUST be forwarded even when its client has already given up, and its response still crosses the downlink (EMU-33). It is recorded by no attempt, so forwarding runs apart from the downstream connection.
