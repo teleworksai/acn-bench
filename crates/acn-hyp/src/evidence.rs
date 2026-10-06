@@ -409,7 +409,7 @@ pub fn twin_gate(
 
 /// Whether `v` is a verdict of the file whose hash is `hash`: its verdict_id is
 /// recomputed from that hash and its bundles (HYP-15).
-fn judged_by(hash: &Digest, v: &Verdict) -> bool {
+pub(crate) fn judged_by(hash: &Digest, v: &Verdict) -> bool {
     let pairs: Vec<(Digest, Digest)> = v.bundles.iter().map(|b| (b.0, b.1)).collect();
     verdict::verdict_id(hash, &pairs).is_ok_and(|id| id == v.verdict_id)
 }

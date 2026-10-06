@@ -24,6 +24,10 @@ fn base() -> Hypothesis {
 /// slow knob=true cell decides `max_over_knobs`. `keep` decides which
 /// treatment cells are made, by knob and mode.
 fn arms(h: &Hypothesis, keep: &dyn Fn(&str, &str) -> bool) -> Vec<BundleData> {
+    arms_in(h, "sim", keep)
+}
+
+fn arms_in(h: &Hypothesis, mode: &str, keep: &dyn Fn(&str, &str) -> bool) -> Vec<BundleData> {
     let base = alt(4, 0.40, 0.46);
     let shifted = |e: f64| base.iter().map(|x| x.map(|x| x + e)).collect();
     let mut out = Vec::new();
@@ -31,11 +35,12 @@ fn arms(h: &Hypothesis, keep: &dyn Fn(&str, &str) -> bool) -> Vec<BundleData> {
         out.push(bundle(
             h,
             &Spec::new(
-                &format!("c-{m}"),
+                &format!("{mode}-c-{m}"),
                 &[("knob", "false"), ("mode", m)],
                 "control",
                 shifted(0.0),
-            ),
+            )
+            .mode(mode),
         ));
         for k in ["false", "true"] {
             if !keep(k, m) {
@@ -49,11 +54,12 @@ fn arms(h: &Hypothesis, keep: &dyn Fn(&str, &str) -> bool) -> Vec<BundleData> {
             out.push(bundle(
                 h,
                 &Spec::new(
-                    &format!("t-{k}-{m}"),
+                    &format!("{mode}-t-{k}-{m}"),
                     &[("knob", k), ("mode", m)],
                     "treatment",
                     shifted(e),
-                ),
+                )
+                .mode(mode),
             ));
         }
     }
@@ -148,15 +154,42 @@ fn the_first_best_and_worst_a_twin_ranks_are_the_reports_own() {
         .values()
         .map(|p| acn_hyp::read::read(p).unwrap())
         .collect();
-    let l1 = verdict(&h, bundles, ex.bin().engine_hash).unwrap();
+    let l1: Verdict = verdict(&h, bundles, ex.bin().engine_hash).unwrap();
     assert_eq!(l1.verdict_id, c.verdict_id);
     let chosen = choose(&h, &l1, 1).unwrap();
     for (why, field) in [(Why::Best, "best"), (Why::Worst, "worst")] {
         let picked: Vec<&Chosen> = chosen.iter().filter(|c| c.reasons.contains(&why)).collect();
         assert_eq!(picked.len(), 1, "{field}");
+        assert_eq!(r[field]["slice"].as_str(), Some(picked[0].slice.as_str()));
+        let effect =
+            l1.slices[picked[0].slice_index].effects[&picked[0].cell_index]["cached_token_ratio"]
+                .value;
+        assert_eq!(r[field]["effect"].as_f64(), effect, "{field}");
         let want = &r[field]["cell"];
         for (k, v) in &picked[0].cell {
             assert_eq!(want[k].as_str(), Some(v.text().as_str()), "{field}.{k}");
         }
     }
+}
+
+/// Cites: LOOP-12
+#[test]
+fn a_twin_starts_only_from_an_l1_verdict_of_its_own_hypothesis() {
+    let h = base();
+    let l1 = judge(&h, arms(&h, &|_, _| true));
+    let other = {
+        let (h, _dir) = common::candidate(
+            &common::BASE.replace("title = \"a test\"", "title = \"other\""),
+            "t1",
+        );
+        h.unwrap()
+    };
+    let e = choose(&other, &l1, 1).unwrap_err();
+    assert_eq!(e.code, Code::TwinRefused, "{e}");
+    // A verdict over sim and live bundles is L2, not a loop's final verdict.
+    let mut both = arms(&h, &|_, _| true);
+    both.extend(arms_in(&h, "live", &|_, _| true));
+    let l2 = verdict(&h, both, engine()).unwrap();
+    let e = choose(&h, &l2, 1).unwrap_err();
+    assert_eq!(e.code, Code::TwinRefused, "{e}");
 }

@@ -47,15 +47,46 @@ pub struct Chosen {
 
 /// LOOP-12's cells: the decision cells of every slice of the L1 final verdict
 /// `l1`, and the `top` best and `top` worst cells by the effect of the first
-/// primary quantity, each cell once, in slice-key and then HYP-14 order. A
-/// verdict with no such cell is refused with `nothing_to_twin`.
+/// primary quantity, each cell once, in slice-key and then HYP-14 order.
+///
+/// `l1` must be an L1 verdict of `h`, or the choice is refused with
+/// `twin_refused`. A verdict with no such cell is refused with
+/// `nothing_to_twin`.
 pub fn choose(h: &Hypothesis, l1: &Verdict, top: u32) -> Result<Vec<Chosen>, LoopError> {
+    if !crate::evidence::judged_by(&h.hash(), l1) {
+        return loop_run::err(
+            Code::TwinRefused,
+            format!(
+                "verdict {} is not a verdict of {} (LOOP-12)",
+                l1.verdict_id.to_hex(),
+                h.id()
+            ),
+        );
+    }
+    if crate::layer::of_verdict(l1) != crate::layer::Layer::L1 {
+        return loop_run::err(
+            Code::TwinRefused,
+            format!(
+                "verdict {} is not an L1 verdict: a twin starts from a loop's final verdict (LOOP-12)",
+                l1.verdict_id.to_hex()
+            ),
+        );
+    }
     let mut chosen: BTreeMap<(usize, usize), BTreeSet<Why>> = BTreeMap::new();
     for (si, s) in l1.slices.iter().enumerate() {
         for &ci in &s.eval.decision_cells {
-            if ci < s.data.cells().len() {
-                chosen.entry((si, ci)).or_default().insert(Why::Decision);
+            // A decision cell the slice does not hold is the verdict's
+            // fault: the choice fails closed rather than dropping it.
+            if ci >= s.data.cells().len() {
+                return loop_run::err(
+                    Code::Internal,
+                    format!(
+                        "decision cell #{ci} of slice `{}` is not among its cells",
+                        s.key
+                    ),
+                );
             }
+            chosen.entry((si, ci)).or_default().insert(Why::Decision);
         }
     }
     let k = usize::try_from(top).unwrap_or(usize::MAX);
@@ -107,7 +138,9 @@ pub fn records_twin_failed(v: &Verdict) -> bool {
 
 /// The decision cells of `l1` that `l2` does not twin (HYP-22), labelled by
 /// slice and cell key. A decision cell that cannot be found counts as not
-/// twinned, so the check fails closed.
+/// twinned, so the check fails closed. This is not a gate by itself: it
+/// checks neither hypothesis nor layer, which [`crate::evidence::promote_gate`]
+/// and the twin check first.
 #[must_use]
 pub fn untwinned(l1: &Verdict, l2: &Verdict) -> Vec<String> {
     let l2_slices: BTreeMap<&str, &SliceVerdict> =

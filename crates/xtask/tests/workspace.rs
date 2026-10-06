@@ -1337,7 +1337,22 @@ struct WriterUses {
     found: Vec<(String, String)>,
 }
 
+/// Whether `attrs` hold `#[cfg(test)]`.
+fn cfg_test(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        a.path().is_ident("cfg") && a.parse_args::<syn::Ident>().is_ok_and(|i| i == "test")
+    })
+}
+
 impl<'a> syn::visit::Visit<'a> for WriterUses {
+    fn visit_item_mod(&mut self, m: &'a syn::ItemMod) {
+        // A `#[cfg(test)]` module is not compiled into the library, so it is
+        // not a path by which the crate writes (HYP-4): its fixtures may.
+        if cfg_test(&m.attrs) {
+            return;
+        }
+        syn::visit::visit_item_mod(self, m);
+    }
     fn visit_item_fn(&mut self, f: &'a syn::ItemFn) {
         self.fns.push(f.sig.ident.to_string());
         syn::visit::visit_item_fn(self, f);
@@ -1442,4 +1457,22 @@ fn acn_hyp_writes_files_only_in_verdict_write_and_loop_out() {
     };
     syn::visit::Visit::visit_file(&mut v, &probe);
     assert_eq!(v.found.len(), 3, "{:?}", v.found);
+}
+
+/// Cites: HYP-4
+#[test]
+fn the_writer_scan_skips_only_test_modules() {
+    let file: syn::File = syn::parse_str(
+        "fn lib() { std::fs::write(\"a\", b\"\").ok(); }
+         #[cfg(test)] mod tests { fn t() { std::fs::write(\"b\", b\"\").ok(); } }
+         #[cfg(feature = \"x\")] mod gated { fn g() { std::fs::write(\"c\", b\"\").ok(); } }",
+    )
+    .expect("parse");
+    let mut v = WriterUses {
+        fns: Vec::new(),
+        found: Vec::new(),
+    };
+    syn::visit::Visit::visit_file(&mut v, &file);
+    let at: Vec<&str> = v.found.iter().map(|(f, _)| f.as_str()).collect();
+    assert_eq!(at, ["lib", "g"]);
 }

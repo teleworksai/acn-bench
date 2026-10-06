@@ -1738,9 +1738,10 @@ pub(crate) fn read_report(report_path: &Path, bin: Binary) -> Result<Recorded, L
     // The report is read from runs/ itself: neither it nor its loop directory
     // may be a link to another tree (HYP-4).
     let linked = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
-    if linked(report_path) || report_path.parent().is_some_and(linked) {
+    // runs/loop/<loop_id>/report.json: none of the four may be a link.
+    if report_path.ancestors().take(4).any(linked) {
         return Err(bad_report(format!(
-            "{} or its loop directory is a symbolic link; a report is read from runs/ itself",
+            "{}, its loop directory, runs/loop or runs/ is a symbolic link; a report is read from runs/ itself",
             report_path.display()
         )));
     }
@@ -1933,7 +1934,148 @@ pub fn regenerate(
 
 #[cfg(test)]
 mod tests {
-    use super::{Ranked, best_first, worst_first};
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::{Args, Binary, Executor, Ranked, Request, Setup, best_first, worst_first};
+    use crate::slice::{Cell, Value};
+    use crate::verdict::Role;
+    use acn_trace::identity::{BuildParts, Digest, Mode};
+    use std::path::{Path, PathBuf};
+
+    const ONE_KNOB: &str = r#"[poc]
+id = "zz"
+title = "t"
+
+[hypothesis]
+statement = "s"
+
+[varies]
+tool_order_stable = { kind = "bool" }
+
+[measures]
+primary = ["cached_token_ratio"]
+
+[control]
+description = "d"
+config = { tool_order_stable = true }
+
+[design]
+search = "grid"
+replicates = 4
+twin_required = false
+
+[falsifier]
+predicate = "max_over_knobs(abs(effect(cached_token_ratio))) < 0.001"
+
+[expected]
+outcome = "pass"
+"#;
+
+    /// The harness on the mock, with profiles fast enough for the wall clock.
+    struct Harness {
+        build: acn_trace::identity::BuildInfo,
+        profiles: acn_mockllm::profile::Profiles,
+    }
+
+    impl Executor for Harness {
+        fn run(&mut self, r: &Request) -> Result<PathBuf, String> {
+            let cfg = acn_harness::run::RunConfig {
+                workload: r.workload.clone(),
+                backend: acn_harness::wire::Backend::Mockllm,
+                model: r.model.clone(),
+                mode: r.mode,
+                arm: r.arm.as_str().to_owned(),
+                replicates: r.replicates,
+                vary: r.vary.clone(),
+                opts: acn_harness::agent::Opts {
+                    endpoint: r.endpoint.clone(),
+                    ..acn_harness::agent::Opts::default()
+                },
+                hypothesis: acn_harness::run::HypothesisArg::File(r.hypothesis.clone()),
+                runs_dir: r.runs_dir.clone(),
+                start_dir: r.start_dir.clone(),
+                engine_hash: Digest::of(b"engine"),
+                build: self.build.clone(),
+                profiles: Some(self.profiles.clone()),
+            };
+            acn_harness::run::run(&cfg)
+                .map(|w| w.dir)
+                .map_err(|e| e.to_string())
+        }
+        fn check_model(&self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn check_workload(&self, _: &Path) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// Cites: LOOP-15, HAR-26
+    #[test]
+    fn a_live_bundle_has_the_run_id_the_loop_runner_computes_for_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("zz.toml"), ONE_KNOB).unwrap();
+        let smoke = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../workloads/harness-smoke.toml"
+        ))
+        .unwrap();
+        // No think time: live waits on the wall clock.
+        let fast = smoke
+            .replace(
+                "min = 1_000_000_000, max = 3_000_000_000",
+                "min = 0, max = 0",
+            )
+            .replace("min = 500_000_000, max = 1_500_000_000", "min = 0, max = 0");
+        std::fs::write(d.join("w.toml"), fast).unwrap();
+        let profiles = acn_mockllm::profile::Profiles::parse(
+            &acn_mockllm::profile::PROFILES_TOML
+                .replace("itl_ns = 20_000_000", "itl_ns = 20_000")
+                .replace("itl_jitter_ns = 2_000_000", "itl_jitter_ns = 2_000")
+                .replace("prefill_base_ns = 20_000_000", "prefill_base_ns = 20_000"),
+        )
+        .unwrap();
+        let build = BuildParts {
+            cargo_lock: Digest::of(b"lock"),
+            rust_toolchain: Digest::of(b"toolchain"),
+            cargo_config: Digest::of(b"config"),
+            source_hash: Digest::of(b"build"),
+            target: "test",
+            profile: "debug",
+            features: "",
+            rustflags: "",
+        }
+        .info()
+        .unwrap();
+        let bin = Binary {
+            engine_hash: Digest::of(b"engine"),
+            build_hash: Digest::from_hex(&build.build_hash).unwrap(),
+        };
+        let mut ex = Harness { build, profiles };
+        let h = crate::load_in(&d.join("zz.toml"), d).unwrap();
+        let args = Args {
+            workloads: vec![d.join("w.toml").display().to_string()],
+            models: vec!["mock-auto".into()],
+            budget: 8,
+        };
+        let runs = d.join("runs");
+        let s = Setup::new(&h, &args, &runs, bin, &ex).unwrap();
+        let cell: Cell = [("tool_order_stable".to_owned(), Value::Bool(false))].into();
+        // `make` refuses a bundle whose run_id is not the one computed here.
+        let live = s
+            .make(&mut ex, &runs, &cell, Role::Treatment, Mode::Live)
+            .unwrap();
+        assert_eq!(live.manifest.mode, "live");
+        assert_eq!(
+            live.run_id,
+            s.run_id(&cell, Role::Treatment, Mode::Live).unwrap()
+        );
+        let sim = s
+            .make(&mut ex, &runs, &cell, Role::Treatment, Mode::Sim)
+            .unwrap();
+        assert_ne!(sim.run_id, live.run_id);
+    }
 
     fn r(slice: usize, cell: usize, effect: f64) -> Ranked {
         Ranked {
