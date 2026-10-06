@@ -943,9 +943,20 @@ fn link_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
             }
         };
         let enqueue = req_int(s, "acn.link.enqueue_ns")?;
+        // A step named for a link and direction (`<link>.<direction>.<…>`,
+        // SPEC 020 EMU-37) is in force on that link alone; a step of the whole
+        // scenario, on every link.
+        let scope = format!(
+            "{}.{}.",
+            req_str(s, "acn.link.id")?,
+            req_str(s, "acn.link.direction")?
+        );
+        let scoped = |st: &str| st.starts_with(&scope);
+        let any_scoped = steps.iter().any(|(_, _, st)| st.split('.').count() >= 3);
         let step = steps
             .iter()
             .rev()
+            .filter(|(_, _, st)| !any_scoped || scoped(st))
             .find(|(t, _, _)| *t <= enqueue)
             .map(|(_, _, st)| st.clone());
         let outage = match outages

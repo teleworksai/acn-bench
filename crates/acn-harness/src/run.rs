@@ -278,6 +278,12 @@ pub async fn run_async_with(
                 .map_err(|e| HarnessError::Config(format!("scenario: {e}")))?;
             let toml = std::fs::read_to_string(path)
                 .map_err(|e| HarnessError::Config(format!("scenario: {e}")))?;
+            // The text recorded in the scenario span is the text the hash names.
+            if blake3::hash(toml.as_bytes()).to_hex().as_str() != sc.hash {
+                return Err(HarnessError::Config(
+                    "scenario: the file changed while it was read".into(),
+                ));
+            }
             let names: BTreeSet<&str> = sc.links.iter().map(|l| l.name.as_str()).collect();
             if names.len() != 1 {
                 return Err(HarnessError::Config(format!(
@@ -671,9 +677,10 @@ struct ScenarioLog {
     end_ns: i64,
     /// By (time, link name, direction, kind, window or sample): the event.
     events: BTreeMap<EventKey, ScenarioEvent>,
-    /// Trace segments stepped into: (link, direction, sample) to the first
-    /// send time and the segment's values as JSON.
-    stepped: BTreeMap<(String, u8, usize), (i64, String)>,
+    /// Trace segment occurrences stepped into: (link, direction, sample,
+    /// occurrence start) to the first send time in it and the segment's
+    /// values as JSON. A sample recurs once per period of the trace.
+    stepped: BTreeMap<(String, u8, usize, i64), (i64, String)>,
 }
 
 impl ScenarioLog {
@@ -716,6 +723,8 @@ impl ScenarioLog {
             }
             if let (Some(tr), Some(k)) = (&link.trace, f.sample) {
                 let (_, start, end) = tr.segment_at(f.send_ns);
+                // The first occurrence can begin before the replicate does.
+                let start = start.max(0);
                 if dropped_by_outage && tr.segments.get(k).is_some_and(|s| s.outage) {
                     self.events.insert(
                         (start, link.name.clone(), d, 0, k),
@@ -736,7 +745,7 @@ impl ScenarioLog {
                     );
                     let first = self
                         .stepped
-                        .entry((link.name.clone(), d, k))
+                        .entry((link.name.clone(), d, k, start))
                         .or_insert((f.send_ns, params));
                     first.0 = first.0.min(f.send_ns);
                 }
@@ -746,7 +755,7 @@ impl ScenarioLog {
 
     /// Add the events to the scenario span, in order (EMU-37).
     fn emit(&mut self, span: &mut opentelemetry_sdk::trace::Span) {
-        for ((link, d, k), (t, params)) in std::mem::take(&mut self.stepped) {
+        for ((link, d, k, _), (t, params)) in std::mem::take(&mut self.stepped) {
             let dir = if d == 0 { "up" } else { "down" };
             self.events.insert(
                 (t, link.clone(), d, 1, k),

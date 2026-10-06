@@ -1,0 +1,18 @@
+# The uplink holds what is sent in its first 50 ms (SPEC 020 EMU-7): the first
+# request waits for the window's end, and its link span says so (EMU-36).
+schema_version = 1
+name = "uplink-hold"
+
+[[link]]
+name = "path"
+direction = "up"
+
+[[link.outage.window]]
+start_ms = 0
+end_ms = 50
+mode = "hold"
+cause = "handover"
+
+[[link]]
+name = "path"
+direction = "down"

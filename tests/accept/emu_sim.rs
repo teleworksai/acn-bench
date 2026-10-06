@@ -298,3 +298,127 @@ fn a_scenario_needs_one_path_and_sim() {
         "nothing written"
     );
 }
+
+fn f(span: &SpanRow, key: &str) -> Option<f64> {
+    match span.attrs.get(key)? {
+        AttrValue::Float(v) => Some(*v),
+        _ => None,
+    }
+}
+
+/// Cites: EMU-36, EMU-37
+#[test]
+fn a_held_request_records_its_hold_and_its_window() {
+    let d = tempfile::tempdir().unwrap();
+    let mut c = cfg(
+        d.path(),
+        "workloads/harness-smoke.toml",
+        "mock-explicit",
+        &[],
+    );
+    c.replicates = 1;
+    let w = run_with_scenario(&c, Some(&fixture("uplink-hold.toml"))).unwrap();
+    let t = trace(&w.dir);
+    let first = named(&t, "acn.link")
+        .into_iter()
+        .filter(|l| s(l, "acn.link.direction").as_deref() == Some("up"))
+        .min_by_key(|l| l.start_ns)
+        .unwrap();
+    assert_eq!(i(first, "acn.link.enqueue_ns"), Some(0));
+    assert_eq!(f(first, "acn.link.applied_delay_ms"), Some(50.0));
+    assert_eq!(i(first, "acn.link.dequeue_ns"), Some(50_000_000));
+    let outages: Vec<_> = t
+        .events
+        .iter()
+        .filter(|e| e.name == "acn.scenario.outage")
+        .collect();
+    assert_eq!(outages.len(), 1);
+    assert_eq!(
+        outages[0].attrs.get("cause"),
+        Some(&AttrValue::String("handover".into()))
+    );
+}
+
+/// Cites: EMU-37, EMU-12
+#[test]
+fn a_trace_run_steps_each_direction_through_its_samples_in_order() {
+    let d = tempfile::tempdir().unwrap();
+    let mut c = cfg(
+        d.path(),
+        "workloads/harness-smoke.toml",
+        "mock-explicit",
+        &[],
+    );
+    c.replicates = 2;
+    let w = run_with_scenario(&c, Some(&repo("scenarios/synthetic/5g-iana-replay.toml"))).unwrap();
+    let t = trace(&w.dir);
+    let steps: Vec<_> = t
+        .events
+        .iter()
+        .filter(|e| e.name == "acn.scenario.step")
+        .collect();
+    assert!(!steps.is_empty());
+    for dir in ["up", "down"] {
+        assert!(
+            steps.iter().any(|e| matches!(e.attrs.get("step"), Some(AttrValue::String(st)) if st == &format!("radio.{dir}.0"))),
+            "no first step on {dir}"
+        );
+    }
+    for e in &steps {
+        let Some(AttrValue::String(p)) = e.attrs.get("params") else {
+            panic!("no params")
+        };
+        let v: serde_json::Value = serde_json::from_str(p).unwrap();
+        for k in [
+            "sample",
+            "loss_ppm",
+            "rate_bps",
+            "delay_ns",
+            "jitter_ns",
+            "outage",
+        ] {
+            assert!(v.get(k).is_some(), "{k} missing from {p}");
+        }
+    }
+    // The scenario span's events are in time order (EMU-37), and recorded once
+    // although both replicates met them.
+    let scenario = named(&t, "acn.scenario")[0];
+    let times: Vec<i64> = t
+        .events
+        .iter()
+        .filter(|e| e.span_id == scenario.span_id)
+        .map(|e| e.time_ns)
+        .collect();
+    assert!(times.windows(2).all(|w| w[0] <= w[1]));
+    let names: Vec<String> = steps
+        .iter()
+        .filter_map(|e| match e.attrs.get("step") {
+            Some(AttrValue::String(st)) => Some(st.clone()),
+            _ => None,
+        })
+        .collect();
+    let distinct: std::collections::BTreeSet<&String> = names.iter().collect();
+    assert_eq!(distinct.len(), names.len(), "a step recorded twice");
+    // The link view's step is the one of the message's own direction.
+    bundle::verify_views(&w.dir).unwrap();
+    let views = acn_trace::schema::views().unwrap();
+    let batches = acn_trace::parquet_io::read_view(&w.dir, views.view("link").unwrap()).unwrap();
+    let mut rows = 0;
+    for b in batches {
+        let col = |name: &str| {
+            b.column_by_name(name)
+                .unwrap()
+                .as_any()
+                .downcast_ref::<arrow_array::StringArray>()
+                .unwrap()
+                .clone()
+        };
+        let (dir, step) = (col("direction"), col("scenario_step"));
+        for r in 0..b.num_rows() {
+            let prefix = format!("radio.{}.", dir.value(r));
+            assert!(!arrow_array::Array::is_null(&step, r) && step.value(r).starts_with(&prefix));
+            rows += 1;
+        }
+    }
+    assert!(rows > 0);
+}

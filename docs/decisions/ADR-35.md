@@ -15,21 +15,24 @@ T11.1 gave `acn_emu::sim` a network, and T11.2 put the harness's scheduler on it
   2. Then send the calls made at the instant up the link.
   3. Then hand the requests delivered at the instant to the mock as one batch.
   4. Only then move the clock, to the next wait, arrival, message or deadline.
-  - Waking and ending go together because without a network an attempt's end is itself a wait (the exchange sleeps until it), woken in the same group as every other wait due then. Two separate steps would let lineages resume, and so draw from the replicate's shared streams, in another order. The first implementation had them apart, and a test caught it.
+  - Waking and ending go together because without a network an attempt's end is itself a wait (the exchange sleeps until it), woken in the same group as every other wait due then. Two separate steps would let lineages resume, and so draw from the replicate's shared streams, in another order. The first implementation had them apart: a fan-out run showed the drift, and a two-lineage test now pins the order.
 - **An attempt ends as soon as its end is known.** The end is known:
   - at its last message's offer, for a success;
   - at the offer of the message after a lost one, for a cut;
   - at its deadline, for a timeout.
 
   The exchange then waits until that end, so a lineage never resumes late.
-- **Messages after an attempt's end are not recorded (EMU-36).** After a timeout the mock's response still crosses the downlink, so it still shapes later fates there, but it belongs to no attempt and gets no span. SPEC 020's EMU-36 now says "every message an attempt carried by the time it ended".
+- **Messages after an attempt's end are not recorded (EMU-36).** After a timeout the mock's response still crosses the downlink, so it still shapes later fates there, but it belongs to no attempt and gets no span. SPEC 020's EMU-36 now says "every message an attempt carried by the time it ended": received by then, or lost and sent by then. The first version kept every message the link had accepted, which made link spans end after their `chat`; the review caught it.
+- **A request delivered after its attempt ended still reaches the mock (EMU-33).** The mock builds its cache from it and its response crosses the downlink, as a server whose client gave up still would. The first version dropped such requests silently, so an outage that held requests past their timeout also hid them from the mock.
+- **The network forgets ended calls** once nothing of theirs is still in flight, so a long replicate's memory does not grow with every message it ever carried.
 - **How the spans are built.**
   - **Link spans** come from a per-replicate `acn-emu` provider that shares the harness's id generator through `SharedIdGenerator` (`acn-trace/src/ids.rs`). Their parent is the call's `chat` span, which is now ended after them, through its context.
   - **The scenario span** comes from a run-level `acn-emu` provider on the run's `trace.ids` stream. It is started at 0 before the first replicate, so every link span can link to it. Its provider allows unlimited events per span, because the SDK's default of 128 would drop events, and the collector refuses a span that dropped some.
 - **Scenario events (EMU-37)** are gathered from every replicate's fates and recorded once each, since replicates share the scenario's timeline:
   - an outage event per window met (held or dropped);
   - an outage event per occurrence of a trace outage segment that dropped a message, over that occurrence's link times;
-  - a step event the first time a message is sent in each trace sample, with the sample's values as JSON.
+  - a step event the first time a message is sent in each occurrence of a trace sample (a sample recurs once per period), named `<link>.<direction>.<sample>`, with the sample's values as JSON.
+  - The ingest's `link.parquet` took the latest step of the whole scenario as the step in force, so uplink messages were labelled with downlink steps. It now prefers the steps named for the message's own link and direction (`crates/acn-trace/src/ingest.rs`, outside the frozen set), and keeps the scenario-wide rule for steps that name none.
 - **A whole-run comparison cannot show that a zero-delay path changes nothing.** The scenario's hash enters `run_id`, `run_id` enters every prompt's isolation marker (HAR-42), and the mock orders a batch by prompt hash (MLM-7). So two such runs answer a batch's identical calls in different orders. The equivalence is therefore tested on one session with one marker (`crates/acn-harness/tests/network.rs`), where every exchange, batches included, is the same.
 - **A request's body is kept until it reaches the mock.** A body that was lost is dropped at once.
 

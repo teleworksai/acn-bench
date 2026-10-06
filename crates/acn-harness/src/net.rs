@@ -5,7 +5,7 @@
 //! cut stream's next receipt, and its deadline (HAR-24), and the exchange it
 //! returns carries receive times, not the mock's send times.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use acn_emu::link::{Direction, Fate};
 use acn_emu::scenario::Scenario;
@@ -25,8 +25,6 @@ struct Inflight {
     deadline_ns: i64,
     stream: bool,
     up: LinkRecord,
-    /// The request body, until the request reaches the mock.
-    body: Option<Vec<u8>>,
     /// The mock's answer, once the request arrived.
     answer: Option<Outcome>,
 }
@@ -38,6 +36,14 @@ pub(crate) struct NetState {
     /// Requests in flight, by delivery time (EMU-33).
     arrivals: EventQueue<u64>,
     inflight: BTreeMap<u64, Inflight>,
+    /// The bodies of delivered requests not yet at the mock, and whether they
+    /// stream. Kept apart from the attempts: a request delivered after its
+    /// attempt ended still reaches the mock (EMU-33), and its response still
+    /// crosses the downlink, recorded by no attempt (EMU-36).
+    requests: BTreeMap<u64, (Vec<u8>, bool)>,
+    /// Ended attempts the network still holds, forgotten once nothing of
+    /// theirs is in flight.
+    ended: BTreeSet<u64>,
     /// Every fate, in the order the network decided it, for EMU-37.
     fates: Vec<(Direction, Fate)>,
 }
@@ -66,6 +72,8 @@ impl NetState {
             net,
             arrivals: EventQueue::new(),
             inflight: BTreeMap::new(),
+            requests: BTreeMap::new(),
+            ended: BTreeSet::new(),
             fates: Vec::new(),
         })
     }
@@ -89,6 +97,7 @@ impl NetState {
         self.fates.push((Direction::Up, fate));
         if let Ok(at) = fate.outcome {
             self.arrivals.push(at, id)?;
+            self.requests.insert(id, (body.to_vec(), stream));
         }
         self.inflight.insert(
             id,
@@ -102,7 +111,6 @@ impl NetState {
                     fate,
                     received_ns: fate.outcome.ok(),
                 },
-                body: fate.outcome.is_ok().then(|| body.to_vec()),
                 answer: None,
             },
         );
@@ -115,17 +123,14 @@ impl NetState {
     }
 
     /// The requests that arrive at `now`, with their bodies, in the order they
-    /// were sent.
+    /// were sent: every one, whether or not its attempt has ended (EMU-33).
     pub(crate) fn take_arrivals(&mut self, now: i64) -> Vec<(u64, Vec<u8>)> {
         let ids = match self.arrivals.next_time() {
             Some(t) if t <= now => self.arrivals.pop_group().map_or_else(Vec::new, |(_, g)| g),
             _ => Vec::new(),
         };
         ids.into_iter()
-            .filter_map(|id| {
-                let body = self.inflight.get_mut(&id)?.body.take()?;
-                Some((id, body))
-            })
+            .filter_map(|id| self.requests.get(&id).map(|(b, _)| (id, b.clone())))
             .collect()
     }
 
@@ -133,7 +138,7 @@ impl NetState {
     /// one message per event at its emission time, anything else as one
     /// message of its body at the mock's response time.
     pub(crate) fn answer(&mut self, id: u64, o: Outcome) -> Result<(), SimError> {
-        let stream = self.inflight.get(&id).is_some_and(|f| f.stream);
+        let stream = self.requests.remove(&id).is_some_and(|(_, stream)| stream);
         let messages: Vec<(i64, u64)> = if stream && o.status == 200 && !o.chunks.is_empty() {
             o.chunks
                 .iter()
@@ -176,9 +181,16 @@ impl NetState {
         for id in ids {
             if let Some(ex) = self.resolve(id, now) {
                 self.inflight.remove(&id);
+                self.ended.insert(id);
                 resolved.push((id, ex));
             }
         }
+        // Free what the network holds for ended attempts, once nothing of
+        // theirs is still to arrive or to be offered.
+        let net = &mut self.net;
+        let requests = &self.requests;
+        self.ended
+            .retain(|id| requests.contains_key(id) || !net.forget(*id));
         Ok(Settled { resolved })
     }
 
@@ -203,13 +215,32 @@ impl NetState {
             End::Received(t) | End::Cut(t) => t,
             End::Timeout => f.deadline_ns,
         };
+        // EMU-36: the messages the attempt carried by its end: received by
+        // then, or lost and sent by then.
+        let bytes_of = |k: usize| match &f.answer {
+            Some(o) if f.stream && o.status == 200 && !o.chunks.is_empty() => {
+                o.chunks.get(k).map_or(0, |c| sse_len(&c.data))
+            }
+            Some(o) => u64::try_from(o.body.len()).unwrap_or(u64::MAX),
+            None => 0,
+        };
         let mut links = vec![f.up];
-        links.extend(messages.iter().flatten().map(|r| LinkRecord {
-            direction: Direction::Down,
-            bytes: 0,
-            fate: r.fate,
-            received_ns: r.received_ns,
-        }));
+        links.extend(
+            messages
+                .iter()
+                .enumerate()
+                .filter_map(|(k, m)| m.map(|r| (k, r)))
+                .filter(|(_, r)| match r.received_ns {
+                    Some(t) => t <= end_ns,
+                    None => r.fate.send_ns <= end_ns,
+                })
+                .map(|(k, r)| LinkRecord {
+                    direction: Direction::Down,
+                    bytes: bytes_of(k),
+                    fate: r.fate,
+                    received_ns: r.received_ns,
+                }),
+        );
         let mut ex = Exchange {
             start_ns: f.start_ns,
             end_ns,
@@ -223,15 +254,6 @@ impl NetState {
         };
         if let Some(o) = &f.answer {
             let streamed = f.stream && o.status == 200 && !o.chunks.is_empty();
-            // The offered messages are a prefix of the response (its send times
-            // do not decrease), so the k-th down record is message k.
-            for (k, l) in links.iter_mut().skip(1).enumerate() {
-                l.bytes = if streamed {
-                    o.chunks.get(k).map_or(0, |c| sse_len(&c.data))
-                } else {
-                    u64::try_from(o.body.len()).unwrap_or(u64::MAX)
-                };
-            }
             // The messages received by the end, before any lost one.
             let got: Vec<(usize, i64)> = messages
                 .iter()
