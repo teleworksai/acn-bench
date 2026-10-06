@@ -60,11 +60,16 @@ fn the_5g_trace_gives_each_direction_its_schedule() {
     assert_eq!(up.segments.len(), 198);
     assert_eq!(up.period_ns, (5_121 + 26) * SECOND);
     // Sample 0: RTT avg 36 ms, stdev 13 ms, no loss, ul 2 403 kbps, dl 120 858.
+    // The jitter half-range is 13 ms * sqrt(3) / 2, rounded.
     let s0 = up.segments[0];
     assert_eq!(
         (s0.from_ns, s0.delay_ns, s0.jitter_ns, s0.loss_ppm),
-        (0, 18 * MS, 6_500_000, 0)
+        (0, 18 * MS, 11_258_330, 0)
     );
+    // Sample 3 is an outage with no RTT: it carries sample 2's delay (52 / 2).
+    assert!(up.segments[3].outage);
+    assert_eq!(up.segments[3].delay_ns, 26 * MS);
+    assert_eq!(up.segments[3].jitter_ns, up.segments[2].jitter_ns);
     assert_eq!(
         (s0.rate_bps, down.segments[0].rate_bps),
         (2_403_000, 120_858_000)
@@ -196,14 +201,27 @@ fn each_segment_s_parameters_apply_and_draws_stay_by_index() {
     }
     let lost = fa.iter().filter(|f| f.outcome.is_err()).count();
     assert!((800..1_200).contains(&lost), "{lost} of 2 000");
-    // Changing the second segment's loss leaves every message's jitter in the
-    // first segment as it was: the delay draw is by index.
+    // Changing the second segment's loss leaves every message of the next
+    // period's first segment (sent after the change) as it was: the draws are
+    // by index, not by how many messages the changed segment dropped.
     let mut b = a;
     b.segments[1].loss_ppm = 0;
     let fb = run(b);
-    for (x, y) in fa.iter().zip(&fb).take(1_000) {
+    // The first 30 ms of that segment are skipped: there the order rule holds
+    // messages behind the changed segment's last deliveries (30 ms delay).
+    for (x, y) in fa.iter().zip(&fb).skip(2_100).take(900) {
         assert_eq!(x.outcome, y.outcome);
     }
+    assert_ne!(
+        fa[1_000..2_000]
+            .iter()
+            .filter(|f| f.outcome.is_err())
+            .count(),
+        fb[1_000..2_000]
+            .iter()
+            .filter(|f| f.outcome.is_err())
+            .count()
+    );
 }
 
 /// Cites: EMU-12, EMU-22, EMU-20, EMU-21
@@ -282,3 +300,170 @@ fn a_trace_reference_that_does_not_hold_is_refused() {
     s.segments[0].outage = true;
     assert_eq!(Link::new(traced(s), 1).unwrap_err().reason, "trace");
 }
+
+fn sample(t_s: f64, loss: f64, kbps: f64, rtt_avg: Option<f64>) -> acn_emu::trace::Sample {
+    acn_emu::trace::Sample {
+        t_s,
+        loss,
+        rtt_ms: rtt_avg.map(|avg| acn_emu::trace::Rtt {
+            avg,
+            min: avg,
+            max: avg,
+            stdev: 0.0,
+        }),
+        dl_kbps: kbps,
+        ul_kbps: kbps,
+    }
+}
+
+fn hand_trace(samples: Vec<acn_emu::trace::Sample>, interval: f64) -> acn_emu::trace::Trace {
+    acn_emu::trace::Trace {
+        schema_version: 1,
+        sample_interval_s: interval,
+        samples,
+    }
+}
+
+/// Cites: EMU-12
+#[test]
+fn a_zero_rate_is_an_outage_even_without_loss() {
+    let t = hand_trace(
+        vec![
+            sample(0.0, 0.0, 8.0, Some(10.0)),
+            sample(1.0, 0.0, 0.0, Some(10.0)),
+        ],
+        1.0,
+    );
+    let s = TraceSchedule::from_trace(&t, Direction::Up, 0, 100, 100).unwrap();
+    assert!(!s.segments[0].outage);
+    assert!(s.segments[1].outage);
+    assert_eq!(s.segments[1].rate_bps, 0);
+}
+
+/// Cites: EMU-10, EMU-12
+#[test]
+fn a_message_leaving_as_an_outage_begins_keeps_the_carried_delay() {
+    // [0, 1 s): 1 000 bytes/s, 50 ms one way; [1, 2 s): outage; [2, 3 s) again.
+    let t = hand_trace(
+        vec![
+            sample(0.0, 0.0, 8.0, Some(100.0)),
+            sample(1.0, 1.0, 8.0, None),
+            sample(2.0, 0.0, 8.0, Some(100.0)),
+        ],
+        1.0,
+    );
+    let s = TraceSchedule::from_trace(&t, Direction::Up, 0, 1_000, 1 << 30).unwrap();
+    let mut l = Link::new(traced(s), 1).unwrap();
+    assert_eq!(l.transmit(0, 1_000).unwrap().outcome, Ok(50 * MS));
+    assert_eq!(l.transmit(500 * MS, 500).unwrap().outcome, Ok(550 * MS));
+    // 500 bytes of credit accrue over [0.5 s, 1 s): it leaves exactly as the
+    // outage begins, and is still delayed 50 ms.
+    let f = l.transmit(500 * MS, 500).unwrap();
+    assert_eq!((f.rate_wait_ns, f.outcome), (500 * MS, Ok(1_050 * MS)));
+}
+
+/// Cites: EMU-9, EMU-12
+#[test]
+fn changing_an_outage_leaves_later_messages_draws_unchanged() {
+    // Segment 1 is an outage in `a` and a fast lossless segment in `b`;
+    // segment 2, after it, has loss and jitter. A bucket that never empties.
+    let mk = |outage: bool| {
+        let mut s = schedule(
+            vec![
+                seg(0, 1 << 40, 0, 10, 0),
+                seg(1, if outage { 0 } else { 1 << 40 }, 0, 10, 0),
+                seg(2, 1 << 40, 300_000, 20, 4),
+            ],
+            3,
+        );
+        s.burst_bytes = 1 << 40;
+        Link::new(traced(s), 21).unwrap()
+    };
+    let run =
+        |mut l: Link| -> Vec<Fate> { (0..3_000).map(|i| l.transmit(i * MS, 1).unwrap()).collect() };
+    let (a, b) = (run(mk(true)), run(mk(false)));
+    assert!(
+        a[1_000..2_000]
+            .iter()
+            .all(|f| f.outcome == Err(DropCause::Outage))
+    );
+    // In segment 2 every message has the same loss outcome and the same delay.
+    let mut delivered = 0;
+    for (x, y) in a[2_000..].iter().zip(&b[2_000..]) {
+        assert_eq!(x.outcome, y.outcome);
+        assert_eq!(x.delay_ns, y.delay_ns);
+        delivered += usize::from(x.outcome.is_ok());
+    }
+    assert!((600..800).contains(&delivered), "{delivered}");
+}
+
+/// The fates of a fixed sequence on a hand-made trace link, for one seed: a
+/// change to the schedule's arithmetic or draws moves them (EMU-9 to EMU-12).
+/// The sequence covers a loss episode, an outage, a non-integer rate, a
+/// departure at a segment's end, negative credit across more than a period of
+/// idle, the bucket cap after idle, and a queue drop.
+///
+/// Cites: EMU-9, EMU-10, EMU-11, EMU-12
+#[test]
+fn golden_fates_of_a_trace_link() {
+    let s = TraceSchedule {
+        segments: vec![
+            seg(0, 24_000, 200_000, 20, 5),
+            seg(2, 0, 0, 20, 5),
+            seg(3, 16_000, 0, 40, 0),
+        ],
+        period_ns: 5 * SECOND,
+        start_ns: 0,
+        burst_bytes: 3_000,
+        queue_bytes: 6_000,
+    };
+    let mut l = Link::new(traced(s), 42).unwrap();
+    let sends: [(i64, u64); 16] = [
+        (0, 1_000),
+        (0, 2_000),
+        (0, 1_000),
+        (100 * MS, 1),
+        (500 * MS, 3_000),
+        (600 * MS, 3_000),
+        (1_900 * MS, 100),
+        (2_500 * MS, 100),
+        (3_000 * MS, 9_000),
+        (3_000 * MS, 1),
+        (3_100 * MS, 5_000),
+        (16 * SECOND, 3_000),
+        (16 * SECOND, 3_000),
+        (16 * SECOND, 1),
+        (17_999 * MS, 7),
+        (20 * SECOND, 1),
+    ];
+    let got: Vec<String> = sends
+        .iter()
+        .map(|(t, b)| {
+            let f = l.transmit(*t, *b).unwrap();
+            match f.outcome {
+                Ok(d) => format!("{d}/{}", f.rate_wait_ns),
+                Err(c) => format!("{c:?}"),
+            }
+        })
+        .collect();
+    assert_eq!(got, TRACE_GOLDEN, "{got:?}");
+}
+
+const TRACE_GOLDEN: [&str; 16] = [
+    "16994580/0",
+    "16994580/0",
+    "357634641/333333334",
+    "Loss",
+    "1352934350/833333334",
+    "3540000001/2900000001",
+    "3590000001/1650000001",
+    "Outage",
+    "Queue",
+    "3590500001/550500001",
+    "Queue",
+    "16015887646/0",
+    "17024324908/1000000000",
+    "18040500000/2000500000",
+    "Outage",
+    "Loss",
+];

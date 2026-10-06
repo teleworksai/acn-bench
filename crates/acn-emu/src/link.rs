@@ -185,6 +185,7 @@ impl TraceSchedule {
         queue_bytes: u64,
     ) -> Result<Self, LinkError> {
         let mut segments = Vec::with_capacity(trace.samples.len());
+        let mut rtts: Vec<Option<(i64, i64)>> = Vec::with_capacity(trace.samples.len());
         for s in &trace.samples {
             let kbps = match direction {
                 Direction::Up => s.ul_kbps,
@@ -192,13 +193,17 @@ impl TraceSchedule {
             };
             let rate = rounded(kbps * 1_000.0, MAX_NS, "a rate")?.cast_unsigned();
             let outage = s.loss >= 1.0 || rate == 0;
-            let (delay_ns, jitter_ns) = match s.rtt_ms {
-                Some(r) => (
+            // Half the RTT each way; a uniform half-range of `stdev * sqrt(3) / 2`
+            // gives each direction a standard deviation of half the RTT's.
+            let rtt = match s.rtt_ms {
+                Some(r) => Some((
                     rounded(r.avg * 1e6 / 2.0, MAX_NS, "a delay")?,
-                    rounded(r.stdev * 1e6 / 2.0, MAX_NS, "a jitter")?,
-                ),
-                None => (0, 0),
+                    rounded(r.stdev * 1e6 * 3.0_f64.sqrt() / 2.0, MAX_NS, "a jitter")?,
+                )),
+                None => None,
             };
+            rtts.push(rtt);
+            let (delay_ns, jitter_ns) = rtt.unwrap_or((0, 0));
             segments.push(Segment {
                 from_ns: rounded(s.t_s * 1e9, MAX_NS, "a sample time")?,
                 loss_ppm: rounded(s.loss * 1e6, 1_000_000, "a loss")?.cast_unsigned(),
@@ -207,6 +212,18 @@ impl TraceSchedule {
                 jitter_ns,
                 outage,
             });
+        }
+        // A sample with no round-trip time (an outage) carries the delay of the
+        // nearest earlier sample that has one, or of the first later one, so a
+        // message leaving the rate stage as an outage begins is still delayed.
+        let mut carried = rtts.iter().flatten().next().copied();
+        for (seg, rtt) in segments.iter_mut().zip(&rtts) {
+            if rtt.is_some() {
+                carried = *rtt;
+            } else if let Some((d, j)) = carried {
+                seg.delay_ns = d;
+                seg.jitter_ns = j;
+            }
         }
         let last = trace.samples.last().map_or(0.0, |s| s.t_s);
         let period_ns = rounded((last + trace.sample_interval_s) * 1e9, MAX_NS, "the period")?;
@@ -251,8 +268,22 @@ impl TraceSchedule {
         if self.burst_bytes == 0 || self.queue_bytes == 0 {
             return refuse("range", "burst and queue must be positive");
         }
-        if self.segments.iter().any(|s| s.loss_ppm > PPM) {
-            return refuse("trace", "a loss is above 10^6 ppm");
+        for (k, s) in self.segments.iter().enumerate() {
+            if s.loss_ppm > PPM {
+                return refuse("trace", format!("segment {k}: a loss above 10^6 ppm"));
+            }
+            if !(0..=MAX_NS).contains(&s.delay_ns) || !(0..=MAX_NS).contains(&s.jitter_ns) {
+                return refuse(
+                    "trace",
+                    format!("segment {k}: a delay or jitter outside [0, 2^62]"),
+                );
+            }
+            if s.outage != (s.rate_bps == 0) {
+                return refuse(
+                    "trace",
+                    format!("segment {k}: an outage has rate 0, and only an outage"),
+                );
+            }
         }
         Ok(())
     }
@@ -322,7 +353,7 @@ impl TraceSchedule {
             let gain = i128::from(end - t) * r;
             if r > 0 && gain >= rem {
                 let d = i64::try_from((rem + r - 1) / r).ok()?;
-                return t.checked_add(d).map(|e| e - start);
+                return t.checked_add(d).filter(|e| *e <= MAX_NS).map(|e| e - start);
             }
             rem -= gain;
             t = end;
@@ -783,8 +814,10 @@ impl Link {
 fn scaled_jitter(raw: u64, jitter_ns: i64) -> i64 {
     let span = u128::from(2 * jitter_ns.unsigned_abs() + 1);
     let k = (u128::from(raw) * span) >> 64;
-    // `k < span <= 2^63 + 1`, and `k` fits in i64 because `jitter_ns <= 2^62`.
-    i64::try_from(k).unwrap_or(0) - jitter_ns
+    // `k < span <= 2^63 + 1` and `jitter_ns <= 2^62`: the result is in
+    // `[-jitter_ns, jitter_ns]`, computed in i128 so that nothing saturates.
+    let j = i128::try_from(k).unwrap_or(0) - i128::from(jitter_ns);
+    i64::try_from(j).unwrap_or(0)
 }
 
 impl LinkModel for Link {
@@ -999,6 +1032,19 @@ mod tests {
                 assert_eq!(got, raw);
             }
         }
+    }
+
+    /// Cites: EMU-12, EMU-9
+    #[test]
+    fn scaled_jitter_is_pinned_at_its_extremes() {
+        assert_eq!(scaled_jitter(0, 0), 0);
+        assert_eq!(scaled_jitter(u64::MAX, 0), 0);
+        assert_eq!(scaled_jitter(0, 5), -5);
+        assert_eq!(scaled_jitter(u64::MAX, 5), 5);
+        // 2^63 is the middle of the range: 11 * 2^63 / 2^64 = 5, minus 5.
+        assert_eq!(scaled_jitter(1 << 63, 5), 0);
+        assert_eq!(scaled_jitter(0, MAX_NS), -MAX_NS);
+        assert_eq!(scaled_jitter(u64::MAX, MAX_NS), MAX_NS);
     }
 
     /// Cites: EMU-1

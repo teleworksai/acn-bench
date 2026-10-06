@@ -270,6 +270,18 @@ fn link(t: &LinkToml, base: &Path) -> Result<LinkSpec, ScenarioError> {
             DirectionToml::Down => Direction::Down,
         },
     );
+    if let Some(tr) = &t.trace {
+        if t.outage.is_some() || t.loss.is_some() || t.rate.is_some() || t.delay.is_some() {
+            return refuse(
+                "parse",
+                format!(
+                    "link {}: a trace link has no outage, loss, rate or delay stage",
+                    t.name
+                ),
+            );
+        }
+        s.trace = Some(traced(tr, base, &t.name, s.direction)?);
+    }
     if let Some(o) = &t.outage {
         let mut ws = Vec::with_capacity(o.window.len());
         for w in &o.window {
@@ -309,18 +321,6 @@ fn link(t: &LinkToml, base: &Path) -> Result<LinkSpec, ScenarioError> {
             delay_ns: ns(d.delay_us, 1_000, "delay_us")?,
             jitter_ns: ns(d.jitter_us, 1_000, "jitter_us")?,
         });
-    }
-    if let Some(tr) = &t.trace {
-        if t.outage.is_some() || t.loss.is_some() || t.rate.is_some() || t.delay.is_some() {
-            return refuse(
-                "parse",
-                format!(
-                    "link {}: a trace link has no outage, loss, rate or delay stage",
-                    t.name
-                ),
-            );
-        }
-        s.trace = Some(traced(tr, base, &t.name, s.direction)?);
     }
     if let Some(r) = &t.reorder {
         s.reorder = Some(Reorder {
