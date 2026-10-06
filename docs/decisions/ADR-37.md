@@ -63,3 +63,17 @@ LOOP-15 puts every loop decision in `acn-hyp`, which is in the frozen set. Choos
 - **Codes.** `twin_exists` and `twin_mismatch` are declared in T11b.3a with the rest of LOOP-12's codes, and are first produced by T11b.3b.
 - **What `choose` refuses.** It takes only an L1 verdict of its own hypothesis (`twin_refused`), as `promote_gate` does, because the choice is the loop runner's (LOOP-15) and must not rank another file's effects. A decision cell outside its slice is an internal error, not a cell quietly left out.
 - **Links.** A loop report is refused when the report, its loop directory, `runs/loop` or `runs/` is a symbolic link (HYP-4). Before, only the first two were checked.
+
+## T11b.3b notes
+- **An arm with no L1 bundle.** A decision cell a budget never ran, or a cell whose control the report lacks, records `derived_from`, `run_id` and `bundle_digest` as `null` for that arm. Nothing is run for it, and the cell is then not twinned (`twinned` is false). A choice that maps to no L1 bundle at all is refused with `nothing_to_twin`.
+- **Which cells the divergence block lists.** It lists the cells the L2 verdict marks twinned, with every quantity that has a tolerance. The numbers are the verdict's own divergences, and `within` is the verdict's own test (`Divergence::within`). `verdict.json` does not record `within`, so it is applied again rather than copied.
+- **Where the twin runs.** `acn loop twin` takes no `--runs-dir`; it always uses `<root>/runs`, as LOOP-12's signature says.
+- **`top` and the hashes.** `top` is a `u32`. The engine and build hashes in the object are the live bundles' own, which `make` has checked against the binary, so the object regenerates from its bundles.
+- **Inputs during the twin.** They are checked before every live run and before each write (LOOP-13).
+- **What a twin leaves behind.**
+  - An aborted twin leaves its `runs/live/<n>/`, which nothing names, and the next twin takes `n + 1`.
+  - The gate leaves a `runs/regen/<loop_id>/<n>/`.
+- **The verify walk.**
+  - It walks a loop's twin objects only when the L1 walk reached the final verdict; an L1 finding already fails the chain.
+  - It resolves an L2 verdict_id to every loop with a twin object of that name.
+- **Where the L2 chain tests live.** They are in `crates/acn-hyp/tests/loop_twin.rs`, beside the twin tests, rather than in `tests/accept/evidence_chain.rs` as SPEC 085 §5 lists. They need live runs on fast mock profiles, which the acceptance tier's executor (the CLI's, on the embedded profiles) does not offer.

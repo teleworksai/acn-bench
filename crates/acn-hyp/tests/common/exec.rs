@@ -54,6 +54,9 @@ pub struct Exec {
     pub engine: Digest,
     pub build: BuildInfo,
     pub profiles: Profiles,
+    /// The profiles of `live` runs, when not [`Exec::profiles`]: a mock that
+    /// differs from the simulated one (profiles are not in the run_id).
+    pub live_profiles: Option<Profiles>,
     /// Requests run so far, in order.
     pub requests: Vec<Request>,
     pub hook: Option<Hook>,
@@ -70,7 +73,45 @@ pub fn profiles() -> Profiles {
     .unwrap()
 }
 
+/// [`profiles`] with mock timing a thousand times shorter: a `live` run
+/// waits on the wall clock (L2 twin tests).
+pub fn fast_profiles() -> Profiles {
+    Profiles::parse(
+        &PROFILES_TOML
+            .replace("min_cacheable_tokens = 1024", "min_cacheable_tokens = 32")
+            .replace("increment_tokens = 128", "increment_tokens = 16")
+            .replace("itl_ns = 20_000_000", "itl_ns = 20_000")
+            .replace("itl_jitter_ns = 2_000_000", "itl_jitter_ns = 2_000")
+            .replace("prefill_base_ns = 20_000_000", "prefill_base_ns = 20_000"),
+    )
+    .unwrap()
+}
+
+/// The smoke workload with no think time.
+pub fn fast_smoke() -> String {
+    smoke()
+        .replace(
+            "min = 1_000_000_000, max = 3_000_000_000",
+            "min = 0, max = 0",
+        )
+        .replace("min = 500_000_000, max = 1_500_000_000", "min = 0, max = 0")
+}
+
+/// [`dir_with`], with the smoke workload's think times at zero.
+pub fn dir_with_fast(hypothesis: &str) -> tempfile::TempDir {
+    let dir = dir_with(hypothesis);
+    std::fs::write(dir.path().join("w.toml"), fast_smoke()).unwrap();
+    dir
+}
+
 impl Exec {
+    /// An executor on [`fast_profiles`], in both modes.
+    pub fn fast(dir: &Path) -> Self {
+        let mut e = Self::new(dir);
+        e.profiles = fast_profiles();
+        e
+    }
+
     /// `_dir` names the test's directory for the reader; the harness looks for
     /// the workspace root from the request's `start_dir` (LOOP-15).
     pub fn new(_dir: &Path) -> Self {
@@ -82,6 +123,7 @@ impl Exec {
             engine: Digest::of(super::bundles::ENGINE),
             build: build(tag),
             profiles: profiles(),
+            live_profiles: None,
             requests: Vec::new(),
             hook: None,
         }
@@ -124,7 +166,10 @@ impl Executor for Exec {
             start_dir: r.start_dir.clone(),
             engine_hash: self.engine,
             build: self.build.clone(),
-            profiles: Some(self.profiles.clone()),
+            profiles: Some(match (&self.live_profiles, r.mode) {
+                (Some(p), acn_trace::identity::Mode::Live) => p.clone(),
+                _ => self.profiles.clone(),
+            }),
         };
         let n = self.requests.len();
         self.requests.push(r.clone());

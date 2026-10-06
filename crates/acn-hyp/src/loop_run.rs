@@ -291,7 +291,7 @@ pub(crate) struct Setup<'h> {
     seed: u64,
     status: HypStatus,
     bin: Binary,
-    loop_id: Digest,
+    pub(crate) loop_id: Digest,
     non_pooled: BTreeSet<String>,
     options: Vec<(String, acn_trace::schema::ValueType, String)>,
 }

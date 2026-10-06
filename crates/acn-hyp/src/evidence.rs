@@ -36,6 +36,8 @@ pub struct Checked {
     pub verdicts: usize,
     /// Where each report regenerated (LOOP-14).
     pub regenerated: Vec<PathBuf>,
+    /// The twin objects walked (LOOP-16).
+    pub twins: Vec<PathBuf>,
     pub findings: Vec<Finding>,
 }
 
@@ -47,7 +49,7 @@ impl Checked {
     }
 }
 
-fn finding(code: Code, message: impl Into<String>) -> Finding {
+pub(crate) fn finding(code: Code, message: impl Into<String>) -> Finding {
     Finding {
         code,
         message: message.into(),
@@ -55,7 +57,7 @@ fn finding(code: Code, message: impl Into<String>) -> Finding {
 }
 
 /// A loop_id, verdict_id or run_id: 64 lowercase hex digits.
-fn is_hex_id(s: &str) -> bool {
+pub(crate) fn is_hex_id(s: &str) -> bool {
     s.len() == 64
         && s.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
@@ -76,7 +78,7 @@ fn field(r: &serde_json::Value, path: &[&str], report: &str) -> Result<String, F
 }
 
 /// A recorded path inside the base: relative, with no `..`.
-fn inside(rel: &str) -> bool {
+pub(crate) fn inside(rel: &str) -> bool {
     let p = Path::new(rel);
     !rel.is_empty()
         && p.components()
@@ -140,34 +142,67 @@ pub fn verify(
         bundles: 0,
         verdicts: 0,
         regenerated: Vec::new(),
+        twins: Vec::new(),
         findings: Vec::new(),
     };
+    // Each loop to walk, and the one twin object to walk under it when the id
+    // is an L2 verdict's (`None`: every twin of the loop).
+    let mut walks: Vec<(String, Option<String>)> = Vec::new();
     if std::fs::symlink_metadata(runs.join("loop").join(id)).is_ok() {
-        c.loops = vec![id.to_owned()];
+        walks.push((id.to_owned(), None));
     } else {
         let (found, unreadable) = loops_naming(&runs, id)?;
-        c.loops = found;
+        walks.extend(found.into_iter().map(|l| (l, None)));
+        // LOOP-2: an L2 verdict_id resolves to the twin object that names it.
+        walks.extend(
+            twins_naming(&runs, id)?
+                .into_iter()
+                .map(|l| (l, Some(id.to_owned()))),
+        );
         c.findings = unreadable;
     }
+    c.loops = walks.iter().map(|(l, _)| l.clone()).collect();
     if c.loops.is_empty() && c.findings.is_empty() {
         c.findings.push(finding(
             Code::NoLoopReport,
             format!(
-                "no loop report under {} is {id} or names it as its final verdict: a verdict made outside a loop has no recorded inputs to regenerate from (LOOP-2)",
+                "no loop report under {} is {id} or names it as its final verdict, and no twin object is named by it: a verdict made outside a loop has no recorded inputs to regenerate from (LOOP-2)",
                 runs.join("loop").display()
             ),
         ));
     }
-    for loop_id in c.loops.clone() {
-        verify_loop(&runs, &loop_id, bin, exec, &mut c)?;
+    for (loop_id, only_twin) in walks {
+        verify_loop(&runs, &loop_id, only_twin.as_deref(), bin, exec, &mut c)?;
     }
     Ok(c)
+}
+
+/// The loops under `runs/loop/` with a twin object named `verdict_id`, in
+/// loop_id order (LOOP-16).
+fn twins_naming(runs: &Path, verdict_id: &str) -> Result<Vec<String>, LoopError> {
+    let dir = runs.join("loop");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(Vec::new());
+    };
+    let mut found = Vec::new();
+    for e in entries {
+        let e = e.map_err(|e| loop_run::io_err(&dir, e))?;
+        let name = e.file_name().to_string_lossy().into_owned();
+        if is_hex_id(&name)
+            && std::fs::symlink_metadata(e.path().join("twin").join(verdict_id)).is_ok()
+        {
+            found.push(name);
+        }
+    }
+    found.sort();
+    Ok(found)
 }
 
 /// Every link of one loop report's chain (LOOP-2). `runs` is canonical.
 fn verify_loop(
     runs: &Path,
     loop_id: &str,
+    only_twin: Option<&str>,
     bin: Binary,
     exec: &mut dyn Executor,
     c: &mut Checked,
@@ -326,7 +361,8 @@ fn verify_loop(
         }
     };
     // The final verdict recomputes to the bytes on disk (HYP-15, HYP-20).
-    match verdict::verdict(&h, data, bin.engine_hash) {
+    let mut l1 = None;
+    match verdict::verdict(&h, data.clone(), bin.engine_hash) {
         Err(e) => c
             .findings
             .push(finding(Code::VerdictRefused, e.to_string())),
@@ -356,6 +392,7 @@ fn verify_loop(
                     format!("verdict {verdict_id} is not L1 (LOOP-1)"),
                 ));
             }
+            l1 = Some(v);
         }
     }
     // The report regenerates, and with it every L1 bundle (LOOP-14).
@@ -373,6 +410,58 @@ fn verify_loop(
             c.regenerated.push(g.dir);
         }
         Err(e) => c.findings.push(finding(e.code, e.message)),
+    }
+    // LOOP-16: every twin object of the loop, or the one asked for.
+    let Some(l1) = l1 else {
+        return Ok(());
+    };
+    let twin_root = dir.join("twin");
+    let mut names: Vec<String> = match std::fs::read_dir(&twin_root) {
+        Ok(rd) => rd
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| is_hex_id(n))
+            .filter(|n| only_twin.is_none_or(|t| t == n))
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    names.sort();
+    if names.is_empty() {
+        return Ok(());
+    }
+    let setup_and = |c: &mut Checked| -> Option<loop_run::Recorded> {
+        match loop_run::read_report(&report, bin) {
+            Ok(rec) => Some(rec),
+            Err(e) => {
+                c.findings.push(finding(e.code, e.message));
+                None
+            }
+        }
+    };
+    let Some(rec) = setup_and(c) else {
+        return Ok(());
+    };
+    let s = match rec.setup(bin, &*exec) {
+        Ok(s) => s,
+        Err(e) => {
+            c.findings.push(finding(e.code, e.message));
+            return Ok(());
+        }
+    };
+    for n in names {
+        let tdir = twin_root.join(&n);
+        if std::fs::symlink_metadata(&tdir).is_ok_and(|m| m.file_type().is_symlink()) {
+            c.findings.push(finding(
+                Code::TwinMismatch,
+                format!(
+                    "{} is a symbolic link; a chain is read from runs/ itself",
+                    tdir.display()
+                ),
+            ));
+            continue;
+        }
+        c.twins.push(tdir.join(crate::loop_twin::TWIN_JSON));
+        crate::loop_twin::verify_twin(runs, &rec, &s, &l1, &data, &n, c);
     }
     Ok(())
 }
