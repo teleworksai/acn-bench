@@ -186,7 +186,8 @@ struct HarnessRun {
     /// The run seed, for a run with no hypothesis.
     #[arg(long)]
     seed: Option<u64>,
-    /// `opt.endpoint`: the endpoint's base URL (HAR-25).
+    /// `opt.endpoint`: the endpoint's base URL (HAR-25), or `acn-mock://loopback` for
+    /// a mock the harness serves itself, a fresh one per replicate (HAR-26).
     #[arg(long, default_value = "")]
     endpoint: String,
     /// `opt.max_retries` (HAR-24).

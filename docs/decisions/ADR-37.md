@@ -38,3 +38,12 @@ LOOP-15 puts every loop decision in `acn-hyp`, which is in the frozen set. Choos
 - A twin re-runs the whole L1 loop for its gate. It costs at least as much as its loop, plus the live runs on the wall clock.
 - The L3 gate (`promote_gate`, LOOP-4) already reads an L2 verdict's twinned decision cells; T11b.2 produces those verdicts.
 - With scenarios in `acn loop run` (an env-change, ADR-34), the twin carries the scenario into live through the proxy of SPEC 020 §5 without a change to this format.
+
+## T11b.2 notes
+- The served mock reuses `acn_mockllm::server::router`. When the replicate ends, after its proxy if it has one, its server shuts down gracefully:
+  - it stops listening;
+  - it closes idle connections;
+  - it waits for any request still being answered, such as a timed-out attempt's late response, which is bounded by the mock's own response time.
+
+  A replicate that fails first drops its server, which stops at once. The run's one HTTP client serves every replicate. A pooled connection to an earlier replicate's server has been closed by then, so it is never reused.
+- HAR-23's probe runs against each replicate's server before its sessions. `GET /v1/models` reads only the profiles, so the probe leaves the mock as `sim` would build it.

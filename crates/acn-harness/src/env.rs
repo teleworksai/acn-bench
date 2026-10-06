@@ -453,14 +453,29 @@ impl LiveEnv {
         endpoint: &str,
         headers: Vec<(String, String)>,
     ) -> Result<Self, HarnessError> {
-        let client = Self::http_client()?;
-        Ok(Self {
+        Ok(Self::with_client(
+            Self::http_client()?,
+            clock,
+            endpoint,
+            headers,
+        ))
+    }
+
+    /// [`LiveEnv::new`] over a client the run already built.
+    #[must_use]
+    pub fn with_client(
+        client: reqwest::Client,
+        clock: Arc<WallClock>,
+        endpoint: &str,
+        headers: Vec<(String, String)>,
+    ) -> Self {
+        Self {
             client,
             clock,
             endpoint: endpoint.trim_end_matches('/').to_owned(),
             headers,
             net: None,
-        })
+        }
     }
 
     /// The HTTP client of a live run. Building one loads the system's root

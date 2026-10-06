@@ -19,6 +19,7 @@ real-api = []
 acn-emu = { path = "../acn-emu" }
 acn-mockllm = { path = "../acn-mockllm" }
 acn-trace = { workspace = true, features = ["io"] }
+axum.workspace = true
 blake3.workspace = true
 opentelemetry.workspace = true
 opentelemetry_sdk.workspace = true
