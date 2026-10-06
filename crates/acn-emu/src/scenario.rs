@@ -11,17 +11,19 @@ use serde::Deserialize;
 
 use crate::link::{
     Delay, Direction, Link, LinkError, LinkSpec, Loss, OutageCause, OutageMode, Rate, Reorder,
-    Window,
+    Window, is_name,
 };
 
 /// Why a scenario was refused (EMU-21).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{reason}: {message}")]
 pub struct ScenarioError {
-    /// `layout` (the file cannot be read), `parse` (not TOML of the EMU-20
-    /// shape), `name` (a name or the file stem), `duplicate` (two links with
-    /// one name and direction), `range` (a parameter out of range), `trace`
-    /// (a link names a measured trace, EMU-22) or `stream` (a sub-stream).
+    /// From `load` (EMU-21): `layout` (the file cannot be read or is not
+    /// `.toml`), `parse` (not TOML of the EMU-20 shape, including a missing
+    /// `window` list), `name` (a name, or a `name` other than the file stem),
+    /// `duplicate` (two links with one name and direction), `range` (a
+    /// parameter out of range, including an empty `window` list) or `trace`
+    /// (EMU-22). From `Scenario::build`: `stream` (a sub-stream).
     pub reason: &'static str,
     pub message: String,
 }
@@ -138,9 +140,9 @@ struct ReorderToml {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TraceToml {
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "EMU-22: reserved until T10b reads it")]
     dir: String,
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "EMU-22: reserved until T10b reads it")]
     blake3: String,
 }
 
@@ -162,12 +164,6 @@ impl Scenario {
             .map(|s| Link::new(s.clone(), replicate_seed).map_err(ScenarioError::from))
             .collect()
     }
-}
-
-fn is_name(s: &str) -> bool {
-    !s.is_empty()
-        && s.bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 /// Nanoseconds from a count of `unit_ns`, refused on overflow.
@@ -304,6 +300,9 @@ fn link(t: &LinkToml) -> Result<LinkSpec, ScenarioError> {
 
 /// Load and check the scenario file at `path` (EMU-20, EMU-21).
 pub fn load(path: &Path) -> Result<Scenario, ScenarioError> {
+    if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+        return refuse("layout", format!("{} is not a .toml file", path.display()));
+    }
     let bytes = std::fs::read(path).map_err(|e| ScenarioError {
         reason: "layout",
         message: format!("{}: {e}", path.display()),

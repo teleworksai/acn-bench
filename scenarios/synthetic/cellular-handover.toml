@@ -1,7 +1,9 @@
 # A guessed cellular link with every stage of SPEC 020 §2, for tests and
 # exploratory runs. The numbers are plausible, not measured (ADR-29): a 5G
-# uplink and downlink around 25 ms one way, bursty loss, and one handover gap
-# at 10 s in which uplink traffic is held and downlink traffic is dropped.
+# uplink and downlink around 25 ms one way, bursty loss up and independent loss
+# down, and one handover gap at 10 s from the start of the replicate, in which
+# uplink traffic is held and downlink traffic is dropped. 300 ms is long for a
+# 5G handover (often tens of ms); it is a stress case.
 schema_version = 1
 name = "cellular-handover"
 

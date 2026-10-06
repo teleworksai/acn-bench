@@ -31,7 +31,7 @@ fn within_4_sigma(count: usize, n: usize, p: f64) -> bool {
     (count as f64 - mean).abs() <= 4.0 * sd
 }
 
-/// Cites: EMU-5, EMU-9
+/// Cites: EMU-5
 #[test]
 fn independent_loss_matches_its_rate() {
     for seed in SEEDS {
@@ -89,6 +89,33 @@ fn gilbert_elliott_matches_its_stationary_loss_and_burst_length() {
         assert!(
             (mean - want).abs() < 0.05 * want,
             "seed {seed}: burst {mean} vs {want}"
+        );
+    }
+}
+
+/// Cites: EMU-6
+#[test]
+fn gilbert_elliott_matches_the_general_closed_form() {
+    let (p_gb, p_bg, lg, lb) = (20_000_u64, 100_000_u64, 20_000_u64, 500_000_u64);
+    let pi_bad = p_gb as f64 / (p_gb + p_bg) as f64;
+    let want = (1.0 - pi_bad) * lg as f64 / 1e6 + pi_bad * lb as f64 / 1e6;
+    for seed in SEEDS {
+        let mut s = spec();
+        s.loss = Some(Loss::GilbertElliott {
+            p_good_bad_ppm: p_gb,
+            p_bad_good_ppm: p_bg,
+            loss_good_ppm: lg,
+            loss_bad_ppm: lb,
+        });
+        let n = 300_000;
+        let lost = run(&mut Link::new(s, seed).unwrap(), n, 1, 1)
+            .iter()
+            .filter(|f| f.outcome.is_err())
+            .count();
+        let rate = lost as f64 / n as f64;
+        assert!(
+            (rate - want).abs() < 0.1 * want,
+            "seed {seed}: {rate} vs {want}"
         );
     }
 }
@@ -183,8 +210,12 @@ fn a_full_queue_drops_and_drains() {
         .count();
     // One leaves at once from the full bucket; five more fill the queue.
     assert_eq!((ok, queue), (6, 14));
-    // Once the queue drains (5 s at 1 000 bytes/s), messages are accepted.
-    assert!(l.transmit(6 * SECOND, 1_000).unwrap().outcome.is_ok());
+    // Once the queue drains (5 s at 1 000 bytes/s), messages are accepted, and
+    // the fourteen drops took no credit: the bucket is full again at 6 s.
+    assert_eq!(
+        l.transmit(6 * SECOND, 1_000).unwrap().outcome,
+        Ok(6 * SECOND)
+    );
 }
 
 /// Cites: EMU-8, EMU-3, EMU-9
@@ -280,7 +311,7 @@ fn a_link_with_no_stages_delivers_at_once() {
 
 /// Cites: EMU-2, EMU-9
 #[test]
-fn a_message_dropped_by_the_outage_is_not_offered_to_the_loss_stage() {
+fn a_message_dropped_by_the_outage_still_takes_its_loss_draw() {
     let loss = Loss::Iid { loss_ppm: 300_000 };
     let mut with = spec();
     with.outage = Some(vec![Window {
@@ -294,25 +325,64 @@ fn a_message_dropped_by_the_outage_is_not_offered_to_the_loss_stage() {
     without.loss = Some(loss);
     let a = run(&mut Link::new(with, 9).unwrap(), 1_000, 1, 1);
     let b = run(&mut Link::new(without, 9).unwrap(), 1_000, 1, 1);
-    // The loss outcomes of the messages that reach the loss stage on `a` are
-    // the first outcomes of `b`, in order: the outage made no loss draws.
-    let reached: Vec<bool> = a
-        .iter()
-        .filter(|f| f.outcome != Err(DropCause::Outage))
-        .map(|f| f.outcome.is_err())
-        .collect();
-    let first: Vec<bool> = b
-        .iter()
-        .take(reached.len())
-        .map(|f| f.outcome.is_err())
-        .collect();
-    assert_eq!(reached.len(), 900);
-    assert_eq!(reached, first);
+    // Message by message, outside the window the loss outcome is the same:
+    // the schedule is by message index (EMU-9), and the outage comes first.
+    for (i, (x, y)) in a.iter().zip(&b).enumerate() {
+        if (100..200).contains(&i) {
+            assert_eq!(x.outcome, Err(DropCause::Outage), "message {i}");
+        } else {
+            assert_eq!(x.outcome, y.outcome, "message {i}");
+        }
+    }
+}
+
+/// Cites: EMU-6, EMU-9
+#[test]
+fn gilbert_elliott_moves_state_before_it_decides_loss() {
+    let mut s = spec();
+    s.loss = Some(Loss::GilbertElliott {
+        p_good_bad_ppm: 1_000_000,
+        p_bad_good_ppm: 0,
+        loss_good_ppm: 0,
+        loss_bad_ppm: 1_000_000,
+    });
+    let mut l = Link::new(s, 1).unwrap();
+    // The first message moves good -> bad, then is lost in `bad`.
+    assert_eq!(l.transmit(0, 1).unwrap().outcome, Err(DropCause::Loss));
+}
+
+/// Cites: EMU-7
+#[test]
+fn several_and_adjacent_windows() {
+    let w = |start_ns, end_ns, mode| Window {
+        start_ns,
+        end_ns,
+        mode,
+        cause: OutageCause::Scheduled,
+    };
+    let mut s = spec();
+    s.outage = Some(vec![
+        w(0, 10, OutageMode::Drop),
+        w(20, 30, OutageMode::Hold),
+        w(30, 40, OutageMode::Drop),
+        w(50, 60, OutageMode::Hold),
+        w(60, 70, OutageMode::Hold),
+    ]);
+    let mut l = Link::new(s, 1).unwrap();
+    assert_eq!(l.transmit(5, 1).unwrap().outcome, Err(DropCause::Outage));
+    assert_eq!(l.transmit(15, 1).unwrap().outcome, Ok(15));
+    // Held to 30, where the adjacent drop window applies.
+    let f = l.transmit(25, 1).unwrap();
+    assert_eq!((f.outcome, f.window), (Err(DropCause::Outage), Some(2)));
+    assert_eq!(l.transmit(45, 1).unwrap().outcome, Ok(45));
+    // Held through two adjacent hold windows.
+    let f = l.transmit(55, 1).unwrap();
+    assert_eq!((f.outcome, f.hold_ns, f.window), (Ok(70), 15, Some(4)));
 }
 
 /// Cites: EMU-9
 #[test]
-fn each_stage_draws_from_its_own_sub_stream() {
+fn each_stage_draws_by_message_index_from_its_own_sub_stream() {
     let make = |loss_ppm, jitter_ns| {
         let mut s = spec();
         s.loss = Some(Loss::Iid { loss_ppm });
@@ -322,24 +392,94 @@ fn each_stage_draws_from_its_own_sub_stream() {
         });
         Link::new(s, 11).unwrap()
     };
-    // Changing the loss rate: the jitter of delivered messages is the same
-    // sequence of draws.
-    let jit = |fates: &[Fate]| -> Vec<i64> {
-        fates
-            .iter()
-            .filter(|f| f.outcome.is_ok())
-            .map(|f| f.delay_ns)
-            .collect()
-    };
+    // Changing the loss rate: every message delivered by both keeps its jitter.
     let low = run(&mut make(10_000, MS), 2_000, SECOND, 1);
     let high = run(&mut make(400_000, MS), 2_000, SECOND, 1);
-    let (jl, jh) = (jit(&low), jit(&high));
-    assert_eq!(jl[..jh.len()], jh[..]);
+    let mut both = 0;
+    for (a, b) in low.iter().zip(&high) {
+        if a.outcome.is_ok() && b.outcome.is_ok() {
+            assert_eq!(a.delay_ns, b.delay_ns);
+            both += 1;
+        }
+    }
+    assert!(both > 1_000);
     // Changing the jitter: the losses are unchanged.
     let lost = |fates: &[Fate]| -> Vec<bool> { fates.iter().map(|f| f.outcome.is_err()).collect() };
     let small = run(&mut make(100_000, MS), 2_000, SECOND, 1);
     let large = run(&mut make(100_000, 5 * MS), 2_000, SECOND, 1);
     assert_eq!(lost(&small), lost(&large));
+    // The direction is part of the stream name: up and down differ.
+    let mut down = spec();
+    down.direction = Direction::Down;
+    down.loss = Some(Loss::Iid { loss_ppm: 500_000 });
+    let mut up = spec();
+    up.loss = Some(Loss::Iid { loss_ppm: 500_000 });
+    let d = run(&mut Link::new(down, 11).unwrap(), 200, 1, 1);
+    let u = run(&mut Link::new(up, 11).unwrap(), 200, 1, 1);
+    assert_ne!(lost(&d), lost(&u));
+}
+
+/// Cites: EMU-8, EMU-3
+#[test]
+fn a_reordered_message_is_exempt_from_fifo_and_arrives_after_the_one_before() {
+    let delay = Some(Delay {
+        delay_ns: 10 * MS,
+        jitter_ns: 3 * MS,
+    });
+    let mut with = spec();
+    with.delay = delay;
+    with.reorder = Some(Reorder {
+        reorder_ppm: 300_000,
+        gap_ns: 7 * MS,
+    });
+    let mut twin = spec();
+    twin.delay = delay;
+    // One second apart: a selected message is delayed by exactly the gap more
+    // than its twin, which draws the same jitter.
+    let a = run(&mut Link::new(with.clone(), 4).unwrap(), 1_000, SECOND, 1);
+    let b = run(&mut Link::new(twin, 4).unwrap(), 1_000, SECOND, 1);
+    let mut selected = 0;
+    for (x, y) in a.iter().zip(&b) {
+        if x.reordered {
+            assert_eq!(x.delay_ns, y.delay_ns + 7 * MS);
+            selected += 1;
+        } else {
+            assert_eq!(x.delay_ns, y.delay_ns);
+        }
+    }
+    assert!(selected > 200);
+    // Closely spaced: a selected message arrives after every earlier message
+    // that was not selected, and the next unselected one may overtake it.
+    let c = run(&mut Link::new(with, 4).unwrap(), 5_000, MS, 1);
+    let mut last_in_order = 0;
+    let mut overtaken = 0;
+    for (i, f) in c.iter().enumerate() {
+        let at = f.outcome.unwrap();
+        if f.reordered {
+            assert!(at > last_in_order, "message {i}");
+            if c.get(i + 1)
+                .is_some_and(|n| !n.reordered && n.outcome.unwrap() < at)
+            {
+                overtaken += 1;
+            }
+        } else {
+            last_in_order = at;
+        }
+    }
+    assert!(overtaken > 100);
+}
+
+/// Cites: EMU-3
+#[test]
+fn jitter_never_delivers_before_the_message_reaches_the_stage() {
+    let mut s = spec();
+    s.delay = Some(Delay {
+        delay_ns: MS,
+        jitter_ns: 5 * MS,
+    });
+    let fates = run(&mut Link::new(s, 2).unwrap(), 2_000, SECOND, 1);
+    assert!(fates.iter().all(|f| f.delay_ns >= 0));
+    assert!(fates.iter().any(|f| f.delay_ns == 0));
 }
 
 /// The fates of a fixed sequence on a link with every stage, for one seed: a
@@ -388,20 +528,6 @@ fn golden_fates_for_one_seed() {
 }
 
 const GOLDEN: [&str; 16] = [
-    "24685319",
-    "24685319",
-    "31737653",
-    "34243133",
-    "34243133",
-    "48893799",
-    "48893799",
-    "54756745",
-    "64315106",
-    "72379889",
-    "77265079",
-    "82311865",
-    "Loss",
-    "93952111r",
-    "90201968",
-    "99610736",
+    "24685319", "24685319", "31737653", "34243133", "34243133", "48893799", "48893799", "54756745",
+    "64315106", "72379889", "77265079", "82311865", "Loss", "84201968", "93610736", "95944756",
 ];

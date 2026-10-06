@@ -4,7 +4,10 @@
 
 use std::path::{Path, PathBuf};
 
-use acn_emu::link::{Direction, LinkModel as _, Loss};
+use acn_emu::link::{
+    Delay, Direction, LinkModel as _, LinkSpec, Loss, OutageCause, OutageMode, Rate, Reorder,
+    Window,
+};
 use acn_emu::scenario::load;
 
 fn synthetic() -> PathBuf {
@@ -53,19 +56,74 @@ fn every_committed_scenario_loads_and_builds() {
 fn the_cellular_scenario_reads_as_written() {
     let s = load(&synthetic().join("cellular-handover.toml")).unwrap();
     assert_eq!(s.name, "cellular-handover");
-    let up = &s.links[0];
-    assert_eq!((up.name.as_str(), up.direction), ("radio", Direction::Up));
-    assert_eq!(up.outage.as_ref().unwrap()[0].start_ns, 10_000_000_000);
-    assert_eq!(up.delay.unwrap().jitter_ns, 8_000_000);
-    assert_eq!(up.rate.unwrap().rate_bps, 20_000_000);
-    assert!(matches!(
-        up.loss,
-        Some(Loss::GilbertElliott {
-            p_bad_good_ppm: 200_000,
-            ..
-        })
-    ));
-    assert_eq!(s.links[1].direction, Direction::Down);
+    let window = |mode| Window {
+        start_ns: 10_000_000_000,
+        end_ns: 10_300_000_000,
+        mode,
+        cause: OutageCause::Handover,
+    };
+    let mut up = LinkSpec::new("radio", Direction::Up);
+    up.outage = Some(vec![window(OutageMode::Hold)]);
+    up.loss = Some(Loss::GilbertElliott {
+        p_good_bad_ppm: 5_000,
+        p_bad_good_ppm: 200_000,
+        loss_good_ppm: 1_000,
+        loss_bad_ppm: 300_000,
+    });
+    up.rate = Some(Rate {
+        rate_bps: 20_000_000,
+        burst_bytes: 64_000,
+        queue_bytes: 1_000_000,
+    });
+    up.delay = Some(Delay {
+        delay_ns: 25_000_000,
+        jitter_ns: 8_000_000,
+    });
+    up.reorder = Some(Reorder {
+        reorder_ppm: 2_000,
+        gap_ns: 15_000_000,
+    });
+    let mut down = LinkSpec::new("radio", Direction::Down);
+    down.outage = Some(vec![window(OutageMode::Drop)]);
+    down.loss = Some(Loss::Iid { loss_ppm: 2_000 });
+    down.rate = Some(Rate {
+        rate_bps: 100_000_000,
+        burst_bytes: 256_000,
+        queue_bytes: 4_000_000,
+    });
+    down.delay = Some(Delay {
+        delay_ns: 25_000_000,
+        jitter_ns: 5_000_000,
+    });
+    assert_eq!(s.links, vec![up, down]);
+}
+
+/// Cites: EMU-20, EMU-21
+#[test]
+fn every_key_of_the_base_maps_to_its_field() {
+    let s = load_text("t", BASE).unwrap();
+    let mut l = LinkSpec::new("radio", Direction::Up);
+    l.loss = Some(Loss::Iid { loss_ppm: 1000 });
+    l.rate = Some(Rate {
+        rate_bps: 1_000_000,
+        burst_bytes: 1000,
+        queue_bytes: 10000,
+    });
+    l.delay = Some(Delay {
+        delay_ns: 1_000_000,
+        jitter_ns: 100_000,
+    });
+    l.reorder = Some(Reorder {
+        reorder_ppm: 10,
+        gap_ns: 50_000,
+    });
+    l.outage = Some(vec![Window {
+        start_ns: 10_000_000,
+        end_ns: 20_000_000,
+        mode: OutageMode::Drop,
+        cause: OutageCause::Scheduled,
+    }]);
+    assert_eq!(s.links, vec![l]);
 }
 
 const BASE: &str = r#"schema_version = 1
