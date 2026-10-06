@@ -1,4 +1,5 @@
-//! The L1 loop runner (SPEC 085: LOOP-10, LOOP-11, LOOP-13, LOOP-14, LOOP-15).
+//! The loop runner (SPEC 085: LOOP-10, LOOP-11, LOOP-13, LOOP-14, LOOP-15), for
+//! L1 and, through [`crate::loop_twin`], for the L2 twin (LOOP-12).
 //! Every decision of a loop is made here, from the hypothesis file and the
 //! bundles alone: which cell runs next, when the loop stops, every verdict and
 //! every word of the report. The bundles come from an [`Executor`], which
@@ -69,6 +70,9 @@ pub enum Code {
     VerdictMismatch,
     NotRegenerated,
     TwinRefused,
+    NothingToTwin,
+    TwinExists,
+    TwinMismatch,
     PromoteRefused,
     ExecutorFailed,
     ExecutorMismatch,
@@ -107,6 +111,9 @@ impl Code {
             Self::VerdictMismatch => "verdict_mismatch",
             Self::NotRegenerated => "not_regenerated",
             Self::TwinRefused => "twin_refused",
+            Self::NothingToTwin => "nothing_to_twin",
+            Self::TwinExists => "twin_exists",
+            Self::TwinMismatch => "twin_mismatch",
             Self::PromoteRefused => "promote_refused",
             Self::ExecutorFailed => "executor_failed",
             Self::ExecutorMismatch => "executor_mismatch",
@@ -157,9 +164,16 @@ pub struct Binary {
     pub build_hash: Digest,
 }
 
+/// The endpoint at which the harness serves the mock itself, a fresh one per
+/// replicate (SPEC 040 HAR-26): the L2 twin's live runs use it (LOOP-15). This
+/// crate does not depend on the harness, so `acn-cli` tests that the two
+/// constants agree.
+pub const SERVED_MOCK: &str = "acn-mock://loopback";
+
 /// One bundle the runner asks for: the inputs of HAR-50 for a hypothesis file,
-/// whose seed the harness derives from the file (HYP-9), in `sim` on the mock
-/// with every run option at its default (LOOP-10).
+/// whose seed the harness derives from the file (HYP-9), on the mock, in `sim`
+/// at L1 and in `live` on [`SERVED_MOCK`] at L2, every other run option at its
+/// default (LOOP-10, LOOP-15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
     pub hypothesis: PathBuf,
@@ -169,6 +183,10 @@ pub struct Request {
     pub vary: BTreeMap<String, String>,
     pub arm: Role,
     pub replicates: u32,
+    /// `sim` at L1, `live` at L2 (LOOP-15).
+    pub mode: Mode,
+    /// `opt.endpoint`: empty (its default) at L1, [`SERVED_MOCK`] at L2.
+    pub endpoint: String,
     /// The directory the bundle goes under, as `<runs_dir>/<run_id>/`.
     pub runs_dir: PathBuf,
     /// Where the workspace root is looked for (CON-28): the directory `runs/`
@@ -256,7 +274,7 @@ struct Input {
 }
 
 /// Everything a loop is decided from, checked before anything runs.
-struct Setup<'h> {
+pub(crate) struct Setup<'h> {
     h: &'h Hypothesis,
     /// The directory `runs/` lies in: the workspace root inside a workspace
     /// (CON-28). Relative inputs resolve against it and are recorded relative
@@ -380,7 +398,7 @@ fn parse_map(
 }
 
 /// The control's configuration a treatment cell maps to (HYP-8).
-fn control_of(s: &Setup<'_>, cell: &Cell) -> Result<Cell, LoopError> {
+pub(crate) fn control_of(s: &Setup<'_>, cell: &Cell) -> Result<Cell, LoopError> {
     Controls::new(s.h, &s.non_pooled)
         .of_treatment(cell)
         .ok_or_else(|| internal("a checked control config maps no cell"))
@@ -795,9 +813,11 @@ impl<'h> Setup<'h> {
             .ok_or_else(|| internal(format!("no model for `{k}`")))
     }
 
-    /// The run_id the harness will give `cell` and `arm` (CON-29), computed
-    /// here so that every bundle returned can be checked against it.
-    fn run_id(&self, cell: &Cell, arm: Role) -> Result<Digest, LoopError> {
+    /// The run_id the harness will give `cell` and `arm` in `mode` (CON-29),
+    /// computed here so that every bundle returned can be checked against it.
+    /// In `live` the one option set is `opt.endpoint` (LOOP-15); the port the
+    /// harness serves the mock on is not part of it (HAR-26).
+    pub(crate) fn run_id(&self, cell: &Cell, arm: Role, mode: Mode) -> Result<Digest, LoopError> {
         let options: Vec<OptionDecl<'_>> = self
             .options
             .iter()
@@ -817,7 +837,14 @@ impl<'h> Setup<'h> {
                 .iter()
                 .map(|(k, v)| (k.clone(), ident_value(v)))
                 .collect(),
-            opts: BTreeMap::new(),
+            opts: if mode == Mode::Live {
+                BTreeMap::from([(
+                    "opt.endpoint".to_owned(),
+                    identity::Value::Str(SERVED_MOCK.into()),
+                )])
+            } else {
+                BTreeMap::new()
+            },
         };
         let pairs = params.pairs(&options).map_err(internal)?;
         RunIdentity {
@@ -826,7 +853,7 @@ impl<'h> Setup<'h> {
             workload_hash: self.workload_of(cell)?.hash,
             hypothesis_hash: self.h.hash(),
             engine_hash: self.bin.engine_hash,
-            mode: Mode::Sim,
+            mode,
             params_hash: identity::params_hash(&pairs).map_err(internal)?,
         }
         .run_id()
@@ -835,7 +862,7 @@ impl<'h> Setup<'h> {
 
     /// LOOP-13: the hypothesis and every workload file still have the bytes
     /// the loop started with.
-    fn check_inputs(&self) -> Result<(), LoopError> {
+    pub(crate) fn check_inputs(&self) -> Result<(), LoopError> {
         self.h.check_unchanged().map_err(|e| LoopError {
             code: Code::HypothesisChanged,
             message: e.to_string(),
@@ -864,7 +891,7 @@ impl<'h> Setup<'h> {
         cell: &Cell,
         arm: Role,
     ) -> Result<Option<BundleData>, LoopError> {
-        let expected = self.run_id(cell, arm)?;
+        let expected = self.run_id(cell, arm, Mode::Sim)?;
         let dir = out.join(expected.to_hex());
         if !reuse || std::fs::symlink_metadata(&dir).is_err() {
             return Ok(None);
@@ -887,16 +914,17 @@ impl<'h> Setup<'h> {
         Ok(Some(b))
     }
 
-    /// The executor's bundle of `cell` and `arm`, checked against what was
-    /// asked (LOOP-15).
-    fn make(
+    /// The executor's bundle of `cell` and `arm` in `mode`, checked against
+    /// what was asked (LOOP-15).
+    pub(crate) fn make(
         &self,
         exec: &mut dyn Executor,
         out: &Path,
         cell: &Cell,
         arm: Role,
+        mode: Mode,
     ) -> Result<BundleData, LoopError> {
-        let expected = self.run_id(cell, arm)?;
+        let expected = self.run_id(cell, arm, mode)?;
         let dir = out.join(expected.to_hex());
         let request = Request {
             hypothesis: self.hypothesis.abs.clone(),
@@ -905,6 +933,12 @@ impl<'h> Setup<'h> {
             vary: cell.iter().map(|(k, v)| (k.clone(), v.text())).collect(),
             arm,
             replicates: self.h.design().replicates,
+            mode,
+            endpoint: if mode == Mode::Live {
+                SERVED_MOCK.into()
+            } else {
+                String::new()
+            },
             runs_dir: out.to_path_buf(),
             start_dir: self.base.clone(),
         };
@@ -1099,7 +1133,7 @@ fn execute(
         for ((c, arm), have) in wanted.iter().zip(found) {
             let b = match have {
                 Some(b) => b,
-                None => s.make(exec, out, c, *arm)?,
+                None => s.make(exec, out, c, *arm, Mode::Sim)?,
             };
             run_ids.push(b.run_id);
             bundles.push(b);
@@ -1132,11 +1166,74 @@ fn execute(
     })
 }
 
+/// A cell with a defined effect of the first primary quantity: its slice's
+/// index in the verdict, its index in the slice (HYP-14 order), and the effect.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Ranked {
+    pub slice: usize,
+    pub cell: usize,
+    pub effect: f64,
+}
+
+/// Every cell that has a treatment arm and a finite effect of the first
+/// quantity of `[measures].primary`, in slice-key and then HYP-14 order
+/// (LOOP-11, LOOP-12).
+pub(crate) fn ranking(h: &Hypothesis, v: &Verdict) -> Vec<Ranked> {
+    let Some(first) = h.primary().first() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (si, s) in v.slices.iter().enumerate() {
+        for (ci, c) in s.data.cells().iter().enumerate() {
+            if c.treatment.is_none() {
+                continue;
+            }
+            let effect = s
+                .effects
+                .get(&ci)
+                .and_then(|per_q| per_q.get(first))
+                .and_then(|e| e.value)
+                .filter(|x| x.is_finite());
+            if let Some(effect) = effect {
+                out.push(Ranked {
+                    slice: si,
+                    cell: ci,
+                    effect,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// `ranked` by effect, largest first. The sort is stable and compares by
+/// value, so equal effects (−0 and +0 included) keep slice-key and HYP-14
+/// order, and the first entry is LOOP-11's best.
+pub(crate) fn best_first(ranked: &[Ranked]) -> Vec<Ranked> {
+    let mut v = ranked.to_vec();
+    v.sort_by(|a, b| {
+        b.effect
+            .partial_cmp(&a.effect)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    v
+}
+
+/// `ranked` by effect, smallest first, ties as [`best_first`]: the first entry
+/// is LOOP-11's worst.
+pub(crate) fn worst_first(ranked: &[Ranked]) -> Vec<Ranked> {
+    let mut v = ranked.to_vec();
+    v.sort_by(|a, b| {
+        a.effect
+            .partial_cmp(&b.effect)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    v
+}
+
 /// The best and worst configurations, and the control effect (LOOP-11).
 fn effects(h: &Hypothesis, v: &Verdict) -> (J, J, J) {
     let first = h.primary().first().cloned().unwrap_or_default();
-    let mut best: Option<(f64, J)> = None;
-    let mut worst: Option<(f64, J)> = None;
     let mut all = Vec::new();
     for s in &v.slices {
         for (i, c) in s.data.cells().iter().enumerate() {
@@ -1165,32 +1262,24 @@ fn effects(h: &Hypothesis, v: &Verdict) -> (J, J, J) {
                     ("treatment_replicates", J::count(treatment.completed())),
                     ("control_replicates", control.map_or(J::Null, J::count)),
                 ]));
-                if *q != first {
-                    continue;
-                }
-                let Some(x) = e.value.filter(|x| x.is_finite()) else {
-                    continue;
-                };
-                let entry = || {
-                    J::obj([
-                        ("slice", J::str(s.key.clone())),
-                        ("cell", cell_json(&c.cell)),
-                        ("quantity", J::str(q.clone())),
-                        ("effect", J::Float(x)),
-                    ])
-                };
-                if best.as_ref().is_none_or(|(b, _)| x > *b) {
-                    best = Some((x, entry()));
-                }
-                if worst.as_ref().is_none_or(|(w, _)| x < *w) {
-                    worst = Some((x, entry()));
-                }
             }
         }
     }
+    let entry = |r: Option<&Ranked>| {
+        let r = r?;
+        let s = v.slices.get(r.slice)?;
+        let cell = &s.data.cells().get(r.cell)?.cell;
+        Some(J::obj([
+            ("slice", J::str(s.key.clone())),
+            ("cell", cell_json(cell)),
+            ("quantity", J::str(first.clone())),
+            ("effect", J::Float(r.effect)),
+        ]))
+    };
+    let ranked = ranking(h, v);
     (
-        best.map_or(J::Null, |b| b.1),
-        worst.map_or(J::Null, |w| w.1),
+        entry(best_first(&ranked).first()).unwrap_or(J::Null),
+        entry(worst_first(&ranked).first()).unwrap_or(J::Null),
         J::Arr(all),
     )
 }
@@ -1554,23 +1643,7 @@ pub fn run(
     let md = markdown(&text)?;
     // LOOP-13: re-read before the verdict is written ...
     s.check_inputs()?;
-    match verdict::write(runs_dir, v) {
-        Ok(_) => {}
-        Err(VerdictError::Exists(dir)) => {
-            // Two loops can end on the same bundle set (LOOP-10(c)).
-            let path = dir.join("verdict.json");
-            let on_disk = std::fs::read(&path).map_err(|e| io_err(&path, e))?;
-            if on_disk != v.text().as_bytes() {
-                return err(
-                    Code::VerdictConflict,
-                    format!("{} exists with other bytes (LOOP-10(c))", path.display()),
-                );
-            }
-        }
-        Err(e) => {
-            return err(Code::Io, e.to_string());
-        }
-    }
+    write_or_keep(runs_dir, v)?;
     // ... and before the report is.
     s.check_inputs()?;
     let report = loop_out::write_report(runs_dir, &[], &s.loop_id, &text, &md)?;
@@ -1586,6 +1659,29 @@ pub fn run(
     })
 }
 
+/// Write `v` under `runs/verdicts/`, or keep the one already there when it
+/// has the same bytes: two loops can end on the same bundle set (LOOP-10(c)),
+/// and a twin can meet its own verdict again (LOOP-12). Other bytes fail
+/// with `verdict_conflict`.
+pub(crate) fn write_or_keep(runs_dir: &Path, v: &Verdict) -> Result<(), LoopError> {
+    match verdict::write(runs_dir, v) {
+        Ok(_) => Ok(()),
+        Err(VerdictError::Exists(dir)) => {
+            let path = dir.join("verdict.json");
+            let on_disk = std::fs::read(&path).map_err(|e| io_err(&path, e))?;
+            if on_disk == v.text().as_bytes() {
+                Ok(())
+            } else {
+                err(
+                    Code::VerdictConflict,
+                    format!("{} exists with other bytes (LOOP-10(c))", path.display()),
+                )
+            }
+        }
+        Err(e) => err(Code::Io, e.to_string()),
+    }
+}
+
 fn bad_report(m: impl Into<String>) -> LoopError {
     LoopError {
         code: Code::Report,
@@ -1593,15 +1689,52 @@ fn bad_report(m: impl Into<String>) -> LoopError {
     }
 }
 
-/// `acn loop run --from-report` (LOOP-14): re-run the loop the report
-/// records into a fresh `runs/regen/<loop_id>/<n>/`, reusing no bundle and
-/// judging in memory, and compare every bundle, both report files and the final
-/// verdict with the originals.
-pub fn regenerate(
-    report_path: &Path,
-    bin: Binary,
-    exec: &mut dyn Executor,
-) -> Result<Regenerated, LoopError> {
+/// A loop report as `regenerate`, the twin and `evidence verify` read it:
+/// its bytes, its JSON, the hypothesis and arguments it records, and where it
+/// lies. Reading it applies LOOP-14's refusals, in order: a linked report, a
+/// report not at `runs/loop/<loop_id>/report.json`, another build, a changed
+/// input.
+pub(crate) struct Recorded {
+    pub text: String,
+    pub r: serde_json::Value,
+    pub h: Hypothesis,
+    pub args: Args,
+    /// `runs/`, absolute.
+    pub runs: PathBuf,
+    /// `runs/loop/<loop_id>/`.
+    pub loop_dir: PathBuf,
+    /// The report's `loop_id`, as hex.
+    pub id: String,
+}
+
+impl Recorded {
+    /// The loop's setup from what the report records, which must give the
+    /// report's own loop_id (LOOP-14).
+    pub(crate) fn setup(&self, bin: Binary, exec: &dyn Executor) -> Result<Setup<'_>, LoopError> {
+        let s = Setup::new(&self.h, &self.args, &self.runs, bin, exec)?;
+        if s.loop_id.to_hex() != self.id {
+            return err(
+                Code::InputChanged,
+                format!(
+                    "the inputs give loop_id {}, not the report's {} (LOOP-14)",
+                    s.loop_id.to_hex(),
+                    self.id
+                ),
+            );
+        }
+        Ok(s)
+    }
+}
+
+/// A string field of a report, or `report_refused`.
+fn str_at(v: &serde_json::Value, what: &str) -> Result<String, LoopError> {
+    v.as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| bad_report(format!("no `{what}`")))
+}
+
+/// Read the report at `report_path` (LOOP-14).
+pub(crate) fn read_report(report_path: &Path, bin: Binary) -> Result<Recorded, LoopError> {
     // The report is read from runs/ itself: neither it nor its loop directory
     // may be a link to another tree (HYP-4).
     let linked = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
@@ -1612,11 +1745,11 @@ pub fn regenerate(
         )));
     }
     // Absolute, so `runs/` and its parent are found however the path is given.
-    let report_path = &std::fs::canonicalize(report_path).map_err(|e| LoopError {
+    let report_path = std::fs::canonicalize(report_path).map_err(|e| LoopError {
         code: Code::Report,
         message: format!("{}: {e}", report_path.display()),
     })?;
-    let text = std::fs::read_to_string(report_path).map_err(|e| io_err(report_path, e))?;
+    let text = std::fs::read_to_string(&report_path).map_err(|e| io_err(&report_path, e))?;
     let r: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| bad_report(format!("{}: {e}", report_path.display())))?;
     if r["format"] != REPORT_FORMAT {
@@ -1624,21 +1757,16 @@ pub fn regenerate(
     }
     let id = r["loop_id"].as_str().unwrap_or_default().to_owned();
     // runs/loop/<loop_id>/report.json
-    let loop_dir = report_path.parent().unwrap_or(Path::new(""));
+    let loop_dir = report_path.parent().unwrap_or(Path::new("")).to_path_buf();
     let named = |p: &Path, n: &str| p.file_name().and_then(|x| x.to_str()) == Some(n);
-    let loop_root = loop_dir.parent().unwrap_or(Path::new(""));
+    let loop_root = loop_dir.as_path().parent().unwrap_or(Path::new(""));
     let runs = loop_root.parent().unwrap_or(Path::new("")).to_path_buf();
-    if !named(report_path, REPORT_JSON) || !named(loop_dir, &id) || !named(loop_root, "loop") {
+    if !named(&report_path, REPORT_JSON) || !named(&loop_dir, &id) || !named(loop_root, "loop") {
         return Err(bad_report(format!(
             "{} is not runs/loop/<loop_id>/report.json",
             report_path.display()
         )));
     }
-    let str_at = |v: &serde_json::Value, what: &str| -> Result<String, LoopError> {
-        v.as_str()
-            .map(str::to_owned)
-            .ok_or_else(|| bad_report(format!("no `{what}`")))
-    };
     let build = str_at(&r["build_hash"], "build_hash")?;
     let engine = str_at(&r["engine_hash"], "engine_hash")?;
     if build != bin.build_hash.to_hex() || engine != bin.engine_hash.to_hex() {
@@ -1722,17 +1850,30 @@ pub fn regenerate(
             .as_u64()
             .ok_or_else(|| bad_report("no `inputs.budget`"))?,
     };
-    let s = Setup::new(&h, &args, &runs, bin, &*exec)?;
-    if s.loop_id.to_hex() != id {
-        return err(
-            Code::InputChanged,
-            format!(
-                "the inputs give loop_id {}, not the report's {id} (LOOP-14)",
-                s.loop_id.to_hex()
-            ),
-        );
-    }
-    let dir = loop_out::fresh_regen_dir(&runs, &s.loop_id)?;
+    Ok(Recorded {
+        text,
+        r,
+        h,
+        args,
+        runs,
+        loop_dir,
+        id,
+    })
+}
+
+/// `acn loop run --from-report` (LOOP-14): re-run the loop the report
+/// records into a fresh `runs/regen/<loop_id>/<n>/`, reusing no bundle and
+/// judging in memory, and compare every bundle, both report files and the final
+/// verdict with the originals.
+pub fn regenerate(
+    report_path: &Path,
+    bin: Binary,
+    exec: &mut dyn Executor,
+) -> Result<Regenerated, LoopError> {
+    let rec = read_report(report_path, bin)?;
+    let s = rec.setup(bin, &*exec)?;
+    let (text, r, runs, loop_dir, id) = (&rec.text, &rec.r, &rec.runs, &rec.loop_dir, &rec.id);
+    let dir = loop_out::fresh_regen_dir(runs, &s.loop_id)?;
     let done = execute(&s, &dir, false, exec)?;
     let new_text = report(&s, &done)?.render();
     let new_md = markdown(&new_text)?;
@@ -1741,10 +1882,10 @@ pub fn regenerate(
         .and_then(|x| x.to_str())
         .unwrap_or_default()
         .to_owned();
-    loop_out::write_report(&runs, &["regen", &id, &n], &s.loop_id, &new_text, &new_md)?;
+    loop_out::write_report(runs, &["regen", id, &n], &s.loop_id, &new_text, &new_md)?;
 
     let mut differ = Vec::new();
-    if new_text != text {
+    if new_text != *text {
         differ.push(REPORT_JSON.to_owned());
     }
     let md_path = loop_dir.join(REPORT_MD);
@@ -1788,4 +1929,31 @@ pub fn regenerate(
         dir,
         differ,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Ranked, best_first, worst_first};
+
+    fn r(slice: usize, cell: usize, effect: f64) -> Ranked {
+        Ranked {
+            slice,
+            cell,
+            effect,
+        }
+    }
+
+    /// Cites: LOOP-11, LOOP-12
+    #[test]
+    fn rankings_keep_slice_and_cell_order_on_ties_with_signed_zeros_equal() {
+        let ranked = [r(0, 0, -0.0), r(0, 1, 0.0), r(1, 0, 0.5), r(1, 1, 0.5)];
+        let order = |v: Vec<Ranked>| v.iter().map(|x| (x.slice, x.cell)).collect::<Vec<_>>();
+        // The first of equal effects in slice-key and HYP-14 order wins, as
+        // LOOP-11's single best and worst always chose: −0 and +0 are equal.
+        assert_eq!(order(best_first(&ranked)), [(1, 0), (1, 1), (0, 0), (0, 1)]);
+        assert_eq!(
+            order(worst_first(&ranked)),
+            [(0, 0), (0, 1), (1, 0), (1, 1)]
+        );
+    }
 }
