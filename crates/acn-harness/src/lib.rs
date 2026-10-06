@@ -11,6 +11,7 @@ pub mod context;
 pub mod credentials;
 pub mod env;
 pub mod knobs;
+mod net;
 pub mod run;
 pub mod wire;
 pub mod workload;

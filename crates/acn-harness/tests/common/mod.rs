@@ -150,6 +150,8 @@ pub struct Spec<'a> {
     pub backend: Backend,
     /// `bytes_scaled` instead of the mock's `tokens` method.
     pub bytes_scaled: bool,
+    /// A network the calls cross (SPEC 020 §4); none by default.
+    pub scenario: Option<acn_emu::scenario::Scenario>,
 }
 
 impl Default for Spec<'_> {
@@ -164,6 +166,7 @@ impl Default for Spec<'_> {
             opts: Opts::default(),
             backend: Backend::Mockllm,
             bytes_scaled: false,
+            scenario: None,
         }
     }
 }
@@ -196,7 +199,10 @@ pub fn session(spec: Spec<'_>) -> Ran {
         ],
     };
     let mock = Mock::with_profiles(spec.profiles, spec.seed).unwrap();
-    let env = SimEnv::new(mock, MARKER.to_owned());
+    let env = match &spec.scenario {
+        None => SimEnv::new(mock, MARKER.to_owned()),
+        Some(sc) => SimEnv::with_scenario(mock, MARKER.to_owned(), sc, spec.seed).unwrap(),
+    };
     let rec = Recording {
         inner: env.clone(),
         bodies: RefCell::new(Vec::new()),
@@ -211,6 +217,7 @@ pub fn session(spec: Spec<'_>) -> Ran {
         .build();
     let tracer = provider.tracer("acn-harness");
     let rep = Replicate {
+        net: None,
         setup: &setup,
         env: &rec,
         tracer: &tracer,
@@ -470,6 +477,7 @@ pub fn scripted_with(
         .build();
     let tracer = provider.tracer("acn-harness");
     let rep = Replicate {
+        net: None,
         setup: &setup,
         env,
         tracer: &tracer,

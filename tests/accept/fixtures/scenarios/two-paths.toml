@@ -1,0 +1,19 @@
+# Two paths: a run's scenario has exactly one (SPEC 020 EMU-32).
+schema_version = 1
+name = "two-paths"
+
+[[link]]
+name = "a"
+direction = "up"
+
+[[link]]
+name = "a"
+direction = "down"
+
+[[link]]
+name = "b"
+direction = "up"
+
+[[link]]
+name = "b"
+direction = "down"

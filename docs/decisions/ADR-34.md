@@ -14,7 +14,7 @@ The harness already runs `sim` on its own deterministic scheduler (`SimEnv`, HAR
 - **Three PRs, one concern each.**
   - **T11.1** (this one) writes SPEC 020 §4 and adds `acn_emu::sim`: an event queue and a network. The harness does not change.
   - **T11.2** rebuilds the harness's scheduler on the queue. It is a refactor whose proof is that bundles do not change.
-  - **T11.3** adds `acn run --scenario`, carries calls over the network, and emits the link and scenario spans (EMU-36, EMU-37, EMU-39).
+  - **T11.3** adds `acn harness run --scenario`, carries calls over the network, and emits the link and scenario spans (EMU-36, EMU-37, EMU-39).
 - **No scenario stays the default (EMU-39).** `clean.toml` hashes to a non-zero value. Making it the default would change every `run_id`, the POC 4 loop's id, and the loop's pins check, so it would orphan the run of record `f3afab22…`.
   - A run with no scenario has no network, draws nothing for one, and emits no span for one. So every file of its bundle stays byte-identical, except those that record the build: `manifest.json` and the build attributes of `resources.parquet` carry `build_hash`, which covers every file under `crates/` (CON-31) and so changes with any code change. A first draft promised full byte-identity, which no code change can keep; the review caught it. T11.2 pins the digest of the other files.
   - `clean` is an explicit baseline, for a treatment that impairs the link.

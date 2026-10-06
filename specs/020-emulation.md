@@ -101,20 +101,20 @@ The loader MUST load the trace under EMU-64 and MUST refuse it, with reason `tra
 
 ## 4. The sim engine
 
-The sim engine runs a replicate's traffic over a scenario's links on virtual time (CON-5(c)). It has two parts: an event queue, which the harness's scheduler is built on, and a *network*, which carries a call's request and response across a path. T11.1 implements both in `acn_emu::sim`; T11.2 rebuilds the harness's sim scheduler on the queue; T11.3 wires a scenario into `acn run` and emits the spans of EMU-36 and EMU-37.
+The sim engine runs a replicate's traffic over a scenario's links on virtual time (CON-5(c)). It has two parts: an event queue, which the harness's scheduler is built on, and a *network*, which carries a call's request and response across a path. T11.1 implements both in `acn_emu::sim`; T11.2 rebuilds the harness's sim scheduler on the queue; T11.3 wires a scenario into `acn harness run` and emits the spans of EMU-36 and EMU-37.
 
 **EMU-30** **The event queue.** Events are ordered by `(time_ns, seq)`, where `seq` is the order in which they were added. The queue's clock starts at 0 and moves only forward, to the time of the earliest pending event. An event for a time earlier than the clock MUST be refused.
 
 **EMU-31** **Groups.** The queue MUST hand out every event due at the earliest pending time as one group, in `seq` order, and only then move on. The harness takes calls due at one instant from one group, which is what lets it submit them together (HAR-41).
 
-**EMU-32** **Paths and messages.** A *path* is the pair of links of one name in a scenario, `up` and `down`. A scenario used by `acn run` MUST have exactly one path, which every call crosses; a mapping of calls to several paths is for a later spec.
+**EMU-32** **Paths and messages.** A *path* is the pair of links of one name in a scenario, `up` and `down`. A scenario used by `acn harness run` MUST have exactly one path, which every call crosses; a mapping of calls to several paths is for a later spec.
 - **The request.** One message on the uplink, of the request body's bytes, sent when the attempt is made.
 - **The response.** One or more messages on the downlink. A body that is not streamed, including an error response, is one message of its bytes, sent at the server's `respond_at_ns`. Each event of a streamed response is one message of its wire bytes (`data: …` and the blank line), sent at the server's emission time for it (`Chunk.at_ns`).
 - **Order on the link.** A response message is offered to the downlink when the network's clock reaches its send time, so the messages of concurrent calls meet the link in time order (EMU-1), and messages with the same send time in the order the responses were registered. A response's send times MUST NOT decrease.
 - **Retries.** Each attempt of a call (HAR-24) is its own call on the network, with its own request and response messages.
 
-**EMU-33** **One instant.** In a run with a scenario, the server sees a request at its uplink delivery time. The harness's scheduler (HAR-41) works through each instant `T` in three phases:
-1. it wakes every wait due at `T`;
+**EMU-33** **One instant.** In a run with a scenario, the server sees every delivered request at its uplink delivery time, even when the attempt that sent it has already ended (its response then crosses the downlink, recorded by no attempt). The harness's scheduler (HAR-41) works through each instant `T` in three phases:
+1. it wakes every wait due at `T`, and in the same step ends every attempt whose end is now known (EMU-35), so that lineages resume in the order they would without a network;
 2. it lets every lineage run until none makes a new request or wait at `T`, sending each request made at `T` up its link;
 3. it hands every request whose delivery time is `T` to the server as one batch, through `Mock::handle_batch` with arrival time `T`.
 
@@ -129,7 +129,7 @@ The batch's order is MLM-7's, never the order of sending. A request delivered at
 
 The events received before the end are kept, and the attempt's downlink bytes are theirs. A cut stream is retried like any transport failure (HAR-24).
 
-**EMU-36** **Link spans.** In a run with a scenario, every message of every attempt MUST be recorded as an `acn.link` span (TRC-15) under the attempt's `chat` span. Link spans are produced under a resource with `service.name = "acn-emu"` (TRC-19), whose ids come from the same `trace.ids` generator as the replicate's harness spans, drawn in program order (TRC-27). Each span MUST carry a span link to the `acn.scenario` span (TRC-16) and these attributes:
+**EMU-36** **Link spans.** In a run with a scenario, every message an attempt carried by the time it ended MUST be recorded as an `acn.link` span (TRC-15) under the call's `chat` span. (A message the server sends after the attempt ended, say after a timeout, still crosses the link, and so still shapes later fates, but belongs to no attempt and is not recorded.) Link spans are produced under a resource with `service.name = "acn-emu"` (TRC-19), whose ids come from the same `trace.ids` generator as the replicate's harness spans, drawn in program order (TRC-27). Each span MUST carry a span link to the `acn.scenario` span (TRC-16) and these attributes:
 - `acn.link.id`: the link's name in the scenario;
 - `acn.link.direction`: `up` or `down`;
 - `acn.link.model`: the link's stages in pipeline order, joined by `+` (for example `outage+gilbert_elliott+rate+delay+reorder`, `trace+reorder`), or `none`;
@@ -142,7 +142,9 @@ The events received before the end are kept, and the attempt's downlink bytes ar
 
 **EMU-37** **The scenario span.** A run with a scenario MUST record one `acn.scenario` span (TRC-16) under the `acn-emu` resource of the run, with ids drawn from the run's `trace.ids` stream before the first replicate starts (TRC-27), so that every link span can link to it. It starts at 0 and ends at the latest end of any replicate's sessions. It carries the scenario file's bytes as `acn.scenario.toml` and its hash. Its events, in order of time and then of link name, direction and window:
 - an `acn.scenario.outage` event (`start_ns`, `end_ns`, `cause`) for each outage window of EMU-7 in which some message was dropped or held, and for each trace outage segment (EMU-12, cause `trace`) in which some message was dropped, over the times that segment was in force;
-- an `acn.scenario.step` event (`step`: the link, direction and trace sample; `params`: the segment's values as JSON) the first time a message is sent in each trace segment.
+- an `acn.scenario.step` event the first time a message is sent in each occurrence of a trace segment. Its `step` is `<link>.<direction>.<sample>`, and its `params` are the segment's values as JSON (`sample`, `loss_ppm`, `rate_bps`, `delay_ns`, `jitter_ns`, `outage`). In `views/link.parquet` (TRC-34), the step in force for a message is the latest step of its own link and direction.
+
+Events at one time sort outages before steps. An outage event's times are clamped at 0, since a trace segment's first occurrence can begin before the replicate does. A message's fate names only the last window it met (EMU-7), so a message held in one window and then dropped in the adjacent one records the second window only.
 
 Waits that a queued message spent in an outage it was not sent in are visible in its `rate_limited_ms`, not as an event.
 
@@ -197,7 +199,21 @@ Every number MUST be finite. A trace MUST hold at least two samples.
   - a response's send times refused when they decrease, a response refused for a request that was not delivered, and a refusal that registers nothing;
   - a golden vector of a network's events on `cellular-handover`, crossing both halves of the handover (an uplink hold and a downlink drop), with every fate and outcome;
   - two runs on `5g-iana-replay` giving identical results.
-- The harness's acceptance suites (T11.2, T11.3) — EMU-33, EMU-35 to EMU-37, EMU-39: a run with no scenario unchanged in every file but the build's, a scenario run twice byte-identical, a zero-delay request joining its instant's batch, receive times as the exchange's timestamps, `link.parquet` filled with a span link to the scenario span, a timeout and a cut stream recorded for drops.
+- `tests/accept/harness_sim.rs` (T11.2) — EMU-39: the bundles of four runs with no scenario, pinned, unchanged by the scheduler's move onto the queue.
+- `crates/acn-harness/tests/network.rs` (T11.3) — EMU-33 to EMU-36:
+  - one session with and without a zero-delay network gives the same exchanges, batches included (one marker, so one set of prompts);
+  - over a delayed path every timestamp moves by the delays;
+  - a request delivered after its timeout still reaches the mock;
+  - an attempt keeps nothing received after its end, in its events, its bytes or its link records;
+  - a wait and an attempt that end at one instant resume in the order they would without a network.
+- `tests/accept/emu_sim.rs` (T11.3) — EMU-35 to EMU-37:
+  - a scenario run twice byte-identical, and its run id not the no-scenario one;
+  - link spans under their `chat`, from the one `acn-emu` resource, each linked to the one `acn.scenario` span, with TRC-15's attributes;
+  - a lost request ending at its deadline, with its outage event;
+  - a held request recording its hold and its window;
+  - cut streams retried;
+  - a trace run's step events, per direction, with their parameters, in time order, recorded once, with `link.parquet`'s step following each message's own direction;
+  - a scenario with two paths, or in `live`, refused.
 - Scenario runs have no live twin until T12 (CON-25): until then their numbers are exploratory, not cited.
 
 - `crates/acn-emu/tests/link_models.rs` — EMU-1 to EMU-9:

@@ -12,6 +12,7 @@ dependencies = [
  "acn-hyp",
  "acn-mockllm",
  "acn-trace",
+ "arrow-array",
  "blake3",
  "serde_json",
  "tempfile",

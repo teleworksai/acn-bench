@@ -305,6 +305,19 @@ impl TraceSchedule {
         (k, tau.saturating_add(to - u))
     }
 
+    /// The trace sample in force at link time `tau >= 0`, and the link times
+    /// at which that occurrence of it begins and ends (EMU-37).
+    #[must_use]
+    pub fn segment_at(&self, tau: i64) -> (usize, i64, i64) {
+        let (k, end) = self.at(tau);
+        let len = self
+            .segments
+            .get(k + 1)
+            .map_or(self.period_ns, |s| s.from_ns)
+            - self.segments[k].from_ns;
+        (k, end.saturating_sub(len), end)
+    }
+
     /// Credit units gained in one whole period.
     fn per_period(&self) -> i128 {
         self.segments
@@ -378,6 +391,38 @@ pub struct LinkSpec {
 }
 
 impl LinkSpec {
+    /// TRC-15's `acn.link.model`: the stages in pipeline order, joined by `+`,
+    /// or `none` (SPEC 020 EMU-36).
+    #[must_use]
+    pub fn model_name(&self) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        if self.trace.is_some() {
+            parts.push("trace");
+        }
+        if self.outage.is_some() {
+            parts.push("outage");
+        }
+        match self.loss {
+            Some(Loss::Iid { .. }) => parts.push("iid"),
+            Some(Loss::GilbertElliott { .. }) => parts.push("gilbert_elliott"),
+            None => {}
+        }
+        if self.rate.is_some() {
+            parts.push("rate");
+        }
+        if self.delay.is_some() {
+            parts.push("delay");
+        }
+        if self.reorder.is_some() {
+            parts.push("reorder");
+        }
+        if parts.is_empty() {
+            "none".to_owned()
+        } else {
+            parts.join("+")
+        }
+    }
+
     /// A link with no stages.
     #[must_use]
     pub fn new(name: &str, direction: Direction) -> Self {

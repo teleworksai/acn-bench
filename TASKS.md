@@ -103,7 +103,7 @@ T11 sim engine       → EMU part 2: discrete-event engine on SimClock; message-
                        transport abstraction; bit-identical replay test (CON-5c).
                        In three PRs (ADR-34): T11.1 SPEC 020 §4 and acn_emu::sim
                        (event queue, network), done; T11.2 the harness's sim
-                       scheduler on the queue, bundles unchanged (pinned), done; T11.3 `acn run --scenario`,
+                       scheduler on the queue, bundles unchanged (pinned), done; T11.3 `acn harness run --scenario` (ADR-35),
                        link and scenario spans (EMU-36, EMU-37, EMU-39). Scenarios
                        in `acn loop run` touch crates/acn-hyp: an env-change PR.
 T11b sim↔live twin   → CON-25 + LOOP-12: `acn loop twin` runs the decision-relevant

@@ -21,7 +21,7 @@ use crate::context::{
 };
 use crate::env::{Env, join_all};
 use crate::knobs::{Backfill, Compaction, Fanout, Knobs};
-use crate::wire::{AssembleError, Backend, Exchange, Failure, Reply, assemble};
+use crate::wire::{AssembleError, Backend, Exchange, Failure, LinkRecord, Reply, assemble};
 use crate::workload::{Range, Tool, Turn, Workload};
 
 /// The printable ASCII simulated results are made of (HAR-2).
@@ -82,6 +82,11 @@ fn ms(ns: i64) -> f64 {
     #[allow(clippy::cast_precision_loss)]
     let v = ns as f64 / 1_000_000.0;
     v
+}
+
+/// A run-clock time as the `SystemTime` a span takes, for other modules.
+pub(crate) fn at_ns(ns: i64) -> SystemTime {
+    at(ns)
 }
 
 fn at(ns: i64) -> SystemTime {
@@ -175,11 +180,27 @@ impl Streams {
     }
 }
 
+/// What a replicate with a scenario needs to record its link spans (SPEC 020
+/// EMU-36).
+pub struct NetSpans<'a> {
+    /// The `acn-emu` resource's tracer, sharing the replicate's id stream.
+    pub tracer: &'a SdkTracer,
+    /// The run's `acn.scenario` span, which every link span links to.
+    pub scenario: opentelemetry::trace::SpanContext,
+    /// The path's name in the scenario (`acn.link.id`).
+    pub link_id: String,
+    /// `acn.link.model` of the up and the down link.
+    pub up_model: String,
+    pub down_model: String,
+}
+
 /// One replicate in progress: everything its lineages share.
 pub struct Replicate<'a, E: Env> {
     pub setup: &'a Setup,
     pub env: &'a E,
     pub tracer: &'a SdkTracer,
+    /// With a scenario, how its link spans are recorded.
+    pub net: Option<NetSpans<'a>>,
     pub marker: String,
     pub replicate: u32,
     /// The replicate seed, for sub-agents' scoped streams.
@@ -377,6 +398,8 @@ impl<E: Env> Replicate<'_, E> {
         let request_timeout = int(s.opts.request_timeout_ms.saturating_mul(1_000_000));
         let (mut up, mut down, mut retries) = (0u64, 0u64, 0u64);
         let mut last: Exchange;
+        // Every message of every attempt, for the link spans (EMU-36).
+        let mut carried: Vec<LinkRecord> = Vec::new();
         let (mut reply, mut stop, mut error) = loop {
             let now = self.env.now();
             let (timeout_ns, by_deadline) = match deadline {
@@ -391,6 +414,7 @@ impl<E: Env> Replicate<'_, E> {
                 .await;
             up += body.len() as u64;
             down += last.bytes_down;
+            carried.extend(last.links.iter().copied());
             if s.backend != Backend::Mockllm && last.from_mock() {
                 return Err(HarnessError::BackendMismatch(format!(
                     "a response to a `{}` run carries the mock's marker (CON-26, HAR-23)",
@@ -558,7 +582,11 @@ impl<E: Env> Replicate<'_, E> {
             }
             span.add_event_with_timestamp("acn.stream.last_token", at(*last_t), vec![]);
         }
-        span.end_with_timestamp(at(end));
+        let chat_cx = parent.with_span(span);
+        if let Some(net) = &self.net {
+            self.link_spans(net, &carried, &chat_cx);
+        }
+        chat_cx.span().end_with_timestamp(at(end));
 
         // The next call of this lineage is compared with this context followed by
         // the message its response became (TRC-12).
@@ -574,6 +602,44 @@ impl<E: Env> Replicate<'_, E> {
             context: ctx,
             compared,
         })
+    }
+
+    /// One `acn.link` span per message an attempt carried (SPEC 020 EMU-36),
+    /// under the call's `chat` span, from the `acn-emu` resource, each linked
+    /// to the run's `acn.scenario` span.
+    fn link_spans(&self, net: &NetSpans<'_>, carried: &[LinkRecord], chat: &Cx) {
+        for r in carried {
+            let f = r.fate;
+            let dropped = f.outcome.is_err();
+            let dequeue = r.received_ns.unwrap_or(f.send_ns);
+            let applied = if dropped { 0 } else { f.hold_ns + f.delay_ns };
+            let (direction, model) = match r.direction {
+                acn_emu::link::Direction::Up => ("up", net.up_model.clone()),
+                acn_emu::link::Direction::Down => ("down", net.down_model.clone()),
+            };
+            let mut span = net
+                .tracer
+                .span_builder("acn.link")
+                .with_kind(SpanKind::Internal)
+                .with_start_time(at(f.send_ns))
+                .with_links(vec![opentelemetry::trace::Link::with_context(
+                    net.scenario.clone(),
+                )])
+                .with_attributes(vec![
+                    KeyValue::new("acn.link.id", net.link_id.clone()),
+                    KeyValue::new("acn.link.direction", direction),
+                    KeyValue::new("acn.link.model", model),
+                    KeyValue::new("acn.link.bytes", int(r.bytes)),
+                    KeyValue::new("acn.link.enqueue_ns", f.send_ns),
+                    KeyValue::new("acn.link.dequeue_ns", dequeue),
+                    KeyValue::new("acn.link.applied_delay_ms", ms(applied)),
+                    KeyValue::new("acn.link.rate_limited_ms", ms(f.rate_wait_ns)),
+                    KeyValue::new("acn.link.dropped", dropped),
+                    KeyValue::new("acn.link.reordered", f.reordered),
+                ])
+                .start_with_context(net.tracer, chat);
+            span.end_with_timestamp(at(dequeue));
+        }
     }
 
     /// Run one simulated tool (HAR-2) and record its span.

@@ -41,12 +41,27 @@ pub trait Env {
 
 enum Op {
     Sleep(i64),
-    Call(Vec<u8>),
+    Call {
+        body: Vec<u8>,
+        stream: bool,
+        timeout_ns: i64,
+    },
 }
 
 enum Done {
     Woke,
     Called(Box<Outcome>),
+    /// With a scenario: the attempt's exchange, already on the network's
+    /// receive times (SPEC 020 EMU-34, EMU-35).
+    Carried(Box<Exchange>),
+}
+
+/// A call made at the current instant.
+struct Pending {
+    id: u64,
+    body: Vec<u8>,
+    stream: bool,
+    timeout_ns: i64,
 }
 
 struct SimState {
@@ -57,7 +72,9 @@ struct SimState {
     /// Pending waits, by due time then registration (EMU-30).
     waits: EventQueue<u64>,
     /// Calls registered at the current instant, in registration order.
-    calls: Vec<(u64, Vec<u8>)>,
+    calls: Vec<Pending>,
+    /// With a scenario, the network the calls cross (SPEC 020 §4).
+    net: Option<crate::net::NetState>,
     done: BTreeMap<u64, Done>,
     /// A wait the queue refused, reported by `drive`. Unreachable today: a wait
     /// is registered only for `t > clock.now`, and the queue's own now (the
@@ -93,13 +110,23 @@ impl Future for OpFuture {
             None => {
                 let id = st.next;
                 st.next += 1;
+
                 match this.op.take() {
                     Some(Op::Sleep(t)) => {
                         if let Err(e) = st.waits.push(t, id) {
                             st.fault = Some(e.to_string());
                         }
                     }
-                    Some(Op::Call(b)) => st.calls.push((id, b)),
+                    Some(Op::Call {
+                        body,
+                        stream,
+                        timeout_ns,
+                    }) => st.calls.push(Pending {
+                        id,
+                        body,
+                        stream,
+                        timeout_ns,
+                    }),
                     None => {}
                 }
                 this.id = Some(id);
@@ -122,9 +149,35 @@ impl SimEnv {
             next: 0,
             waits: EventQueue::new(),
             calls: Vec::new(),
+            net: None,
             done: BTreeMap::new(),
             fault: None,
         })))
+    }
+
+    /// A replicate's environment whose calls cross `scenario`'s one path,
+    /// built under the replicate seed (SPEC 020 EMU-32).
+    pub fn with_scenario(
+        mock: Mock,
+        tenant: String,
+        scenario: &acn_emu::scenario::Scenario,
+        replicate_seed: u64,
+    ) -> Result<Self, HarnessError> {
+        let net = crate::net::NetState::new(scenario, replicate_seed)
+            .map_err(|e| HarnessError::Config(format!("scenario: {e}")))?;
+        let env = Self::new(mock, tenant);
+        env.0.borrow_mut().net = Some(net);
+        Ok(env)
+    }
+
+    /// Every fate the network decided, in order; empty without a scenario.
+    #[must_use]
+    pub fn fates(&self) -> Vec<(acn_emu::link::Direction, acn_emu::link::Fate)> {
+        self.0
+            .borrow()
+            .net
+            .as_ref()
+            .map_or_else(Vec::new, |n| n.fates().to_vec())
     }
 
     /// The mock's cache sizes, for tests.
@@ -148,6 +201,14 @@ impl SimEnv {
                 return Err(HarnessError::Internal(format!("the sim scheduler: {f}")));
             }
             let now = st.clock.now_ns();
+            if st.net.is_some() {
+                if Self::network_step(&mut st, now)? {
+                    continue;
+                }
+                return Err(HarnessError::Internal(
+                    "the sim scheduler has nothing to run and the run has not finished".into(),
+                ));
+            }
             // Wake every wait due now (EMU-31: one group, in registration order).
             if st.waits.next_time().is_some_and(|t| t <= now) {
                 if let Some((_, ids)) = st.waits.pop_group() {
@@ -163,11 +224,11 @@ impl SimEnv {
                 let tenant = st.tenant.clone();
                 let requests: Vec<(Vec<u8>, String, i64)> = calls
                     .iter()
-                    .map(|(_, b)| (b.clone(), tenant.clone(), now))
+                    .map(|c| (c.body.clone(), tenant.clone(), now))
                     .collect();
                 let outcomes = st.mock.handle_batch(&requests);
-                for ((id, _), o) in calls.iter().zip(outcomes) {
-                    st.done.insert(*id, Done::Called(Box::new(o)));
+                for (c, o) in calls.iter().zip(outcomes) {
+                    st.done.insert(c.id, Done::Called(Box::new(o)));
                 }
                 continue;
             }
@@ -180,6 +241,70 @@ impl SimEnv {
                     ));
                 }
             }
+        }
+    }
+
+    /// One step of an instant with a network (SPEC 020 EMU-33): wake the waits
+    /// due, then end the attempts whose end is known, then send the requests
+    /// made at this instant up the link, then hand the requests delivered now to
+    /// the mock as one batch; only when none of that is left, move the clock.
+    /// Returns whether anything happened.
+    fn network_step(st: &mut SimState, now: i64) -> Result<bool, HarnessError> {
+        let sim = |e: acn_emu::sim::SimError| HarnessError::Internal(format!("the network: {e}"));
+        // Waits due now and attempts that end now resume together, as one
+        // group: without a network an attempt's end is itself a wait, so this
+        // keeps the order in which lineages resume, and draw, the same.
+        let mut woke = false;
+        if st.waits.next_time().is_some_and(|t| t <= now)
+            && let Some((_, ids)) = st.waits.pop_group()
+        {
+            for id in ids {
+                st.done.insert(id, Done::Woke);
+            }
+            woke = true;
+        }
+        let Some(net) = st.net.as_mut() else {
+            return Ok(woke);
+        };
+        let settled = net.settle(now).map_err(sim)?;
+        for (id, ex) in settled.resolved {
+            st.done.insert(id, Done::Carried(Box::new(ex)));
+            woke = true;
+        }
+        if woke {
+            return Ok(true);
+        }
+        if !st.calls.is_empty() {
+            for c in std::mem::take(&mut st.calls) {
+                net.send(c.id, now, &c.body, c.stream, c.timeout_ns)
+                    .map_err(sim)?;
+            }
+            return Ok(true);
+        }
+        if net.arriving(now) {
+            // EMU-33: the requests delivered now reach the mock as one batch,
+            // at this instant; their order is MLM-7's.
+            let arrived = net.take_arrivals(now);
+            let requests: Vec<(Vec<u8>, String, i64)> = arrived
+                .iter()
+                .map(|(_, b)| (b.clone(), st.tenant.clone(), now))
+                .collect();
+            let outcomes = st.mock.handle_batch(&requests);
+            for ((id, _), o) in arrived.iter().zip(outcomes) {
+                net.answer(*id, o).map_err(sim)?;
+            }
+            return Ok(true);
+        }
+        match [st.waits.next_time(), net.next_time()]
+            .into_iter()
+            .flatten()
+            .min()
+        {
+            Some(t) if t > now => {
+                st.clock.advance_to(t);
+                Ok(true)
+            }
+            _ => Ok(false),
         }
     }
 
@@ -215,15 +340,31 @@ impl Env for SimEnv {
         timeout_ns: i64,
     ) -> Exchange {
         let start = self.now();
-        let Done::Called(o) = self.op(Op::Call(body)).await else {
-            return Exchange {
-                start_ns: start,
-                end_ns: start,
-                failure: Some(Failure::Transport(
-                    "internal: a call was woken as a wait".into(),
-                )),
-                ..Exchange::default()
-            };
+        let o = match self
+            .op(Op::Call {
+                body,
+                stream,
+                timeout_ns,
+            })
+            .await
+        {
+            Done::Called(o) => o,
+            // With a scenario the exchange is already on receive times; the
+            // attempt waits for its end (SPEC 020 EMU-34, EMU-35).
+            Done::Carried(ex) => {
+                self.sleep_until(ex.end_ns).await;
+                return *ex;
+            }
+            Done::Woke => {
+                return Exchange {
+                    start_ns: start,
+                    end_ns: start,
+                    failure: Some(Failure::Transport(
+                        "internal: a call was woken as a wait".into(),
+                    )),
+                    ..Exchange::default()
+                };
+            }
         };
         let o = *o;
         let streamed = stream && o.status == 200;
@@ -264,6 +405,7 @@ impl Env for SimEnv {
             body,
             bytes_down,
             failure: None,
+            links: Vec::new(),
         }
     }
 }

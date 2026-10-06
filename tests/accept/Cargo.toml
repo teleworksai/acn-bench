@@ -23,6 +23,7 @@ acn-mockllm = { path = "../../crates/acn-mockllm" }
 acn-trace = { workspace = true, features = ["io"] }
 
 [dev-dependencies]
+arrow-array.workspace = true
 acn-emu = { path = "../../crates/acn-emu" }
 blake3.workspace = true
 serde_json.workspace = true
@@ -60,3 +61,7 @@ path = "p4.rs"
 [[test]]
 name = "gates"
 path = "gates.rs"
+
+[[test]]
+name = "emu_sim"
+path = "emu_sim.rs"
