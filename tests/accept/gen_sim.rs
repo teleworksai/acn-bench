@@ -49,7 +49,16 @@ fn config(dir: &Path, mode: Mode) -> GenConfig {
         arm: "treatment".into(),
         replicates: 2,
         vary: BTreeMap::new(),
-        opts: Opts::default(),
+        // A wedged loopback server fails fast instead of hanging the suite.
+        opts: if mode == Mode::Live {
+            Opts {
+                request_timeout_ms: 10_000,
+                max_retries: 0,
+                ..Opts::default()
+            }
+        } else {
+            Opts::default()
+        },
         hypothesis: HypothesisArg::None { seed: 20_261_006 },
         runs_dir: dir.join("runs"),
         start_dir: dir.to_path_buf(),
@@ -134,8 +143,13 @@ fn a_sim_run_twice_is_bit_identical() {
     assert_eq!(x.written.bundle_digest, y.written.bundle_digest);
     assert_eq!((x.sessions, x.calls), (y.sessions, y.calls));
     assert_eq!(x.sessions, 6);
-    // The bundle verifies with its views (TRC-23, TRC-35).
-    acn_trace::bundle::verify(&x.written.dir).unwrap();
+    // The bundle verifies with its views recomputed (TRC-23, TRC-35).
+    acn_trace::bundle::verify_views(&x.written.dir).unwrap();
+    // The counts are the bundle's (GEN-22): over every replicate.
+    let t = read(&x.written.dir);
+    let count = |name: &str| t.spans.iter().filter(|s| s.name == name).count() as u64;
+    assert_eq!(x.sessions, count("acn.session"));
+    assert_eq!(x.calls, count("chat"));
 }
 
 /// Cites: GEN-20
@@ -172,4 +186,11 @@ fn a_live_run_on_the_served_mock_draws_the_plans_of_its_sim_twin() {
     assert_eq!(plans(&ts), plans(&tl));
     assert_eq!(sim.sessions, live.sessions);
     assert_eq!(sim.calls, live.calls);
+    // No endpoint given: the harness served the mock (GEN-22, HAR-26).
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(live.written.dir.join("manifest.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["endpoint_host"], "loopback");
+    assert_eq!(manifest["mode"], "live");
+    acn_trace::bundle::verify_views(&live.written.dir).unwrap();
 }

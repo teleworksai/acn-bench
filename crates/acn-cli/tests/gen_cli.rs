@@ -57,9 +57,15 @@ fn gen_run_prints_one_object_with_its_bundle_and_counts() {
         assert!(j[k].is_string(), "{k}: {j}");
     }
     assert_eq!(j["sessions"], 2);
-    // Two sessions of two turns, each one or two tool calls and an answer.
-    let calls = j["calls"].as_u64().unwrap();
-    assert!((8..=12).contains(&calls), "{calls}");
+    // The counts are the bundle's (GEN-22).
+    let t = acn_trace::parquet_io::read_trace(
+        &dir.path().join(j["dir"].as_str().unwrap()),
+        &acn_trace::schema::inventory().unwrap(),
+    )
+    .unwrap();
+    let count = |name: &str| t.spans.iter().filter(|s| s.name == name).count() as u64;
+    assert_eq!(j["sessions"].as_u64(), Some(count("acn.session")));
+    assert_eq!(j["calls"].as_u64(), Some(count("chat")));
     // The bundle verifies (TRC-23).
     let (code, v) = acn(
         dir.path(),
@@ -89,4 +95,81 @@ fn gen_run_refuses_a_knob_vary_with_ok_false() {
     assert_eq!(j["ok"], false, "{j}");
     assert_ne!(code, Some(0));
     assert!(j["error"].as_str().unwrap().contains("GEN-21"), "{j}");
+    // Refused before the run has an identity: nothing was written.
+    let runs = dir.path().join("runs");
+    assert!(!runs.exists() || std::fs::read_dir(&runs).unwrap().next().is_none());
+}
+
+/// Cites: GEN-22, HAR-26
+#[test]
+fn gen_run_in_live_with_no_endpoint_serves_the_mock() {
+    let dir = tempfile::tempdir().unwrap();
+    // One session of one short turn: live waits on the wall clock.
+    let sheet = SHEET
+        .replace("sessions = 2", "sessions = 1")
+        .replace(
+            "turns_per_session = { const = 2 }",
+            "turns_per_session = { const = 1 }",
+        )
+        .replace(
+            "chain_length = { uniform = [1, 2] }",
+            "chain_length = { const = 1 }",
+        )
+        .replace(
+            "answer_tokens = { const = 16 }",
+            "answer_tokens = { const = 4 }",
+        );
+    std::fs::write(dir.path().join("sheet.toml"), sheet).unwrap();
+    let (code, j) = acn(
+        dir.path(),
+        &[
+            "gen",
+            "run",
+            "--sheet",
+            "sheet.toml",
+            "--seed",
+            "3",
+            "--mode",
+            "live",
+            "--request-timeout-ms",
+            "10000",
+            "--max-retries",
+            "0",
+        ],
+    );
+    assert_eq!(code, Some(0), "{j}");
+    assert_eq!(j["calls"], 2);
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(
+            dir.path()
+                .join(j["dir"].as_str().unwrap())
+                .join("manifest.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["endpoint_host"], "loopback");
+}
+
+/// Cites: GEN-22, HAR-26
+#[test]
+fn gen_run_refuses_the_served_mock_in_sim() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("sheet.toml"), SHEET).unwrap();
+    let (code, j) = acn(
+        dir.path(),
+        &[
+            "gen",
+            "run",
+            "--sheet",
+            "sheet.toml",
+            "--seed",
+            "3",
+            "--endpoint",
+            "acn-mock://loopback",
+        ],
+    );
+    assert_eq!(j["ok"], false, "{j}");
+    assert_ne!(code, Some(0));
+    assert!(j["error"].as_str().unwrap().contains("HAR-26"), "{j}");
 }

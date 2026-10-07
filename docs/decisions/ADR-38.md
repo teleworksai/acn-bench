@@ -95,3 +95,5 @@ T13 asks for a session/turn/call generator "from the Appendix C parameter sheet"
     - a scenario adds its link spans and keeps the plans;
     - a `live` run on the served mock records the same per-turn plans as its `sim` twin (tool classes, chain lengths, sub-agent chains, as a multiset over sessions and replicates), with the same session and call counts.
   - The acceptance runs use mock profiles with timing a thousand times shorter, because `live` waits on the wall clock. Profiles are not in the run_id (MLM-51).
+  - **Where the CLI's acceptance lives.** SPEC 050 §5 places "the CLI prints one object and refuses a knob `vary`" in `tests/accept/gen_sim.rs`. It is in `crates/acn-cli/tests/gen_cli.rs`, because only the CLI's own package can run the `acn` binary (`CARGO_BIN_EXE_acn`). The same file covers a `live` run with no endpoint and the refusal of the served mock in `sim`.
+  - **Counts are run totals.** `sessions` and `calls` count every replicate's, and the tests tie them to the bundle's `acn.session` and `chat` spans.
