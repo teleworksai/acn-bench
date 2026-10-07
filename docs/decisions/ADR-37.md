@@ -47,3 +47,19 @@ LOOP-15 puts every loop decision in `acn-hyp`, which is in the frozen set. Choos
 
   A replicate that fails first drops its server, which stops at once. The run's one HTTP client serves every replicate. A pooled connection to an earlier replicate's server has been closed by then, so it is never reused.
 - HAR-23's probe runs against each replicate's server before its sessions. `GET /v1/models` reads only the profiles, so the probe leaves the mock as `sim` would build it.
+
+## T11b.3 notes
+- **T11b.3 is two `env-change` PRs.** Planned, it is about 2,000 lines of the frozen set, too much to review adversarially at once.
+  - T11b.3a changes no behaviour:
+    - `Request` gains `mode` and `endpoint` (LOOP-15), and both executors pass them through;
+    - the loop runner computes and checks a bundle's run_id in either mode;
+    - `read_report` and `write_or_keep` are extracted from `regenerate` and `run`;
+    - LOOP-11's single best and worst become a full ranking;
+    - `loop_twin::choose` picks LOOP-12's cells;
+    - the twin checks of `promote_gate` move to `loop_twin`.
+  - T11b.3b adds `acn loop twin`, the twin object and its walk in `acn evidence verify`. It ships the command and its verification together, so that no merged state holds twin objects that verify does not walk (LOOP-16).
+- **The ranking.** It reads the effects of the recomputed L1 verdict, the values the report records. It sorts stably by value, so equal effects keep slice-key and HYP-14 order, and −0 equals +0. The first best and worst are therefore exactly the report's, and LOOP-11's bytes are unchanged; a test checks both.
+- **A live run_id.** It is the L1 computation with `mode = live` and the one option `opt.endpoint = acn-mock://loopback` (HAR-26). Every other option is at its default and so is dropped from the parameters (CON-29).
+- **Codes.** `twin_exists` and `twin_mismatch` are declared in T11b.3a with the rest of LOOP-12's codes, and are first produced by T11b.3b.
+- **What `choose` refuses.** It takes only an L1 verdict of its own hypothesis (`twin_refused`), as `promote_gate` does, because the choice is the loop runner's (LOOP-15) and must not rank another file's effects. A decision cell outside its slice is an internal error, not a cell quietly left out.
+- **Links.** A loop report is refused when the report, its loop directory, `runs/loop` or `runs/` is a symbolic link (HYP-4). Before, only the first two were checked.

@@ -12,7 +12,7 @@ use acn_harness::run::{HypothesisArg, RunConfig, run};
 use acn_harness::wire::Backend;
 use acn_hyp::loop_run::{Args, Binary, Completed, Executor, LoopError, Request};
 use acn_mockllm::profile::{PROFILES_TOML, Profiles};
-use acn_trace::identity::{BuildInfo, Digest, Mode};
+use acn_trace::identity::{BuildInfo, Digest};
 
 use super::bundles::build;
 
@@ -109,11 +109,16 @@ impl Executor for Exec {
             workload: r.workload.clone(),
             backend: Backend::Mockllm,
             model: r.model.clone(),
-            mode: Mode::Sim,
+            mode: r.mode,
             arm: r.arm.as_str().to_owned(),
             replicates: r.replicates,
             vary: r.vary.clone(),
-            opts: Opts::default(),
+            // LOOP-15: every option at its default but the endpoint, which
+            // is the served mock's at L2 (HAR-26).
+            opts: Opts {
+                endpoint: r.endpoint.clone(),
+                ..Opts::default()
+            },
             hypothesis: HypothesisArg::File(r.hypothesis.clone()),
             runs_dir: r.runs_dir.clone(),
             start_dir: r.start_dir.clone(),

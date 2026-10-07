@@ -25,6 +25,7 @@ pub mod layer;
 pub mod lint;
 mod loop_out;
 pub mod loop_run;
+pub mod loop_twin;
 pub mod predicate;
 pub mod quantities;
 pub mod read;

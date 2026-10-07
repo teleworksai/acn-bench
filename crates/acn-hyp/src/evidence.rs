@@ -5,7 +5,7 @@
 //! regenerates. The two gates between layers are exposed here, for the `twin`
 //! and `promote` commands of LOOP-12 to call.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use acn_trace::identity::{Digest, Mode};
@@ -14,8 +14,7 @@ use crate::Hypothesis;
 use crate::layer::{self, Layer};
 use crate::loop_run::{self, Binary, Code, Executor, LoopError, REPORT_JSON, Regenerated};
 use crate::read;
-use crate::slice::key;
-use crate::verdict::{self, ReasonId, Verdict};
+use crate::verdict::{self, Verdict};
 
 /// One broken link of a chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -410,7 +409,7 @@ pub fn twin_gate(
 
 /// Whether `v` is a verdict of the file whose hash is `hash`: its verdict_id is
 /// recomputed from that hash and its bundles (HYP-15).
-fn judged_by(hash: &Digest, v: &Verdict) -> bool {
+pub(crate) fn judged_by(hash: &Digest, v: &Verdict) -> bool {
     let pairs: Vec<(Digest, Digest)> = v.bundles.iter().map(|b| (b.0, b.1)).collect();
     verdict::verdict_id(hash, &pairs).is_ok_and(|id| id == v.verdict_id)
 }
@@ -473,49 +472,13 @@ pub fn promote_gate(h: &Hypothesis, l1: &Verdict, l2: Option<&Verdict>) -> Resul
             l1.verdict_id.to_hex()
         ));
     }
-    let twin_failed = l2.reasons.iter().any(|r| r.id == ReasonId::TwinFailed)
-        || l2
-            .slices
-            .iter()
-            .any(|s| s.reasons.iter().any(|r| r.id == ReasonId::TwinFailed));
-    if twin_failed {
+    if crate::loop_twin::records_twin_failed(l2) {
         return refuse(format!(
             "the L2 verdict {} records twin_failed",
             l2.verdict_id.to_hex()
         ));
     }
-    let l2_slices: BTreeMap<&str, &verdict::SliceVerdict> =
-        l2.slices.iter().map(|s| (s.key.as_str(), s)).collect();
-    let mut untwinned = Vec::new();
-    for s in &l1.slices {
-        for &i in &s.eval.decision_cells {
-            let label = |k: String| {
-                if s.key.is_empty() {
-                    k
-                } else {
-                    format!("{}: {k}", s.key)
-                }
-            };
-            // A decision cell that cannot be found is not twinned: the gate
-            // fails closed.
-            let Some(cell) = s.data.cells().get(i) else {
-                untwinned.push(label(format!("#{i}")));
-                continue;
-            };
-            let k = key(&cell.cell);
-            let twinned = l2_slices.get(s.key.as_str()).is_some_and(|t| {
-                t.data
-                    .cells()
-                    .iter()
-                    .position(|c| key(&c.cell) == k)
-                    .and_then(|j| t.twin.as_ref()?.twinned.get(&j).copied())
-                    == Some(true)
-            });
-            if !twinned {
-                untwinned.push(label(k));
-            }
-        }
-    }
+    let untwinned = crate::loop_twin::untwinned(l1, l2);
     if !untwinned.is_empty() {
         return refuse(format!(
             "decision cells the L2 verdict does not twin: {}",

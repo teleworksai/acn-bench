@@ -1,6 +1,6 @@
 {
-  "env_hash": "74422a90d907afefbb53d0fd48d0a07fff642d43a88d02146e4d73a78db8b396",
-  "engine_hash": "b55cacb6e96230c5ad8a93d0440d37134ecc671bb7648a58ea64de97a6377c9e",
+  "env_hash": "49354559d422213739c8a7a9ba2c1350655013d4a6d196635cbc48dcbb7a29e7",
+  "engine_hash": "e0a6563dd0416d5a63ef62f3c0c090861e3d17516c339b8f35197509d6b80c49",
   "files": [
     {
       "path": "crates/acn-attrib/src/core/mod.rs",
@@ -24,7 +24,7 @@
     },
     {
       "path": "crates/acn-hyp/src/evidence.rs",
-      "blake3": "72e719e987e5119239f1be1191faeb1d1ddcea2fa67197057abdd97138533128"
+      "blake3": "513ae06b1cf5e6a509876d789f6647b04fd8faef9623d2ff5cc3c6bc0b5e280c"
     },
     {
       "path": "crates/acn-hyp/src/file.rs",
@@ -40,7 +40,7 @@
     },
     {
       "path": "crates/acn-hyp/src/lib.rs",
-      "blake3": "a5a0a9681743e0f7153a8672b9d77c1b026ccdba40e159cfd02fb8b5e3b34ee8"
+      "blake3": "34afe93cac1e7a4fba9bf83e4f85825485db02e355dedeae1266daef86e2c2c6"
     },
     {
       "path": "crates/acn-hyp/src/lint.rs",
@@ -52,7 +52,11 @@
     },
     {
       "path": "crates/acn-hyp/src/loop_run.rs",
-      "blake3": "6cfdff26bba7278fbe64a84c8def22a448ec8f502472fa1b9312a25e195fdf77"
+      "blake3": "a9f8ae5427f26f48ee97cfd62897914da30eb6166ed5703f231ffc38a531122d"
+    },
+    {
+      "path": "crates/acn-hyp/src/loop_twin.rs",
+      "blake3": "43dea5cd7a72b06ccf13ea2aeecf9a8530cdd767ecb4d3d7f4a1de83114d5fb7"
     },
     {
       "path": "crates/acn-hyp/src/predicate.rs",
@@ -80,7 +84,7 @@
     },
     {
       "path": "crates/acn-hyp/tests/common/exec.rs",
-      "blake3": "47afbef7f6c7265e8933fd96bea6bef3a90ef2bf431aa992756ba28a284200e2"
+      "blake3": "ae75304654cb37a6ac3452917c15379bf2c28a1fb99202782cdfded565fcf9f7"
     },
     {
       "path": "crates/acn-hyp/tests/common/mod.rs",
@@ -129,6 +133,10 @@
     {
       "path": "crates/acn-hyp/tests/loop_run.rs",
       "blake3": "b7bc479ed3cbf1a5a0c36910ad58108a971783046502cefe008697767384da8d"
+    },
+    {
+      "path": "crates/acn-hyp/tests/loop_twin.rs",
+      "blake3": "470e460488ab22c523312189e7d2485eef26caffc414e432e2c6be19c1e82480"
     },
     {
       "path": "crates/acn-hyp/tests/predicate_parse.rs",
