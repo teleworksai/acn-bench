@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "acn-cli",
  "acn-emu",
+ "acn-gen",
  "acn-harness",
  "acn-hyp",
  "acn-mockllm",
@@ -28,6 +29,7 @@ name = "acn-cli"
 version = "0.1.0"
 dependencies = [
  "acn-emu",
+ "acn-gen",
  "acn-harness",
  "acn-hyp",
  "acn-mockllm",

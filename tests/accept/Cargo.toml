@@ -17,6 +17,7 @@ workspace = true
 
 [dependencies]
 acn-cli = { path = "../../crates/acn-cli" }
+acn-gen = { path = "../../crates/acn-gen" }
 acn-harness = { path = "../../crates/acn-harness" }
 acn-hyp = { path = "../../crates/acn-hyp" }
 acn-mockllm = { path = "../../crates/acn-mockllm" }
@@ -41,6 +42,10 @@ path = "trace_roundtrip.rs"
 [[test]]
 name = "harness_sim"
 path = "harness_sim.rs"
+
+[[test]]
+name = "gen_sim"
+path = "gen_sim.rs"
 
 [[test]]
 name = "hyp_lint"
