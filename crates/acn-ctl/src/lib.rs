@@ -4,9 +4,11 @@
 //! (ADR-39).
 #![forbid(unsafe_code)]
 
+pub mod api;
 pub mod registry;
 pub mod request;
 pub mod resolve;
+pub mod server;
 
 pub use registry::{Ctl, CtlConfig, Outcome, State, Status, Submitted};
 pub use request::{Kind, ReqOpts, ScenarioRef, Submit};

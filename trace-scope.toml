@@ -116,4 +116,8 @@ ids = [
 
 [[implemented]]
 spec = "070"
-ids = ["CTL-10", "CTL-11", "CTL-12", "CTL-13"]
+ids = [
+  "CTL-2", "CTL-3", "CTL-10", "CTL-11", "CTL-12", "CTL-13", "CTL-20", "CTL-21",
+  "CTL-22", "CTL-23", "CTL-30",
+]
+# CTL-1 (serve end to end) and CTL-24 (the generated API page) with T14.3.

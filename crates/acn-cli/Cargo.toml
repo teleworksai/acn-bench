@@ -22,9 +22,10 @@ workspace = true
 
 [features]
 # HAR-20: real-provider backends; off in CI's default tiers.
-real-api = ["acn-harness/real-api"]
+real-api = ["acn-harness/real-api", "acn-ctl/real-api"]
 
 [dependencies]
+acn-ctl = { path = "../acn-ctl" }
 acn-gen = { path = "../acn-gen" }
 acn-harness = { path = "../acn-harness" }
 acn-hyp = { path = "../acn-hyp" }

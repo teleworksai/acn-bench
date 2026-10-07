@@ -7,3 +7,5 @@ scenarios/** -text
 workloads/** -text
 # The 5G-IANA importer is named by the BLAKE3 of its file (SPEC 020 EMU-61, EMU-65).
 crates/xtask/src/import_5g_iana.rs -text
+# The committed OpenAPI document is compared byte for byte with the route table (CTL-24).
+crates/acn-ctl/openapi.json -text

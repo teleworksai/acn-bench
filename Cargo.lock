@@ -28,6 +28,7 @@ version = "0.1.0"
 name = "acn-cli"
 version = "0.1.0"
 dependencies = [
+ "acn-ctl",
  "acn-emu",
  "acn-gen",
  "acn-harness",
@@ -54,12 +55,16 @@ dependencies = [
  "acn-harness",
  "acn-mockllm",
  "acn-trace",
+ "axum",
  "blake3",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
+ "tokio",
+ "toml",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

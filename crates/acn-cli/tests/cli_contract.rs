@@ -50,3 +50,13 @@ fn help_version_and_no_arguments_keep_stdout_to_one_json_object() {
     assert_eq!(json["ok"], false);
     assert_eq!(code, Some(1));
 }
+
+/// Cites: CTL-1, CON-8
+#[test]
+fn ctl_serve_on_a_port_in_use_prints_ok_false_and_exits_one() {
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = taken.local_addr().unwrap().port().to_string();
+    let (code, json) = acn(&["ctl", "serve", "--port", &port]);
+    assert_eq!(json["ok"], false, "{json}");
+    assert_eq!(code, Some(1));
+}

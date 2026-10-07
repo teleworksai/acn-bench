@@ -70,3 +70,27 @@ SPEC 070 was "to write". T14 asks for an axum HTTP/JSON API to create scenarios,
   - **Canonical values.** A seed has no leading zero, and a stall threshold is not negative; −0 is written 0 (CON-27(c)). The known-answer vector carries the one float, as CON-27(d) asks.
   - **Adopting another build's bundle** is a reuse, not a mismatch: the build is not part of `run_id` (CON-31), and HYP-20 still refuses a set that mixes builds within one mode.
   - An identity error from a request's input maps to `config`.
+- **T14.2b, the API.**
+  - **One table builds the router.** Its handlers are the table's routes, each dispatched by operation, with the content-type check before any work. Unknown paths answer the JSON fallback, so every answer is one object.
+  - **The answers that are not `{ok, ...}`.** A bundle file's bytes (CTL-23), and the OpenAPI document itself (CTL-24). A top-level `ok` would make the document invalid OpenAPI.
+  - **The committed document.** `crates/acn-ctl/openapi.json`: pretty, sorted JSON with one newline. A test keeps it equal to the table's; `ACN_WRITE_OPENAPI=1` rewrites it. The response schemas name one common `Answer` object (`ok`, `code`, `error`), and the request schemas give each body's media type.
+  - **Status codes.** `bundle_invalid` is 409; an unknown scenario, endpoint, request or bundle is 404. A request missing `Host` gets hyper's own 400 or the guard's 421.
+  - **Handlers run off the runtime.** The registry's file work runs on `spawn_blocking`.
+  - **Bodies are capped.** 1 MiB.
+  - **Shutdown.** `POST /v1/shutdown` stops the registry, so later submissions get 503, and then the server. The worker finishes the run in progress before the summary is printed.
+  - **Endpoints** are checked by the harness's own `--endpoint` check, `endpoint_url`, now public, so a registered URL is one a CLI run accepts. `acn-mock://loopback` is accepted for `mockllm` only. An endpoint is written by temporary file and rename.
+  - **Scenarios** are written to a staging directory and loaded there by `acn_emu::scenario::load`, so the name-is-stem rule (EMU-20) applies, then renamed into place.
+  - **`acn ctl serve`** runs only inside a workspace, resolving `--runs-dir` against its root as `loop run` does.
+  - **Credentials.** The credential test runs the server in a child process with a key in its environment, because `set_var` is `unsafe`.
+- **After review (PR 58).**
+  - **Bind first.** `acn ctl serve` binds its port before it opens the registry, so a server that cannot bind recovers nothing. The registry also takes an exclusive lock on `<runs>/ctl/lock` (`File::try_lock`) before reading anything, and a second one on the same runs directory is refused with 409 `registry_in_use`. The OS releases the lock when the process dies. `Server::bind_with` binds a registry already open, for tests that set its hooks.
+  - **axum's own refusals are JSON.** A method a path does not take answers 405 `method_not_allowed`, a body over 1 MiB answers 413 `payload_too_large`, and a path or body axum cannot read answers 400. The route test requires a JSON object from every route except a bundle file's.
+  - **While stopping**, from the signal on, every write but `shutdown` answers 503 `shutting_down`; reads are served while connections drain. Connections get 5 s to finish, then the server closes them and the worker finishes the run in progress.
+  - **Endpoints and submissions share the registry's lock.** A submission holds it from resolution to queuing, and a delete checks for a queued or running request and removes the file under it, so a request never queues on an endpoint being deleted.
+  - **Scenario staging.** Each store stages in its own numbered directory. A rename that fails is a success only when the scenario is already in place with the same name, and a 500 otherwise.
+  - **Empty bodies.** `shutdown` and `DELETE /v1/endpoints/{name}` take an empty body or `{}`, and nothing else.
+  - **The Host check** takes exactly one `Host` header, compared byte for byte (so `LOCALHOST:<port>` is refused; clients send lower case).
+  - **The document.** Every route also lists 421 and 500; routes with a body list 413; writes list 503. The request bodies name `Submit`, `Endpoint` and `Empty` schemas. The 200 of `get_bundle_file` is binary, and that of `openapi` is the document. The file is checked out byte for byte (`-text`).
+  - **The summary's `ok`** is false when the runtime cannot start, the worker cannot be spawned or panics, the server fails, or the registry records a fault. Its `run_ids` are the runs the registry finished or adopted, not the requests it queued.
+  - **A handler that panics** answers a fixed `internal` message and logs the cause, so the answer never carries a panic's text.
+  - **`real-api`.** `acn-ctl` has the feature, which `acn-cli`'s enables. The credential test asserts that a live OpenAI request is accepted and fails, with or without it, and that neither the answers nor the child's log (now with a subscriber) carry the key.
