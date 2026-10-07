@@ -20,6 +20,13 @@ pub const SUBAGENT: &str = "subagent";
 /// The parts per million a quantile table spans (GEN-2).
 pub const PPM: u64 = 1_000_000;
 
+/// The largest value a count may take: sessions, turns, sub-agents. A plan
+/// holds them in memory, so a sheet beyond these is refused at load (ADR-38).
+pub const MAX_COUNT: u64 = 1_000_000;
+
+/// The largest number of tokens of one text: 2^24, 64 MiB of content.
+pub const MAX_TOKENS: u64 = 1 << 24;
+
 /// A distribution as written: exactly one key (GEN-2).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -269,7 +276,8 @@ impl Sheet {
                         .weighted
                         .iter()
                         .filter_map(|(n, w)| {
-                            classes.iter().position(|c| c == n).map(|i| [i as u64, *w])
+                            let i = classes.iter().position(|c| c == n)?;
+                            Some([u64::try_from(i).ok()?, *w])
                         })
                         .collect(),
                 ),
@@ -294,6 +302,43 @@ impl Sheet {
         };
         let tool_result_tokens = per_class("tool_result_tokens", raw.tool_result_tokens)?;
         let tool_duration_ns = per_class("tool_duration_ns", raw.tool_duration_ns)?;
+        let session_start_ns = d("session_start_ns", raw.session_start_ns)?;
+        let think_time_ns = d("think_time_ns", raw.think_time_ns)?;
+        let user_tokens = d("user_tokens", raw.user_tokens)?;
+        let answer_tokens = d("answer_tokens", raw.answer_tokens)?;
+        // Sizes a plan or a text holds in memory are bounded (ADR-38).
+        let mut sized: Vec<(String, u64, u64)> = vec![
+            ("sessions".into(), raw.sessions, MAX_COUNT),
+            (
+                "turns_per_session".into(),
+                turns_per_session.bounds().1,
+                MAX_COUNT,
+            ),
+            ("fanout_width".into(), fanout_width.bounds().1, MAX_COUNT),
+            ("system_tokens".into(), raw.system_tokens, MAX_TOKENS),
+            (
+                "summary_instruction_tokens".into(),
+                raw.summary_instruction_tokens,
+                MAX_TOKENS,
+            ),
+            (
+                "summary_max_tokens".into(),
+                raw.summary_max_tokens,
+                MAX_TOKENS,
+            ),
+            ("user_tokens".into(), user_tokens.bounds().1, MAX_TOKENS),
+            ("answer_tokens".into(), answer_tokens.bounds().1, MAX_TOKENS),
+        ];
+        for (c, dist) in &tool_result_tokens {
+            sized.push((
+                format!("tool_result_tokens.{c}"),
+                dist.bounds().1,
+                MAX_TOKENS,
+            ));
+        }
+        if let Some((name, v, cap)) = sized.into_iter().find(|(_, v, cap)| v > cap) {
+            return refuse(format!("`{name}` can be {v}, above its limit {cap}"));
+        }
         // The spawn is a tool call (GEN-12).
         if fanout_width.bounds().1 > 0 && chain_length.bounds().0 == 0 {
             return refuse(
@@ -318,13 +363,13 @@ impl Sheet {
             summary_instruction_tokens: raw.summary_instruction_tokens,
             summary_max_tokens: raw.summary_max_tokens,
             compact_at_tokens: raw.compact_at_tokens,
-            session_start_ns: d("session_start_ns", raw.session_start_ns)?,
+            session_start_ns,
             turns_per_session,
-            think_time_ns: d("think_time_ns", raw.think_time_ns)?,
+            think_time_ns,
             chain_length,
             fanout_width,
-            user_tokens: d("user_tokens", raw.user_tokens)?,
-            answer_tokens: d("answer_tokens", raw.answer_tokens)?,
+            user_tokens,
+            answer_tokens,
             classes,
             tool_class,
             tool_result_tokens,

@@ -41,12 +41,17 @@ fn changing_one_parameter_shifts_no_other_draw() {
             );
         }
     }
-    // More sessions leave the first ones as they were.
-    let more = sheet(&shipped_text().replace("sessions = 8", "sessions = 9"));
-    assert_eq!(
-        plan::session(&base, 11, 3).unwrap(),
-        plan::session(&more, 11, 3).unwrap()
-    );
+    // A turn-level parameter leaves every session's own draws as they were.
+    let answers = sheet(&shipped_text().replace(
+        "answer_tokens = { quantiles = [[0, 16],",
+        "answer_tokens = { quantiles = [[0, 17],",
+    ));
+    for k in 0..8 {
+        assert_eq!(
+            plan::session(&base, 11, k).unwrap(),
+            plan::session(&answers, 11, k).unwrap()
+        );
+    }
     // One turn's plan does not depend on another's.
     assert_ne!(
         plan::turn(&base, 11, 0, 0).unwrap(),
@@ -132,4 +137,42 @@ fn text_is_four_lowercase_letters_per_token_from_its_own_stream() {
     assert_ne!(w, acn_gen::text::words(&mut b, 25));
     let mut s = plan::system_stream(5).unwrap();
     assert_eq!(acn_gen::text::words(&mut s, 3).len(), 12);
+}
+
+/// Cites: GEN-3
+#[test]
+fn a_sessions_draws_are_its_start_turns_and_think_times_in_order() {
+    let s = sheet(&shipped_text());
+    for k in [0, 3, 7] {
+        let p = plan::session(&s, 9, k).unwrap();
+        let mut rng = acn_trace::identity::substream_rng(9, &format!("gen.session.{k}")).unwrap();
+        assert_eq!(p.start_ns, s.session_start_ns.draw(&mut rng));
+        assert_eq!(p.turns, s.turns_per_session.draw(&mut rng));
+        let think: Vec<u64> = (1..p.turns)
+            .map(|_| s.think_time_ns.draw(&mut rng))
+            .collect();
+        assert_eq!(p.think_ns, think);
+    }
+}
+
+/// Cites: GEN-4
+#[test]
+fn a_turn_that_does_not_fan_out_is_drawn_in_gen_4_order_too() {
+    let s = sheet(&shipped_text());
+    let mut checked = 0;
+    for k in 0..4 {
+        for t in 0..4 {
+            let p = plan::turn(&s, 5, k, t).unwrap();
+            if !p.children.is_empty() {
+                continue;
+            }
+            let mut rng =
+                acn_trace::identity::substream_rng(5, &format!("gen.plan.{k}.{t}")).unwrap();
+            let (main, width) = by_hand(&s, &mut rng, true);
+            assert_eq!(width, 0);
+            assert_eq!(p.main, main);
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no turn without fan-out among those drawn");
 }

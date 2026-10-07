@@ -67,7 +67,7 @@ pub fn session(sheet: &Sheet, replicate_seed: u64, k: u64) -> Result<SessionPlan
 /// One chain's draws, in GEN-4's order: user text and length, the width
 /// when `fans` (else none), each tool call's class, duration and result size,
 /// then the answer cap. Returns the chain and its width.
-fn chain(sheet: &Sheet, rng: &mut ChaCha20Rng, fans: bool) -> (Chain, u64) {
+fn chain(sheet: &Sheet, rng: &mut ChaCha20Rng, fans: bool) -> Result<(Chain, u64), GenError> {
     let user_tokens = sheet.user_tokens.draw(rng);
     let length = sheet.chain_length.draw(rng);
     let width = if fans {
@@ -75,6 +75,9 @@ fn chain(sheet: &Sheet, rng: &mut ChaCha20Rng, fans: bool) -> (Chain, u64) {
     } else {
         0
     };
+    // A loaded sheet holds a class and its parameters for every value
+    // `tool_class` can draw; anything else is an internal fault.
+    let broken = || GenError::Internal("a tool class without its parameters".into());
     let mut tools = Vec::new();
     for i in 0..length {
         if i == 0 && width > 0 {
@@ -85,13 +88,18 @@ fn chain(sheet: &Sheet, rng: &mut ChaCha20Rng, fans: bool) -> (Chain, u64) {
             });
             continue;
         }
-        let at = usize::try_from(sheet.tool_class.draw(rng)).unwrap_or(0);
-        let class = sheet.classes.get(at).copied().unwrap_or("other");
-        let duration_ns = sheet.tool_duration_ns.get(class).map_or(0, |d| d.draw(rng));
+        let at = usize::try_from(sheet.tool_class.draw(rng)).map_err(|_| broken())?;
+        let class = sheet.classes.get(at).copied().ok_or_else(broken)?;
+        let duration_ns = sheet
+            .tool_duration_ns
+            .get(class)
+            .ok_or_else(broken)?
+            .draw(rng);
         let result_tokens = sheet
             .tool_result_tokens
             .get(class)
-            .map_or(0, |d| d.draw(rng));
+            .ok_or_else(broken)?
+            .draw(rng);
         tools.push(ToolStep {
             class,
             duration_ns,
@@ -99,23 +107,23 @@ fn chain(sheet: &Sheet, rng: &mut ChaCha20Rng, fans: bool) -> (Chain, u64) {
         });
     }
     let answer_tokens = sheet.answer_tokens.draw(rng);
-    (
+    Ok((
         Chain {
             user_tokens,
             tools,
             answer_tokens,
         },
         width,
-    )
+    ))
 }
 
 /// Turn `t` of session `k`, drawn whole from `gen.plan.<k>.<t>` (GEN-4).
 pub fn turn(sheet: &Sheet, replicate_seed: u64, k: u64, t: u64) -> Result<TurnPlan, GenError> {
     let mut rng = stream(replicate_seed, &format!("gen.plan.{k}.{t}"))?;
-    let (main, width) = chain(sheet, &mut rng, true);
+    let (main, width) = chain(sheet, &mut rng, true)?;
     let children = (0..width)
-        .map(|_| chain(sheet, &mut rng, false).0)
-        .collect();
+        .map(|_| chain(sheet, &mut rng, false).map(|c| c.0))
+        .collect::<Result<_, _>>()?;
     Ok(TurnPlan { main, children })
 }
 

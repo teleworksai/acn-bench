@@ -81,7 +81,6 @@ dependencies = [
  "acn-trace",
  "rand_chacha 0.10.0",
  "serde",
- "tempfile",
  "thiserror",
  "toml",
 ]
