@@ -73,3 +73,12 @@ T13 asks for a session/turn/call generator "from the Appendix C parameter sheet"
   - The run refuses a session attribute missing from the inventory instead of silently keeping it (TRC-20).
   - `Cx` is re-exported, so a driver calls `Replicate::call` without its own `opentelemetry` dependency.
   - A test driver builds its own session and turn spans and makes two calls through `call`. Ingest's checks hold its spans to SPEC 010 as they hold the harness's.
+- **T13.3b, the sessions.**
+  - The generator's workload is built in memory: its hash is the sheet's, and its `[agent]` settings are temperature 0 and streaming.
+  - Every session of a replicate runs in one `join_all`, which is deterministic in `sim`. Each session waits for its drawn start, and its span starts there.
+  - The system words are drawn once per replicate. Text is drawn in use order on each lineage's stream: the user message, then each tool result, then a summary instruction when compaction fires.
+  - A main-lineage tool result carries a session-wide ordinal as the harness's do (HAR-13); a sub-agent's carries none.
+  - **If the mock answers with text where a tool call was asked for,** the text is kept and that step runs no tool. With `ToolChoice::Only` and a profile allowing the chain, the mock does not do so (MLM-40).
+  - **Compaction is evaluated before every main-lineage call.** The trigger is HAR-15's estimate on the context about to be sent.
+  - **Sub-agents.** Each sub-agent's first call is compared with the spawning context. Its `acn.fanout.shared_prefix_tokens` is the harness's measure.
+  - **Practical scale.** `join_all` polls every pending session on each round. Sheets with a few hundred sessions per replicate run well; the 10^6 limit of the T13.2 notes is a bound on memory, not a speed claim.

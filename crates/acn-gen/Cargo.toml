@@ -14,8 +14,13 @@ workspace = true
 acn-harness = { path = "../acn-harness" }
 acn-mockllm = { path = "../acn-mockllm" }
 acn-trace.workspace = true
+opentelemetry.workspace = true
 rand_chacha.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 
+
+[dev-dependencies]
+tempfile.workspace = true
