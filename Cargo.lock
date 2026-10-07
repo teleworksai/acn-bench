@@ -48,6 +48,19 @@ dependencies = [
 [[package]]
 name = "acn-ctl"
 version = "0.1.0"
+dependencies = [
+ "acn-emu",
+ "acn-gen",
+ "acn-harness",
+ "acn-mockllm",
+ "acn-trace",
+ "blake3",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "acn-emu"

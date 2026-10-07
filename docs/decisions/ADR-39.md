@@ -34,3 +34,28 @@ SPEC 070 was "to write". T14 asks for an axum HTTP/JSON API to create scenarios,
   All are Class B. T14.2 adds to `acn-harness` and `acn-gen` a way to compute a run's id before running it, from the same code that names the bundle.
 - `acn-ctl` depends on `acn-harness`, `acn-gen` and `acn-emu`, as PLAN.md's dependency line says (`acn-ctl` ← all runtime crates).
 - M3's runs against real inference nodes reach them as named endpoints, with no further change to this API.
+
+## T14.2 notes
+- **T14.2 is two PRs.**
+  - T14.2a: the pre-run identity, and `acn-ctl`'s requests, resolution, registry and worker, with no HTTP.
+  - T14.2b: the API, its route table and OpenAPI file, endpoints, scenarios, bundles and `acn ctl serve`.
+- **A run's identity before it runs.**
+  - `Bundle::plan` makes the checked manifest, `run_id` included, without writing anything; `Bundle::create` is `plan` then `create`.
+  - The harness's `run_driven` does everything before the network and the runs directory in one `prepare`, shared by `plan_driven`, so a plan's `run_id` is the run's (tested in every mode). The generator's `plan_run` shares its `prepare` with `run` the same way, including the rewrite of an empty live endpoint to the served mock, which is part of the identity.
+  - A plan does not probe the endpoint (HAR-23). The run still does, before its bundle exists.
+- **`request_id`.**
+  - It is the BLAKE3 of `acn-bench/ctl_request/v1\0` and `request.json`'s exact bytes, trailing newline included, so anyone can check an id against its file. Its known-answer vector is in `crates/acn-ctl/tests/registry.rs`.
+  - The resolved request has three keys: `request` (paths normalised to the workspace root, absent options absent, `retry` left out), `hashes`, and `endpoint_url` when a name was resolved.
+  - The canonical JSON is rendered by `acn-ctl`'s own key-sorting writer. A float, the only one being `stall_threshold_ms`, uses `serde_json`'s shortest round-trip text.
+- **Status details.**
+  - A `running` status carries its `run_id`, so that a restart can find its bundle.
+  - On restart, a bundle that verifies is kept (a crash after it was finished, before its status was written), so a retry adopts it. One that does not verify is removed.
+  - A retry gets a new `seq`.
+  - Submission checks only what needs no run (CTL-21): paths, fields, scenario and endpoint names. A plan or preflight refusal shows as a `failed` status with a code from the harness's error.
+- **Paths.**
+  - A path resolves inside the root after following links. A link inside the workspace to a file inside it is allowed, and one out of it is refused.
+  - `--runs-dir` may not be absolute, contain `..`, or lie in a protected path.
+- **The trace scope.**
+  - `trace-scope.toml` now lists SPEC 050's GEN ids and SPEC 070's CTL-10 to CTL-13.
+  - It also lists the ids already implemented by T11b and T13 that it had missed: LOOP-12, LOOP-16 and HAR-26.
+  - All were already cited by tests; trace-check had not required them.
