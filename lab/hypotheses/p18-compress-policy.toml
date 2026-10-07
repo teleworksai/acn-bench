@@ -1,0 +1,35 @@
+# CANDIDATE (editable; not frozen; verdicts are exploratory) — CON-17
+[poc]
+id = "p18"
+status = "candidate"
+title = "Fetch-vs-recompute and compress-vs-raw are one controller problem"
+report_refs = ["§4.5", "KVServe (SIGCOMM 2026)", "LMCache paper §limitations"]
+
+[hypothesis]
+statement = "For a given link bandwidth, KV size per token and GPU regeneration rate, a single policy chooses among {recompute, fetch raw, fetch compressed at level c}; the KVServe compression ceiling (~50–110 Gb/s) and the report's fetch floor (~8–10 GB/s regeneration-equivalent) emerge as regime boundaries of that one policy, and the policy's decisions on an emulated link match the measured thresholds within a factor of two."
+
+[varies]
+link_gbps        = { kind = "range", min = 1, max = 400 }
+kv_bytes_per_tok = { kind = "enum", values = [320000, 70000, 25000, 9000] }   # dense 70B, MLA, working hybrid, hybrid-linear
+context_tokens   = { kind = "range", min = 4000, max = 512000 }
+compression      = { kind = "enum", values = ["none", "cachegen_lo", "cachegen_hi", "quant_int4"] }
+decompress_cost  = { kind = "range", min = 0.5, max = 4.0 }            # relative to a 2025 GPU
+
+[design]
+twin_required = true
+search = "bisect"
+replicates = 5
+sim_live_tolerance = { ttft_p50_ms = 0.2 }
+
+[measures]
+primary = ["ttft_p50_ms", "bytes_on_link", "gpu_seconds_per_turn", "chosen_action"]
+
+[control]
+description = "Always recompute (no cache), same scenario."
+
+[falsifier]
+predicate = "regime_boundary(link_gbps, chosen_action) differs from {32 Gb/s @ 256K tokens, 50–110 Gb/s ceiling} by more than 2x on the matching model class"
+
+[expected]
+outcome = "pass"
+note = "If it passes, the two literatures are one decision; if it fails, one of the published thresholds is model- or hardware-specific in a way worth reporting."

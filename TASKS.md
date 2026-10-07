@@ -24,6 +24,10 @@ T03 mock inference   → SPEC 030 (MLM): deterministic OpenAI-compatible HTTP se
                        decode ITL cadence, streaming SSE; all timing from injected
                        Clock; seeded jitter. In-process for tests. Bundles labelled
                        backend="mockllm" (CON-26): they gate, they do not answer.
+                       The per-cached-token prefill term of MLM-30 is the midfill
+                       KV-read cost (report v1.5 §4.1): profiles MUST state it as
+                       `kv_bytes_per_token × hbm_read_ns_per_byte` so an L3
+                       calibration (SPEC 085) can replace both numbers separately.
 T04 harness + knobs  → SPEC 040 (HAR): minimal agent loop (system prompt, tools,
                        tool results, compaction) with switchable discipline knobs:
                        timestamp-in-system-prompt, tool-order stability, tail-restate
@@ -131,6 +135,14 @@ T13 workload gen     → SPEC 050 (GEN): session/turn/call generator from Append
                        draws; T13.3 the harness's driver seam, the generator's
                        sessions, `acn gen run`. The plain-RPC control is T13b,
                        after a SPEC 010 addition (env-change).
+                       Sheet (report v1.5 App. C): preset `coding-datacenter` from
+                       the vLLM × Mooncake trace (131:1 in:out, 12K→80K tokens over
+                       30 turns, 92% pool hit); think-time with a tail to hours/days
+                       (SemiAnalysis: sessions resume "hours or even days later");
+                       fleet rate up to thousands of turns/hour; compaction events
+                       that abandon the old blob chain (live vs dead KV bytes);
+                       working KV size 25 kB/token (70 kB conservative). Every
+                       other preset stays labelled `estimate` until POC 1a reports.
 T14 control plane    → SPEC 070 (CTL): axum HTTP/JSON API: create scenario, start run,
                        poll status, fetch bundle; run registry on disk; endpoints for
                        external inference nodes and partner endpoints; OpenAPI doc
@@ -184,8 +196,13 @@ L-M2 exploration     → open slot, plus graduation review of every lab note so 
 T30 node adapters    → CTL: adapters for vLLM / SGLang endpoints (metrics scrape,
                        forced re-homing via router config) behind `real-api`;
                        `acn loop promote` (L3) lands here (LOOP-12).
-T31 POC 7            → SPEC 130 (P7): prefix-affinity cost curve; regeneration-rate
-                       measurement; control = never re-homed. hypotheses/p7.toml.
+T31 POC 7            → SPEC 130 (P7): prefix-affinity cost curve measured in
+                       MIDFILL, not cold prefill (report v1.5 §4.5): the GPU reads the
+                       fetched KV while computing the new suffix, so fetch competes
+                       with the HBM read; three arms — recompute, fetch from pool,
+                       rebuild-from-text — against control = never re-homed; target
+                       stack Mooncake Store on two nodes with LMCache MP or FlexKV.
+                       hypotheses/p7.toml.
 T32 M3 gate          → docs/gates/M3.md with measured regeneration rate.
 ```
 
