@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 203
+Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 209
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -168,14 +168,14 @@ Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 203
 | HAR-52 | `040-harness.md` | 7 | MUST | yes | `crates/acn-harness/tests/wire.rs` `the_mock_runs_in_process_and_nothing_else_runs_in_sim`<br>`tests/accept/harness_sim.rs` `sim_is_the_mock_only_and_netem_is_not_yet_defined` |
 | HAR-60 | `040-harness.md` | 8 | MUST | yes | `crates/acn-harness/tests/workload.rs` `the_smoke_workload_loads_and_exercises_every_clause`<br>`crates/acn-harness/tests/workload.rs` `a_workload_states_everything_and_names_only_what_exists`<br>`crates/acn-harness/tests/workload.rs` `workloads_are_hashed_as_working_tree_bytes`<br>`crates/acn-harness/tests/workload.rs` `a_child_tool_missing_from_a_task_that_spawns_it_is_refused` |
 | HAR-61 | `040-harness.md` | 8 | MUST | yes | `crates/acn-harness/tests/workload.rs` `the_smoke_workload_loads_and_exercises_every_clause` |
-| GEN-1 | `050-workload-generator.md` | 1 | MUST | no | — |
-| GEN-2 | `050-workload-generator.md` | 1 | MUST | no | — |
-| GEN-3 | `050-workload-generator.md` | 2 | MUST | no | — |
-| GEN-4 | `050-workload-generator.md` | 2 | MUST | no | — |
+| GEN-1 | `050-workload-generator.md` | 1 | MUST | no | `crates/acn-gen/tests/sheet.rs` `the_shipped_sheet_loads_and_is_a_placeholder`<br>`crates/acn-gen/tests/sheet.rs` `a_sheet_is_refused_for_each_fault_gen_1_names` |
+| GEN-2 | `050-workload-generator.md` | 1 | MUST | no | `crates/acn-gen/tests/sheet.rs` `a_distribution_is_refused_unless_well_formed`<br>`crates/acn-gen/tests/sheet.rs` `draws_are_integer_and_match_known_answers` |
+| GEN-3 | `050-workload-generator.md` | 2 | MUST | no | `crates/acn-gen/tests/plan.rs` `changing_one_parameter_shifts_no_other_draw` |
+| GEN-4 | `050-workload-generator.md` | 2 | MUST | no | `crates/acn-gen/tests/plan.rs` `a_turns_plan_is_drawn_whole_in_gen_4_order` |
 | GEN-10 | `050-workload-generator.md` | 2 | MUST | no | — |
 | GEN-11 | `050-workload-generator.md` | 2 | MUST | no | — |
-| GEN-12 | `050-workload-generator.md` | 2 | MUST | no | — |
-| GEN-13 | `050-workload-generator.md` | 2 | MUST | no | — |
+| GEN-12 | `050-workload-generator.md` | 2 | MUST | no | `crates/acn-gen/tests/plan.rs` `a_turns_plan_is_drawn_whole_in_gen_4_order` |
+| GEN-13 | `050-workload-generator.md` | 2 | MUST | no | `crates/acn-gen/tests/plan.rs` `text_is_four_lowercase_letters_per_token_from_its_own_stream` |
 | GEN-14 | `050-workload-generator.md` | 2 | MUST | no | — |
 | GEN-15 | `050-workload-generator.md` | 2 | MUST | no | — |
 | GEN-20 | `050-workload-generator.md` | 3 | MUST | no | — |

@@ -193,7 +193,12 @@ async fn the_http_server_answers_exactly_as_the_library_does() {
         .json()
         .await
         .unwrap();
-    assert_eq!(models["data"].as_array().unwrap().len(), 3);
+    // Every embedded profile is listed (MLM-50 ships at least three).
+    let embedded = acn_mockllm::profile::embedded().unwrap();
+    assert_eq!(
+        models["data"].as_array().unwrap().len(),
+        embedded.profiles.len()
+    );
     // What the router answers itself is marked and OpenAI-shaped too (MLM-1, MLM-4).
     let marker = acn_mockllm::engine::marker("-");
     for resp in [

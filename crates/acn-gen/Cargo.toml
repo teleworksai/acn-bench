@@ -11,3 +11,13 @@ description = "seeded workload generator: sessions, turns and calls (SPEC 050)."
 workspace = true
 
 [dependencies]
+acn-harness = { path = "../acn-harness" }
+acn-mockllm = { path = "../acn-mockllm" }
+acn-trace.workspace = true
+rand_chacha.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
