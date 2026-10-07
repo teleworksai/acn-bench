@@ -3,4 +3,5 @@
 //! runner (LOOP-15).
 #![forbid(unsafe_code)]
 
+pub mod attrib;
 pub mod loop_exec;

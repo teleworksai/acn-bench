@@ -94,3 +94,43 @@ Two read-only reviews ran on the uncommitted change: the Class C adversarial pro
 - **Left as is.**
   - Attribution runs on every bundle a verdict reads, even when no measure needs it. The cost is one walk per bundle, and computing it lazily would add a second path to keep in step.
   - In `decompose.rs` the ATR-14 check builds its expected turn-view row with the same formula. The independent check is the real `sim` bundle in `acn-hyp`'s tests.
+
+## T15.3 notes
+- **`acn attrib turns`** reads a bundle through `acn-hyp`'s `read`, which verifies it with its views and splits it, and writes `attribution.parquet` with `acn-trace`'s Parquet encoder, so its bytes are as deterministic as a view's.
+  - The schema is `acn_cli::attrib::turns_schema`, and a test pins it. `session_id` is the 8-byte id, as in the views. `hop_ns` is a `map<utf8,int64>` keyed `<link_id>/<direction>`, in hop order.
+  - The JSON gives each (role, replicate) its ten attribution quantities, `null` when undefined, as `acn-hyp` computes them, so an overflow is `ok: false`.
+- **The labels of `turns`** are the ones a verdict would carry for the bundle alone: `exploratory` unless its hypothesis is frozen, `mock-gated` for the mock, and `sim-only` for `sim`. A `turns` number is never more citable than a verdict on it.
+- **Never into the bundle.** `--out` and the bundle are resolved first: links and `..`, as far as each path exists. An `--out` that lands inside the bundle is refused, before anything is written.
+- **The heatmap draws with `plotters` alone** (`svg_backend`, no default features). The workspace's `plotters` now takes no font backend at all. SVG text is written as text, not measured, so no system font is read, and the same verdict gives the same bytes on every machine.
+  - Each cell is coloured on one scale, by the effect's size relative to the largest in the slice: red above zero, blue below. Value and interval are written as CON-27(c) writes them.
+  - An empty cell is grey and says "no value".
+  - The title carries the verdict's and the slice's labels.
+  - Axes follow the cells' order in the verdict (HYP-14).
+- **The heatmap reads `verdict.json` as JSON.** It refuses:
+  - a slice the verdict does not have;
+  - a quantity no cell has an effect of (effects are recorded for primary measures);
+  - a cell that varies a parameter other than `x` and `y`.
+- **The calibration suite** (`tests/accept/attrib.rs`, CON-18) runs one seeded no-tool workload, streamed and not, over a 40 ms link and over a no-delay control. For every turn of every replicate:
+  - the network time is exactly `2d`;
+  - the model's time equals the control's;
+  - the turn is longer by exactly its network time.
+
+  The share is the value predicted from the control's durations. The verdict's effect and interval over such quantities are tested in `acn-hyp` (ATR-23).
+
+## After review (T15.3)
+One read-only review found 10 findings, 2 of them blocking.
+- **The heatmap refused every real slice (blocking).** A verdict's cells carry every `[varies]` parameter, the slice's constant ones included. Now a parameter other than `x` and `y` is allowed when it has one value across the slice. One that varies is still refused, and so are two cells with the same `x` and `y`, and `--x` equal to `--y`.
+- **Cell values were not the verdict's text (blocking).** `serde_json` parses floats approximately (no `float_roundtrip`): about one effect in nine came back changed in its last digit. The heatmap now reads `verdict.json` into typed structs whose numbers are `RawValue`s (the `raw_value` feature in `acn-cli`), so a cell shows exactly what the verdict wrote. A verdict without `format` and `labels` is refused, so a title can never claim "labels: none" by omission.
+- **A link could write into a bundle.** A link planted at `<out>/attribution.parquet` was written through. Now the file is written to a fresh temporary file (`create_new`) and renamed into place, which replaces a link rather than following it. The quantities are computed before anything is written.
+- **`turns`' numbers.** For values in [0, 1], `serde_json`'s writer gives the same text as the pinned `ryu` (`float_text`); a check of two million values found no difference. So `turns` writes its shares as they come. Only parsing was lossy, and `turns` parses nothing.
+- **The tests pinned less than they claimed.**
+  - The Parquet columns are now a literal list in the test, not the writer's own schema.
+  - The rows are compared with `acn-hyp`'s split of the same bundle.
+  - The hop keys are checked (`p/up`, `p/down`).
+  - The streamed calibration must carry several answer messages per call, and the plain one exactly one.
+  - The heatmap test includes a constant slice parameter and a value a lossy parse would change.
+- **The calibration's verdict step was impossible (spec conflict, issue #63).** HYP-20 refuses a verdict whose treatment and control differ in `scenario_hash`, and a delay scenario against a no-delay one always do. SPEC 090 v0.3 keeps the calibration's direct known answers and assigns the ATR-23 check to `acn-hyp`'s tests, which compare arms differing by a varied parameter.
+- **Left as is.**
+  - On a failure after reading the bundle, `turns` does not echo its `run_id`. The error names the bundle's directory.
+  - `turns` groups turns by (role, replicate) itself, as the verdict does in `verdict.rs`. Both feed `acn-attrib`'s exact integer sums, and `turns` reports every replicate in the bundle, where a verdict reads only those its design asks for.
+  - Axes follow the cells' order in the verdict (HYP-14), which for a grid is the order of the parameters' levels.

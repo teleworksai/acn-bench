@@ -69,6 +69,48 @@ enum Cmd {
         #[command(subcommand)]
         cmd: EvidenceCmd,
     },
+    /// Attribution (SPEC 090).
+    Attrib {
+        #[command(subcommand)]
+        cmd: AttribCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum AttribCmd {
+    /// Split every turn of a bundle into network, model, tool, retry and other
+    /// time, by hop, into `<out>/attribution.parquet`, and print each
+    /// replicate's attribution quantities (ATR-40).
+    Turns {
+        /// The bundle directory.
+        bundle: PathBuf,
+        /// Where to write `attribution.parquet`; never into the bundle.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Draw one slice of a verdict as a heatmap of a quantity's effect over two
+    /// varied parameters, with each cell's interval and the verdict's labels
+    /// (ATR-41).
+    Heatmap {
+        /// The `verdict.json` file.
+        #[arg(long)]
+        verdict: PathBuf,
+        /// The slice's key, as `verdict.json` writes it.
+        #[arg(long)]
+        slice: String,
+        /// A quantity the verdict measured.
+        #[arg(long)]
+        quantity: String,
+        /// The parameter across.
+        #[arg(long)]
+        x: String,
+        /// The parameter down.
+        #[arg(long)]
+        y: String,
+        /// The SVG file to write.
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -995,6 +1037,27 @@ fn run() -> Value {
         Cmd::Harness {
             cmd: HarnessCmd::Run(a),
         } => harness_run(&a),
+        Cmd::Attrib {
+            cmd: AttribCmd::Turns { bundle, out },
+        } => acn_cli::attrib::turns(&bundle, &out),
+        Cmd::Attrib {
+            cmd:
+                AttribCmd::Heatmap {
+                    verdict,
+                    slice,
+                    quantity,
+                    x,
+                    y,
+                    out,
+                },
+        } => acn_cli::attrib::heatmap(&acn_cli::attrib::Heatmap {
+            verdict: &verdict,
+            slice: &slice,
+            quantity: &quantity,
+            x: &x,
+            y: &y,
+            out: &out,
+        }),
         Cmd::Gen {
             cmd: GenCmd::Run(a),
         } => gen_run(&a),

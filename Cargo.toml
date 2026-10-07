@@ -44,7 +44,9 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json", "stream"] }
 clap = { version = "4", features = ["derive"] }
-plotters = "0.3"
+# Only the SVG backend: text is written as SVG text, so no system font is
+# read and an SVG is the same bytes everywhere (SPEC 090 ATR-41).
+plotters = { version = "0.3", default-features = false, features = ["svg_backend"] }
 opentelemetry = { version = "0.33", default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace"] }
 zstd = "0.13"

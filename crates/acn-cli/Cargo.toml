@@ -25,6 +25,7 @@ workspace = true
 real-api = ["acn-harness/real-api", "acn-ctl/real-api"]
 
 [dependencies]
+acn-attrib = { path = "../acn-attrib" }
 acn-ctl = { path = "../acn-ctl" }
 acn-gen = { path = "../acn-gen" }
 acn-harness = { path = "../acn-harness" }
@@ -32,9 +33,15 @@ acn-hyp = { path = "../acn-hyp" }
 acn-mockllm = { path = "../acn-mockllm" }
 acn-trace = { workspace = true, features = ["io"] }
 anyhow.workspace = true
+arrow-array.workspace = true
+arrow-schema.workspace = true
+blake3.workspace = true
 clap.workspace = true
+plotters.workspace = true
 reqwest.workspace = true
-serde_json.workspace = true
+# raw_value: a verdict's numbers are read as the text it wrote (ATR-41).
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -47,7 +54,7 @@ toml.workspace = true
 
 [dev-dependencies]
 acn-emu = { path = "../acn-emu" }
-blake3.workspace = true
+parquet.workspace = true
 tempfile.workspace = true
 
 # SPEC 070's acceptance suite drives the `acn` binary, which only this
