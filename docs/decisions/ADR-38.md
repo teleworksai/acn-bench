@@ -38,7 +38,7 @@ T13 asks for a session/turn/call generator "from the Appendix C parameter sheet"
   - T13.1, this `spec-change`;
   - T13.2, `acn-gen`: the sheet, its draws and their known-answer vectors;
   - T13.3, the harness's driver seam, the generator's sessions on it, `acn gen run`, the `mock-agentic` profile and the shipped sheet.
-  
+
   All three are Class B: nothing in the frozen set changes.
 - T13b (the plain-RPC control) follows, after a SPEC 010 addition that the maintainer merges as an `env-change`.
 - POCs that need fleet-shaped traffic (POC 1a, 1b, 13) can run generator bundles beside harness bundles: both carry the same spans and views. Like every mock bundle, a generator bundle is never cited (CON-26).
@@ -57,7 +57,7 @@ T13 asks for a session/turn/call generator "from the Appendix C parameter sheet"
   - T13.3a, the seam, in `acn-harness`;
   - T13.3b, the generator's sessions, in `acn-gen`;
   - T13.3c, `acn gen run` and the acceptance suite.
-  
+
   All are Class B. `RunConfig` does not change, because a frozen test builds it field by field.
 - **The seam is smaller than a second call path.**
   - `run::Driver` gives the run path its workload, its producer name and its sessions. `AgentDriver` is the agent loop, unchanged; `run_async_with` uses it, so every harness bundle is byte for byte what it was (the pinned digests hold).
@@ -97,3 +97,9 @@ T13 asks for a session/turn/call generator "from the Appendix C parameter sheet"
   - The acceptance runs use mock profiles with timing a thousand times shorter, because `live` waits on the wall clock. Profiles are not in the run_id (MLM-51).
   - **Where the CLI's acceptance lives.** SPEC 050 §5 places "the CLI prints one object and refuses a knob `vary`" in `tests/accept/gen_sim.rs`. It is in `crates/acn-cli/tests/gen_cli.rs`, because only the CLI's own package can run the `acn` binary (`CARGO_BIN_EXE_acn`). The same file covers a `live` run with no endpoint and the refusal of the served mock in `sim`.
   - **Counts are run totals.** `sessions` and `calls` count every replicate's, and the tests tie them to the bundle's `acn.session` and `chat` spans.
+- **SPEC 050 v0.2 (issue #53).** The spec now says what the code does since PR 52:
+  - GEN-11's descriptions start with HAR-42's marker;
+  - GEN-13's shared system prefix ends at HAR-11's timestamp line when the knob is on;
+  - GEN-11's extension holds within a turn, and GEN-12's sub-agents take the turn's system prompt.
+
+  The interim notes above are settled by this change.
