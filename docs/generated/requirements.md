@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 209
+Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 211
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -50,7 +50,7 @@ Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 209
 | TRC-16 | `010-trace-schema.md` | 3 | MUST | no | — |
 | TRC-17 | `010-trace-schema.md` | 3 | MUST | no | — |
 | TRC-18 | `010-trace-schema.md` | 3 | MUST | no | `crates/acn-trace/tests/attributes_inventory.rs` `exactly_these_attributes_are_optional_and_key_placements_hold` |
-| TRC-19 | `010-trace-schema.md` | 3 | MUST | no | `crates/acn-trace/tests/bundle.rs` `every_resource_names_the_runs_engine_and_build`<br>`crates/acn-trace/tests/bundle.rs` `verification_rechecks_the_resources_against_the_manifest` |
+| TRC-19 | `010-trace-schema.md` | 3 | MUST | no | `crates/acn-harness/tests/driver.rs` `a_driver_runs_on_the_run_path_under_its_own_producer`<br>`crates/acn-trace/tests/bundle.rs` `every_resource_names_the_runs_engine_and_build`<br>`crates/acn-trace/tests/bundle.rs` `verification_rechecks_the_resources_against_the_manifest` |
 | TRC-20 | `010-trace-schema.md` | 4 | MUST | yes | `crates/acn-trace/tests/attributes_inventory.rs` `the_embedded_inventory_loads_and_every_name_in_the_spec_is_listed`<br>`crates/acn-trace/tests/attributes_inventory.rs` `every_attribute_has_a_type_a_unit_that_matches_its_suffix_and_a_producer`<br>`crates/acn-trace/tests/attributes_inventory.rs` `every_promoted_attribute_has_a_typed_column`<br>`crates/acn-trace/tests/attributes_inventory.rs` `a_malformed_inventory_is_rejected_with_the_reason`<br>`crates/acn-trace/tests/attributes_inventory.rs` `mutations_that_would_change_meaning_silently_are_rejected`<br>`crates/acn-trace/tests/parquet_layout.rs` `unlisted_names_mistyped_values_and_unsorted_tables_are_refused`<br>`crates/acn-trace/tests/parquet_layout.rs` `links_and_events_are_checked_and_must_belong_to_a_span`<br>`crates/xtask/tests/docs_inventory.rs` `the_attribute_page_is_generated_from_the_inventory`<br>`crates/xtask/tests/docs_inventory.rs` `an_unlisted_acn_name_in_a_producer_fails_even_inside_a_macro`<br>`crates/xtask/tests/docs_inventory.rs` `self_host_the_attribute_page_is_current_and_no_crate_emits_an_unlisted_name`<br>`crates/xtask/tests/docs_inventory.rs` `built_names_odd_spellings_nested_test_modules_and_unlisted_options_are_caught` |
 | TRC-21 | `010-trace-schema.md` | 4 | MUST | yes | `crates/acn-harness/tests/record.rs` `usage_is_normalised_by_the_frozen_mapping_and_raw_fields_are_kept`<br>`crates/acn-harness/tests/wire.rs` `anthropic_events_assemble_into_a_message_the_frozen_mapping_reads`<br>`crates/acn-mockllm/tests/wire.rs` `a_response_has_the_shape_the_frozen_mapping_reads`<br>`crates/acn-trace/tests/attributes_inventory.rs` `mutations_that_would_change_meaning_silently_are_rejected`<br>`crates/acn-trace/tests/attributes_inventory.rs` `the_provider_stop_tables_are_exactly_these`<br>`crates/acn-trace/tests/cache_mapping.rs` `anthropic_usage_excludes_cached_tokens_so_the_total_is_a_sum`<br>`crates/acn-trace/tests/cache_mapping.rs` `openai_prompt_tokens_already_include_cached_tokens_and_there_is_no_write_count`<br>`crates/acn-trace/tests/cache_mapping.rs` `an_unknown_stop_value_becomes_other_and_the_raw_value_is_kept`<br>`crates/acn-trace/tests/cache_mapping.rs` `every_backend_the_spec_names_has_a_mapping_and_an_unknown_one_is_an_error`<br>`crates/acn-trace/tests/cache_mapping.rs` `a_cache_count_the_server_does_not_report_is_absent_not_zero`<br>`crates/acn-trace/tests/cache_mapping.rs` `a_server_side_abort_is_not_a_client_abort_and_the_newer_anthropic_values_are_mapped`<br>`crates/acn-trace/tests/cache_mapping.rs` `a_body_the_mapping_does_not_describe_is_an_error_not_silence` |
 | TRC-22 | `010-trace-schema.md` | 5 | MUST | yes | `crates/acn-trace/tests/bundle.rs` `a_bundle_lists_every_file_but_its_logs_and_verifies`<br>`crates/acn-trace/tests/bundle.rs` `a_real_backend_records_its_endpoint_and_the_mock_in_sim_does_not`<br>`crates/acn-trace/tests/bundle.rs` `live_runs_record_their_order_and_start_and_sim_runs_do_not`<br>`crates/acn-trace/tests/bundle.rs` `only_the_layout_of_trc_22_may_be_listed`<br>`crates/acn-trace/tests/bundle.rs` `run_seeds_must_fit_the_int64_seed_attribute`<br>`crates/acn-trace/tests/bundle.rs` `verify_views_recomputes_every_view_from_the_tables`<br>`crates/acn-trace/tests/bundle.rs` `a_bundle_without_one_of_its_views_fails_verification`<br>`crates/acn-trace/tests/bundle.rs` `every_session_names_the_bundles_run` |
@@ -178,8 +178,8 @@ Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 209
 | GEN-13 | `050-workload-generator.md` | 2 | MUST | no | `crates/acn-gen/tests/plan.rs` `text_is_four_lowercase_letters_per_token_from_its_own_stream` |
 | GEN-14 | `050-workload-generator.md` | 2 | MUST | no | — |
 | GEN-15 | `050-workload-generator.md` | 2 | MUST | no | — |
-| GEN-20 | `050-workload-generator.md` | 3 | MUST | no | — |
-| GEN-21 | `050-workload-generator.md` | 3 | MUST | no | — |
+| GEN-20 | `050-workload-generator.md` | 3 | MUST | no | `crates/acn-harness/tests/driver.rs` `a_driver_runs_on_the_run_path_under_its_own_producer` |
+| GEN-21 | `050-workload-generator.md` | 3 | MUST | no | `crates/acn-harness/tests/driver.rs` `a_driver_runs_on_the_run_path_under_its_own_producer`<br>`crates/acn-harness/tests/driver.rs` `a_driver_with_fixed_knobs_refuses_a_knob_vary` |
 | GEN-22 | `050-workload-generator.md` | 3 | MUST | no | — |
 | GEN-23 | `050-workload-generator.md` | 3 | MUST | no | — |
 | GEN-30 | `050-workload-generator.md` | 4 | MUST | no | — |
