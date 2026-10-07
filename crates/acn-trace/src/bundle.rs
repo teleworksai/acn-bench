@@ -444,6 +444,48 @@ pub struct Written {
     pub bundle_digest: Digest,
 }
 
+/// A bundle before anything is written: its manifest, `run_id` included
+/// (CON-29), checked as [`Bundle::create`] checks it. A run's identity is
+/// known from its plan, so a caller can look for its bundle first (SPEC 070
+/// CTL-13).
+#[derive(Debug, Clone)]
+pub struct Plan {
+    manifest: Manifest,
+    inv: schema::Inventory,
+}
+
+impl Plan {
+    /// The `run_id` the bundle will have.
+    #[must_use]
+    pub fn run_id(&self) -> &str {
+        &self.manifest.run_id
+    }
+
+    /// Create `runs_dir/<run_id>/` with its `logs/`, refusing an existing
+    /// directory (CON-29).
+    pub fn create(self, runs_dir: &Path) -> Result<Bundle> {
+        let Self { manifest, inv } = self;
+        std::fs::create_dir_all(runs_dir).map_err(io(runs_dir))?;
+        let dir = runs_dir.join(&manifest.run_id);
+        if let Err(e) = std::fs::create_dir(&dir) {
+            return Err(if e.kind() == std::io::ErrorKind::AlreadyExists {
+                BundleError::Refused(format!(
+                    "{} exists; a bundle is never replaced (CON-29)",
+                    dir.display()
+                ))
+            } else {
+                BundleError::Io {
+                    path: dir,
+                    source: e,
+                }
+            });
+        }
+        let logs = dir.join(LOGS);
+        std::fs::create_dir(&logs).map_err(io(&logs))?;
+        Ok(Bundle { dir, manifest, inv })
+    }
+}
+
 impl Bundle {
     /// Derive the `run_id` of `spec` and create `runs_dir/<run_id>/` with its `logs/`.
     /// Refuses an existing directory (CON-29) and a spec whose hypothesis is not the
@@ -454,6 +496,11 @@ impl Bundle {
         build: &BuildInfo,
         spec: RunSpec,
     ) -> Result<Self> {
+        Self::plan(preflight, build, spec)?.create(runs_dir)
+    }
+
+    /// [`Bundle::create`]'s checks and manifest, with nothing written.
+    pub fn plan(preflight: &Preflight, build: &BuildInfo, spec: RunSpec) -> Result<Plan> {
         let checked = match preflight.hypothesis() {
             RunHypothesis::None => spec.hypothesis.id == NO_HYPOTHESIS,
             h => {
@@ -507,25 +554,7 @@ impl Bundle {
             files: BTreeMap::new(),
         };
         manifest.validate()?;
-
-        std::fs::create_dir_all(runs_dir).map_err(io(runs_dir))?;
-        let dir = runs_dir.join(run_id.to_hex());
-        if let Err(e) = std::fs::create_dir(&dir) {
-            return Err(if e.kind() == std::io::ErrorKind::AlreadyExists {
-                BundleError::Refused(format!(
-                    "{} exists; a bundle is never replaced (CON-29)",
-                    dir.display()
-                ))
-            } else {
-                BundleError::Io {
-                    path: dir,
-                    source: e,
-                }
-            });
-        }
-        let logs = dir.join(LOGS);
-        std::fs::create_dir(&logs).map_err(io(&logs))?;
-        Ok(Self { dir, manifest, inv })
+        Ok(Plan { manifest, inv })
     }
 
     /// The bundle directory.

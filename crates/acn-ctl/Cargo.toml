@@ -11,3 +11,16 @@ description = "control and evidence plane: HTTP/JSON API and run registry (SPEC 
 workspace = true
 
 [dependencies]
+acn-emu = { path = "../acn-emu" }
+acn-gen = { path = "../acn-gen" }
+acn-harness = { path = "../acn-harness" }
+acn-mockllm = { path = "../acn-mockllm" }
+acn-trace = { workspace = true, features = ["io"] }
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

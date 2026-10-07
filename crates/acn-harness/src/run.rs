@@ -338,15 +338,43 @@ pub fn run_driven_blocking<D: Driver>(
         .block_on(run_driven(cfg, scenario, driver))
 }
 
-/// One cell and arm into one bundle, its sessions decided by `driver`
-/// (SPEC 050 GEN-20): the run path of HAR-50 with the driver's workload,
-/// producer and sessions.
-pub async fn run_driven<D: Driver>(
+/// Everything a run decides before it touches the network or its runs
+/// directory: its inputs, its checks and the spec its identity comes from.
+struct Prepared {
+    scenario: Option<RunScenario>,
+    scenario_hash: Digest,
+    workload: Workload,
+    hyp: Hyp,
+    knobs: Knobs,
+    profiles: Profiles,
+    counting: Counting,
+    pf: acn_trace::env::Preflight,
+    live: bool,
+    served: bool,
+    url: String,
+    order: Vec<u32>,
+    spec: RunSpec,
+}
+
+/// A run's identity, known before it runs (CON-29; SPEC 070 CTL-13).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Planned {
+    pub run_id: Digest,
+    /// `runs_dir/<run_id>/`.
+    pub dir: PathBuf,
+    pub workload_hash: Digest,
+    pub scenario_hash: Digest,
+    pub hypothesis_hash: Digest,
+}
+
+/// The checks, inputs and spec of a run, shared by [`plan_driven`] and
+/// [`run_driven`] so that a plan's `run_id` is the run's.
+fn prepare<D: Driver>(
     cfg: &RunConfig,
     scenario: Option<&Path>,
     driver: &D,
-) -> Result<Written, HarnessError> {
-    let (producer, producer_version) = driver.producer();
+) -> Result<Prepared, HarnessError> {
+    let (producer, _) = driver.producer();
     if !matches!(cfg.arm.as_str(), "treatment" | "control") {
         return Err(HarnessError::Config(format!(
             "--arm is treatment or control, not `{}`",
@@ -431,25 +459,12 @@ pub async fn run_driven<D: Driver>(
             crate::served::LOOPBACK
         )));
     }
-    let clock = Arc::new(acn_emu::clock::WallClock::start());
     let (url, host) = if live {
         let (u, h) = endpoint(cfg.backend, &cfg.opts)?;
         (u, Some(h))
     } else {
         (String::new(), None)
     };
-    // One HTTP client for the run's live calls: building one is slow.
-    let live_client = if live {
-        Some(LiveEnv::http_client()?)
-    } else {
-        None
-    };
-    if let (Some(client), false) = (&live_client, served) {
-        // HAR-23: the endpoint says what it is before the run gets an identity.
-        // A served mock is probed per replicate instead, once it exists (HAR-26).
-        probe(client, cfg.backend, &clock, &url).await?;
-    }
-
     let mut order_rng = acn_trace::identity::substream_rng(hyp.seed, "run.order")?;
     let order: Vec<u32> = permutation(&mut order_rng, cfg.replicates as usize)
         .into_iter()
@@ -473,33 +488,114 @@ pub async fn run_driven<D: Driver>(
         "opt.stall_threshold_ms".into(),
         Value::Float(cfg.opts.stall_threshold_ms),
     );
-    let bundle = Bundle::create(
-        &cfg.runs_dir,
-        &pf,
-        &cfg.build,
-        RunSpec {
-            seed: hyp.seed,
-            mode: cfg.mode,
-            // No scenario: the harness calls its endpoint directly (ADR-17,
-            // SPEC 020 EMU-39); with one, its calls cross the network (ADR-34).
-            scenario_hash,
-            workload_hash: workload.hash,
-            hypothesis: hyp.reference.clone(),
-            params: RunParams {
-                backend: cfg.backend.as_str().into(),
-                model: cfg.model.clone(),
-                hyp_status: hyp.status,
-                arms: vec![cfg.arm.clone()],
-                replicates: cfg.replicates,
-                vary,
-                opts,
-            },
-            endpoint_host: host,
-            execution_order: live
-                .then(|| order.iter().map(|i| format!("{}/{i}", cfg.arm)).collect()),
-            started_at: live.then(acn_emu::clock::wall_time_utc),
+    let spec = RunSpec {
+        seed: hyp.seed,
+        mode: cfg.mode,
+        // No scenario: the harness calls its endpoint directly (ADR-17,
+        // SPEC 020 EMU-39); with one, its calls cross the network (ADR-34).
+        scenario_hash,
+        workload_hash: workload.hash,
+        hypothesis: hyp.reference.clone(),
+        params: RunParams {
+            backend: cfg.backend.as_str().into(),
+            model: cfg.model.clone(),
+            hyp_status: hyp.status,
+            arms: vec![cfg.arm.clone()],
+            replicates: cfg.replicates,
+            vary,
+            opts,
         },
-    )?;
+        endpoint_host: host,
+        execution_order: live.then(|| order.iter().map(|i| format!("{}/{i}", cfg.arm)).collect()),
+        // Set when the run starts: it is not part of the identity.
+        started_at: None,
+    };
+    Ok(Prepared {
+        scenario,
+        scenario_hash,
+        workload,
+        hyp,
+        knobs,
+        profiles,
+        counting,
+        pf,
+        live,
+        served,
+        url,
+        order,
+        spec,
+    })
+}
+
+/// The identity a run of `cfg` would have, with nothing written and no
+/// network touched (SPEC 070 CTL-13). The endpoint is not probed (HAR-23):
+/// that happens when the run starts.
+pub fn plan_driven<D: Driver>(
+    cfg: &RunConfig,
+    scenario: Option<&Path>,
+    driver: &D,
+) -> Result<Planned, HarnessError> {
+    let p = prepare(cfg, scenario, driver)?;
+    let mut spec = p.spec;
+    // A `live` manifest must carry a start time to validate; it is not part
+    // of the identity.
+    spec.started_at = p.live.then(acn_emu::clock::wall_time_utc);
+    let hypothesis_hash = spec.hypothesis.hash;
+    let plan = Bundle::plan(&p.pf, &cfg.build, spec)?;
+    let run_id = Digest::from_hex(plan.run_id())?;
+    Ok(Planned {
+        run_id,
+        dir: cfg.runs_dir.join(run_id.to_hex()),
+        workload_hash: p.workload.hash,
+        scenario_hash: p.scenario_hash,
+        hypothesis_hash,
+    })
+}
+
+/// [`plan_driven`] for the agent loop.
+pub fn plan(cfg: &RunConfig, scenario: Option<&Path>) -> Result<Planned, HarnessError> {
+    plan_driven(cfg, scenario, &AgentDriver)
+}
+
+/// One cell and arm into one bundle, its sessions decided by `driver`
+/// (SPEC 050 GEN-20): the run path of HAR-50 with the driver's workload,
+/// producer and sessions.
+pub async fn run_driven<D: Driver>(
+    cfg: &RunConfig,
+    scenario: Option<&Path>,
+    driver: &D,
+) -> Result<Written, HarnessError> {
+    let (producer, producer_version) = driver.producer();
+    let Prepared {
+        scenario,
+        scenario_hash,
+        workload,
+        hyp,
+        knobs,
+        profiles,
+        counting,
+        pf,
+        live,
+        served,
+        url,
+        order,
+        mut spec,
+    } = prepare(cfg, scenario, driver)?;
+    let clock = Arc::new(acn_emu::clock::WallClock::start());
+    // One HTTP client for the run's live calls: building one is slow.
+    let live_client = if live {
+        Some(LiveEnv::http_client()?)
+    } else {
+        None
+    };
+    if let (Some(client), false) = (&live_client, served) {
+        // HAR-23: the endpoint says what it is before the run gets an identity.
+        // A served mock is probed per replicate instead, once it exists (HAR-26).
+        probe(client, cfg.backend, &clock, &url).await?;
+    }
+
+    spec.started_at = live.then(acn_emu::clock::wall_time_utc);
+    let bundle = Bundle::plan(&pf, &cfg.build, spec)?.create(&cfg.runs_dir)?;
     let dir = bundle.dir().to_path_buf();
     let result = async {
         let run_id = Digest::from_hex(bundle.run_id())?;

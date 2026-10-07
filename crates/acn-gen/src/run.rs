@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use acn_harness::HarnessError;
 use acn_harness::agent::Opts;
-use acn_harness::run::{HypothesisArg, RunConfig, run_driven_blocking};
+use acn_harness::run::{HypothesisArg, Planned, RunConfig, plan_driven, run_driven_blocking};
 use acn_harness::served::LOOPBACK;
 use acn_harness::wire::Backend;
 use acn_mockllm::profile::Profiles;
@@ -44,9 +44,9 @@ pub struct GenWritten {
     pub calls: u64,
 }
 
-/// Run `cfg` into one bundle, its calls crossing `scenario`'s network when
-/// one is given (GEN-20).
-pub fn run(cfg: &GenConfig, scenario: Option<&Path>) -> Result<GenWritten, HarnessError> {
+/// The harness's config and the driver of `cfg`, shared by [`run`] and
+/// [`plan_run`] so that a plan's `run_id` is the run's.
+fn prepare(cfg: &GenConfig) -> Result<(RunConfig, GenDriver), HarnessError> {
     // One read: the bytes parsed are the bytes hashed (CON-27(a)).
     let bytes = std::fs::read(&cfg.sheet)
         .map_err(|e| HarnessError::Workload(format!("{}: {e}", cfg.sheet.display())))?;
@@ -82,7 +82,20 @@ pub fn run(cfg: &GenConfig, scenario: Option<&Path>) -> Result<GenWritten, Harne
         build: cfg.build.clone(),
         profiles: Some(profiles),
     };
-    let driver = GenDriver::new(sheet, hash);
+    Ok((run, GenDriver::new(sheet, hash)))
+}
+
+/// The identity a run of `cfg` would have, with nothing written (SPEC 070
+/// CTL-13).
+pub fn plan_run(cfg: &GenConfig, scenario: Option<&Path>) -> Result<Planned, HarnessError> {
+    let (run, driver) = prepare(cfg)?;
+    plan_driven(&run, scenario, &driver)
+}
+
+/// Run `cfg` into one bundle, its calls crossing `scenario`'s network when
+/// one is given (GEN-20).
+pub fn run(cfg: &GenConfig, scenario: Option<&Path>) -> Result<GenWritten, HarnessError> {
+    let (run, driver) = prepare(cfg)?;
     let written = run_driven_blocking(&run, scenario, &driver)?;
     let (sessions, calls) = driver.counts();
     Ok(GenWritten {

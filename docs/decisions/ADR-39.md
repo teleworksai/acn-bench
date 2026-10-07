@@ -34,3 +34,39 @@ SPEC 070 was "to write". T14 asks for an axum HTTP/JSON API to create scenarios,
   All are Class B. T14.2 adds to `acn-harness` and `acn-gen` a way to compute a run's id before running it, from the same code that names the bundle.
 - `acn-ctl` depends on `acn-harness`, `acn-gen` and `acn-emu`, as PLAN.md's dependency line says (`acn-ctl` ← all runtime crates).
 - M3's runs against real inference nodes reach them as named endpoints, with no further change to this API.
+
+## T14.2 notes
+- **T14.2 is two PRs.**
+  - T14.2a: the pre-run identity, and `acn-ctl`'s requests, resolution, registry and worker, with no HTTP.
+  - T14.2b: the API, its route table and OpenAPI file, endpoints, scenarios, bundles and `acn ctl serve`.
+- **A run's identity before it runs.**
+  - `Bundle::plan` makes the checked manifest, `run_id` included, without writing anything; `Bundle::create` is `plan` then `create`.
+  - The harness's `run_driven` does everything before the network and the runs directory in one `prepare`, shared by `plan_driven`, so a plan's `run_id` is the run's (tested in every mode). The generator's `plan_run` shares its `prepare` with `run` the same way, including the rewrite of an empty live endpoint to the served mock, which is part of the identity.
+  - A plan does not probe the endpoint (HAR-23). The run still does, before its bundle exists.
+- **`request_id`.**
+  - It is the BLAKE3 of `acn-bench/ctl_request/v1\0` and `request.json`'s exact bytes, trailing newline included, so anyone can check an id against its file. Its known-answer vector is in `crates/acn-ctl/tests/registry.rs`.
+  - The resolved request has three keys: `request` (paths normalised to the workspace root, absent options absent, `retry` left out), `hashes`, and `endpoint_url` when a name was resolved.
+  - The canonical JSON is rendered by `acn-ctl`'s own key-sorting writer. A float, the only one being `stall_threshold_ms`, uses `serde_json`'s shortest round-trip text.
+- **Status details.**
+  - A `running` status carries its `run_id`, so that a restart can find its bundle.
+  - On restart, a bundle that verifies is kept (a crash after it was finished, before its status was written), so a retry adopts it. One that does not verify is removed.
+  - A retry gets a new `seq`.
+  - Submission checks only what needs no run (CTL-21): paths, fields, scenario and endpoint names. A plan or preflight refusal shows as a `failed` status with a code from the harness's error.
+- **Paths.**
+  - A path resolves inside the root after following links. A link inside the workspace to a file inside it is allowed, and one out of it is refused.
+  - `--runs-dir` may not be absolute, contain `..`, or lie in a protected path.
+- **The trace scope.**
+  - `trace-scope.toml` now lists SPEC 050's GEN ids and SPEC 070's CTL-10 to CTL-13.
+  - It also lists the ids already implemented by T11b and T13 that it had missed: LOOP-12, LOOP-16 and HAR-26.
+  - All were already cited by tests; trace-check had not required them.
+- **After review (PR 57).**
+  - **One run at a time, whoever calls.** An execution lock is held across every run, so two workers, or a worker and `run_next`, never overlap. `stop()` takes the queue's lock, so a worker about to wait cannot miss it.
+  - **Retries.** A retry is queued under the registry's lock, so two concurrent retries queue it once.
+  - **Request files.** On opening, a request whose `request.json` is missing or is not its id's bytes is dropped when it has no status, and failed with `internal` when it has one. A resubmission rewrites a partial file. A request that cannot be read when its turn comes fails instead of staying queued.
+  - **The plan's inputs.** The planned workload, hypothesis and scenario hashes must be the resolved ones, and a stored scenario's file must still have its hash; otherwise `input_changed`. A run that makes another `run_id` than planned is an internal fault. A refusal that is not an existing directory is reported as itself.
+  - **A crashed run.** A run that panicked did not clean up after itself (HAR-23). Its unfinished bundle is removed, so a retry can run.
+  - **The runs directory.** It is checked after canonicalizing, so neither a link nor a `.` hides a protected path. The comparison ignores case, for case-insensitive file systems. An empty path is refused.
+  - **One writer.** The control plane assumes it is the only process writing its runs directory while it runs. A restart removes an unfinished bundle at a `running` request's run_id, which would also remove a CLI run in progress there. Run the CLI into another runs directory, or stop the server first.
+  - **Canonical values.** A seed has no leading zero, and a stall threshold is not negative; −0 is written 0 (CON-27(c)). The known-answer vector carries the one float, as CON-27(d) asks.
+  - **Adopting another build's bundle** is a reuse, not a mismatch: the build is not part of `run_id` (CON-31), and HYP-20 still refuses a set that mixes builds within one mode.
+  - An identity error from a request's input maps to `config`.
