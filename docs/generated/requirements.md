@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 11 · IDs: 254 · MUSTs: 231 · implemented: 185 · cited: 220
+Specs: 11 · IDs: 255 · MUSTs: 232 · implemented: 185 · cited: 220
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -185,6 +185,7 @@ Specs: 11 · IDs: 254 · MUSTs: 231 · implemented: 185 · cited: 220
 | GEN-30 | `050-workload-generator.md` | 4 | MUST | no | `crates/acn-gen/tests/sessions.rs` `sessions_turns_chains_and_fan_out_are_sent_as_planned` |
 | CTL-1 | `070-control-plane.md` | 1 | MUST | no | — |
 | CTL-2 | `070-control-plane.md` | 1 | MUST | no | — |
+| CTL-3 | `070-control-plane.md` | 1 | MUST | no | — |
 | CTL-10 | `070-control-plane.md` | 2 | MUST | no | — |
 | CTL-11 | `070-control-plane.md` | 2 | MUST | no | — |
 | CTL-12 | `070-control-plane.md` | 2 | MUST | no | — |
