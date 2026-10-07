@@ -3,7 +3,7 @@
 //! `version` (T01), `bundle verify` (TRC-23, T02b), `harness run` (HAR-50, T04),
 //! `hyp lint` (HYP-27, T05), `hyp verdict` (HYP-20, T05.2b), `loop run` (LOOP-10,
 //! LOOP-14, T05b.1), `evidence verify` (LOOP-2, T05b.2), `loop twin` (LOOP-12,
-//! LOOP-16, T11b.3).
+//! LOOP-16, T11b.3), `gen run` (GEN-22, T13.3).
 #![forbid(unsafe_code)]
 
 mod build_info;
@@ -43,6 +43,11 @@ enum Cmd {
     Harness {
         #[command(subcommand)]
         cmd: HarnessCmd,
+    },
+    /// The workload generator (SPEC 050).
+    Gen {
+        #[command(subcommand)]
+        cmd: GenCmd,
     },
     /// Hypothesis files and verdicts (SPEC 080).
     Hyp {
@@ -163,6 +168,62 @@ enum HypCmd {
         #[arg(long, default_value = "runs")]
         runs_dir: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum GenCmd {
+    /// Draw a sheet's sessions, turns and calls into one bundle, on the
+    /// harness's run path (GEN-20, GEN-22).
+    Run(Box<GenRun>),
+}
+
+#[derive(clap::Args)]
+struct GenRun {
+    /// The sheet (GEN-1); its BLAKE3 is the run's workload hash.
+    #[arg(long)]
+    sheet: PathBuf,
+    /// sim or live. In live with no --endpoint, the harness serves the mock
+    /// (HAR-26).
+    #[arg(long, default_value = "sim")]
+    mode: String,
+    /// treatment or control.
+    #[arg(long, default_value = "treatment")]
+    arm: String,
+    #[arg(long, default_value_t = 1)]
+    replicates: u32,
+    /// `<name>=<value>`, once per varied parameter. Knobs stay at their
+    /// defaults in a generator run, so a knob `vary` is refused (GEN-21).
+    #[arg(long = "vary", value_name = "NAME=VALUE")]
+    vary: Vec<String>,
+    /// The hypothesis file; the seed is derived from it (HYP-9).
+    #[arg(long, conflicts_with = "seed", required_unless_present = "seed")]
+    hypothesis: Option<PathBuf>,
+    /// The run seed, for a run with no hypothesis.
+    #[arg(long)]
+    seed: Option<u64>,
+    /// `opt.endpoint`: the endpoint's base URL (HAR-25), or `acn-mock://loopback`
+    /// for a mock the harness serves itself, a fresh one per replicate (HAR-26);
+    /// empty in live means `acn-mock://loopback`.
+    #[arg(long, default_value = "")]
+    endpoint: String,
+    /// `opt.max_retries` (HAR-24).
+    #[arg(long, default_value_t = 3)]
+    max_retries: u64,
+    /// `opt.retry_base_ms` (HAR-24).
+    #[arg(long, default_value_t = 500)]
+    retry_base_ms: u64,
+    /// `opt.request_timeout_ms` (HAR-24).
+    #[arg(long, default_value_t = 600_000)]
+    request_timeout_ms: u64,
+    /// `opt.stall_threshold_ms` (TRC-12).
+    #[arg(long, default_value_t = 250.0)]
+    stall_threshold_ms: f64,
+    /// Where bundles go.
+    #[arg(long, default_value = "runs")]
+    runs_dir: PathBuf,
+    /// A scenario file (SPEC 020 §3) whose path every call crosses.
+    #[arg(long)]
+    scenario: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -496,6 +557,55 @@ fn harness_run(a: &HarnessRun) -> Value {
             "run_id": w.run_id.to_hex(),
             "bundle_digest": w.bundle_digest.to_hex(),
             "dir": w.dir.display().to_string(),
+        }))
+    })
+}
+
+/// `acn gen run` (GEN-22): one JSON object with the bundle and what it made.
+fn gen_run(a: &GenRun) -> Value {
+    respond("gen run", || {
+        let mut vary = std::collections::BTreeMap::new();
+        for v in &a.vary {
+            let (k, val) = v
+                .split_once('=')
+                .ok_or_else(|| anyhow::anyhow!("--vary `{v}` is not NAME=VALUE"))?;
+            if vary.insert(k.to_owned(), val.to_owned()).is_some() {
+                anyhow::bail!("--vary `{k}` is given twice");
+            }
+        }
+        let hypothesis = match (&a.hypothesis, a.seed) {
+            (Some(p), None) => acn_harness::run::HypothesisArg::File(p.clone()),
+            (None, Some(seed)) => acn_harness::run::HypothesisArg::None { seed },
+            _ => anyhow::bail!("give exactly one of --hypothesis and --seed"),
+        };
+        let cfg = acn_gen::run::GenConfig {
+            sheet: a.sheet.clone(),
+            mode: acn_trace::identity::Mode::parse(&a.mode)?,
+            arm: a.arm.clone(),
+            replicates: a.replicates,
+            vary,
+            opts: acn_harness::agent::Opts {
+                endpoint: a.endpoint.clone(),
+                max_retries: a.max_retries,
+                retry_base_ms: a.retry_base_ms,
+                request_timeout_ms: a.request_timeout_ms,
+                stall_threshold_ms: a.stall_threshold_ms,
+            },
+            hypothesis,
+            runs_dir: a.runs_dir.clone(),
+            start_dir: std::env::current_dir()?,
+            engine_hash: build_info::engine_hash()?,
+            build: build_info::build_info()?,
+            profiles: None,
+        };
+        let w = acn_gen::run::run(&cfg, a.scenario.as_deref())?;
+        Ok(json!({
+            "ok": true,
+            "run_id": w.written.run_id.to_hex(),
+            "bundle_digest": w.written.bundle_digest.to_hex(),
+            "sessions": w.sessions,
+            "calls": w.calls,
+            "dir": w.written.dir.display().to_string(),
         }))
     })
 }
@@ -841,6 +951,9 @@ fn run() -> Value {
         Cmd::Harness {
             cmd: HarnessCmd::Run(a),
         } => harness_run(&a),
+        Cmd::Gen {
+            cmd: GenCmd::Run(a),
+        } => gen_run(&a),
         Cmd::Hyp {
             cmd: HypCmd::Lint { file },
         } => hyp_lint(&file),

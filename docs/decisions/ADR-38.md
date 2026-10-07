@@ -88,3 +88,12 @@ T13 asks for a session/turn/call generator "from the Appendix C parameter sheet"
   - **Sub-agents** get the turn's own system prompt, so their timestamp is the parent's. A sub-agent's tools are its parent's without `gen_subagent` (GEN-12), so the prefix it shares with the spawning call ends where the two tool lists part.
   - **A failed sub-agent.** The spawning tool call still gets its result, the answers that came back, before the turn aborts. No later call then carries a tool call without its result.
   - **Caps and counts.** A tool call carries the chain's `answer_tokens` as `max_tokens`. GEN-11 defines the cap for the answer only, and a tool-call reply ignores it (MLM-40). The shared-prefix count falls back to whole 4-byte tokens when the spawning call reported no input tokens, as the harness's does. The sheet is read once, and the bytes parsed are the bytes hashed.
+- **T13.3c, `acn gen run` and the acceptance suite.**
+  - `acn gen run` takes HAR-50's flags with `--sheet` in place of the workload, backend and model, and prints `ok`, `run_id`, `bundle_digest`, `sessions`, `calls` and `dir`.
+  - `tests/accept/gen_sim.rs` covers three things:
+    - two `sim` runs are bit-identical;
+    - a scenario adds its link spans and keeps the plans;
+    - a `live` run on the served mock records the same per-turn plans as its `sim` twin (tool classes, chain lengths, sub-agent chains, as a multiset over sessions and replicates), with the same session and call counts.
+  - The acceptance runs use mock profiles with timing a thousand times shorter, because `live` waits on the wall clock. Profiles are not in the run_id (MLM-51).
+  - **Where the CLI's acceptance lives.** SPEC 050 §5 places "the CLI prints one object and refuses a knob `vary`" in `tests/accept/gen_sim.rs`. It is in `crates/acn-cli/tests/gen_cli.rs`, because only the CLI's own package can run the `acn` binary (`CARGO_BIN_EXE_acn`). The same file covers a `live` run with no endpoint and the refusal of the served mock in `sim`.
+  - **Counts are run totals.** `sessions` and `calls` count every replicate's, and the tests tie them to the bundle's `acn.session` and `chat` spans.
