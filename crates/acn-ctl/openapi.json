@@ -17,6 +17,134 @@
           "ok"
         ],
         "type": "object"
+      },
+      "Empty": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "Endpoint": {
+        "additionalProperties": false,
+        "properties": {
+          "backend": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend",
+          "url"
+        ],
+        "type": "object"
+      },
+      "Submit": {
+        "additionalProperties": false,
+        "description": "A run request (SPEC 070 §2, CTL-10).",
+        "properties": {
+          "arm": {
+            "type": "string"
+          },
+          "backend": {
+            "type": "string"
+          },
+          "hypothesis": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "harness",
+              "generator"
+            ]
+          },
+          "mode": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "opt": {
+            "additionalProperties": false,
+            "properties": {
+              "endpoint": {
+                "type": "string"
+              },
+              "endpoint_name": {
+                "type": "string"
+              },
+              "max_retries": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_timeout_ms": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "retry_base_ms": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "stall_threshold_ms": {
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "type": "object"
+          },
+          "replicates": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "scenario": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "hash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "hash"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "seed": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "sheet": {
+            "type": "string"
+          },
+          "vary": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "workload": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "scenario"
+        ],
+        "type": "object"
       }
     }
   },
@@ -80,6 +208,26 @@
               }
             },
             "description": "A conflict"
+          },
+          "421": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The Host is not this server's loopback address"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "An internal failure"
           }
         },
         "summary": "A bundle, verified: its manifest and files (CTL-22)."
@@ -109,9 +257,10 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
+              "application/octet-stream": {
                 "schema": {
-                  "$ref": "#/components/schemas/Answer"
+                  "format": "binary",
+                  "type": "string"
                 }
               }
             },
@@ -146,6 +295,26 @@
               }
             },
             "description": "A conflict"
+          },
+          "421": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The Host is not this server's loopback address"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "An internal failure"
           }
         },
         "summary": "One file the manifest lists, after a hash check (CTL-23)."
@@ -164,6 +333,26 @@
               }
             },
             "description": "OK"
+          },
+          "421": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The Host is not this server's loopback address"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "An internal failure"
           }
         },
         "summary": "The registered endpoints (CTL-30)."
@@ -186,11 +375,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/Empty"
               }
             }
           },
-          "required": true
+          "required": false
         },
         "responses": {
           "200": {
@@ -233,6 +422,16 @@
             },
             "description": "A conflict"
           },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The body is over 1 MiB"
+          },
           "415": {
             "content": {
               "application/json": {
@@ -242,6 +441,36 @@
               }
             },
             "description": "Wrong content type"
+          },
+          "421": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The Host is not this server's loopback address"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "An internal failure"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Shutting down"
           }
         },
         "summary": "Remove a named endpoint (CTL-30)."
@@ -262,7 +491,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/Endpoint"
               }
             }
           },
@@ -289,6 +518,16 @@
             },
             "description": "A malformed request or id"
           },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The body is over 1 MiB"
+          },
           "415": {
             "content": {
               "application/json": {
@@ -298,6 +537,36 @@
               }
             },
             "description": "Wrong content type"
+          },
+          "421": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The Host is not this server's loopback address"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "An internal failure"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Shutting down"
           }
         },
         "summary": "Register a named endpoint: a backend and a URL (CTL-30)."
@@ -311,11 +580,32 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Answer"
+                  "description": "This document.",
+                  "type": "object"
                 }
               }
             },
             "description": "OK"
+          },
+          "421": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The Host is not this server's loopback address"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "An internal failure"
           }
         },
         "summary": "The API's OpenAPI 3.1 document (CTL-24)."
@@ -334,6 +624,26 @@
               }
             },
             "description": "OK"
+          },
+          "421": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The Host is not this server's loopback address"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "An internal failure"
           }
         },
         "summary": "Every request's id and state, in submission order (CTL-21)."
@@ -344,7 +654,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/Submit"
               }
             }
           },
@@ -401,6 +711,16 @@
             },
             "description": "A conflict"
           },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The body is over 1 MiB"
+          },
           "415": {
             "content": {
               "application/json": {
@@ -410,6 +730,26 @@
               }
             },
             "description": "Wrong content type"
+          },
+          "421": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The Host is not this server's loopback address"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "An internal failure"
           },
           "503": {
             "content": {
@@ -468,6 +808,26 @@
               }
             },
             "description": "Unknown"
+          },
+          "421": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The Host is not this server's loopback address"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "An internal failure"
           }
         },
         "summary": "A request and its status (CTL-21)."
@@ -480,6 +840,7 @@
           "content": {
             "application/toml": {
               "schema": {
+                "description": "A SPEC 020 scenario.",
                 "type": "string"
               }
             }
@@ -507,6 +868,16 @@
             },
             "description": "A malformed request or id"
           },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The body is over 1 MiB"
+          },
           "415": {
             "content": {
               "application/json": {
@@ -516,6 +887,36 @@
               }
             },
             "description": "Wrong content type"
+          },
+          "421": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The Host is not this server's loopback address"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "An internal failure"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Shutting down"
           }
         },
         "summary": "Store a scenario's TOML, named by its BLAKE3 (CTL-20)."
@@ -564,6 +965,36 @@
               }
             },
             "description": "Unknown"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A conflict"
+          },
+          "421": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The Host is not this server's loopback address"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "An internal failure"
           }
         },
         "summary": "A stored scenario (CTL-20)."
@@ -576,11 +1007,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/Empty"
               }
             }
           },
-          "required": true
+          "required": false
         },
         "responses": {
           "200": {
@@ -593,6 +1024,16 @@
             },
             "description": "OK"
           },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The body is over 1 MiB"
+          },
           "415": {
             "content": {
               "application/json": {
@@ -602,6 +1043,36 @@
               }
             },
             "description": "Wrong content type"
+          },
+          "421": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "The Host is not this server's loopback address"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "An internal failure"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Shutting down"
           }
         },
         "summary": "Finish the run in progress and stop (CTL-1)."

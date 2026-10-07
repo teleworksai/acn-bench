@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Router;
+use axum::body::Bytes;
+use axum::extract::rejection::{BytesRejection, RawPathParamsRejection};
 use axum::extract::{DefaultBodyLimit, RawPathParams, State};
 use axum::http::HeaderMap;
 use axum::routing::{MethodRouter, delete, get, post, put};
@@ -44,11 +46,12 @@ pub fn router(state: AppState) -> Router {
     for path in paths {
         let mut mr: MethodRouter<AppState> = MethodRouter::new();
         for route in ROUTES.iter().filter(|x| x.path == path) {
-            let h =
-                move |State(s): State<AppState>,
-                      p: RawPathParams,
-                      h: HeaderMap,
-                      b: axum::body::Bytes| { api::dispatch(route, s, p, h, b) };
+            let h = move |State(s): State<AppState>,
+                          p: Result<RawPathParams, RawPathParamsRejection>,
+                          h: HeaderMap,
+                          b: Result<Bytes, BytesRejection>| {
+                api::dispatch(route, s, p, h, b)
+            };
             mr = match route.method {
                 Method::Get => mr.merge(get(h)),
                 Method::Post => mr.merge(post(h)),
@@ -59,6 +62,7 @@ pub fn router(state: AppState) -> Router {
         r = r.route(path, mr);
     }
     r.fallback(api::not_found)
+        .method_not_allowed_fallback(api::method_not_allowed)
         .layer(DefaultBodyLimit::max(1 << 20))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -68,12 +72,26 @@ pub fn router(state: AppState) -> Router {
 }
 
 impl Server {
-    /// Bind `127.0.0.1:<port>` (0: one the system picks) and open the
-    /// registry (CTL-1, CTL-11).
+    /// Bind `127.0.0.1:<port>` (0: one the system picks), then open the
+    /// registry: a server that cannot bind recovers nothing (CTL-1, CTL-11).
     pub fn bind(cfg: CtlConfig, port: u16) -> Result<Self, Refusal> {
+        let listener = Self::listen(port)?;
         let ctl = Ctl::open(cfg)?;
-        let listener = std::net::TcpListener::bind(("127.0.0.1", port))
-            .map_err(|e| Refusal::new(500, "bind", format!("127.0.0.1:{port}: {e}")))?;
+        Self::with(ctl, listener)
+    }
+
+    /// Bind for a registry already open, for tests that set its hooks.
+    pub fn bind_with(ctl: Ctl, port: u16) -> Result<Self, Refusal> {
+        let listener = Self::listen(port)?;
+        Self::with(ctl, listener)
+    }
+
+    fn listen(port: u16) -> Result<std::net::TcpListener, Refusal> {
+        std::net::TcpListener::bind(("127.0.0.1", port))
+            .map_err(|e| Refusal::new(500, "bind", format!("127.0.0.1:{port}: {e}")))
+    }
+
+    fn with(ctl: Ctl, listener: std::net::TcpListener) -> Result<Self, Refusal> {
         let addr = listener.local_addr().map_err(Refusal::internal)?;
         Ok(Self {
             ctl,
@@ -126,11 +144,14 @@ impl Server {
             port: self.addr.port(),
             shutdown: shutdown.clone(),
             requests: requests.clone(),
+            staging: Arc::new(AtomicU64::new(0)),
         };
         tracing::info!(addr = %self.addr, "acn ctl listening");
+        let stopping = ctl.clone();
         let served = rt.block_on(async move {
             self.listener.set_nonblocking(true)?;
             let listener = tokio::net::TcpListener::from_std(self.listener)?;
+            let (stopped_tx, mut stopped_rx) = tokio::sync::watch::channel(false);
             let stop = async move {
                 #[cfg(unix)]
                 let term = async {
@@ -149,10 +170,26 @@ impl Server {
                     () = term => {}
                     () = shutdown.notified() => {}
                 }
+                // From here writes are refused while connections drain.
+                stopping.stop();
+                let _ = stopped_tx.send(true);
             };
-            axum::serve(listener, router(state))
-                .with_graceful_shutdown(stop)
-                .await
+            let serve = axum::serve(listener, router(state)).with_graceful_shutdown(stop);
+            // A client holding a connection open does not keep the server
+            // up: connections get 5 s to finish once it stops (CTL-1).
+            let bound = async move {
+                if stopped_rx.wait_for(|s| *s).await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            };
+            tokio::select! {
+                r = serve => r,
+                () = bound => {
+                    tracing::warn!("acn ctl: connections still open after 5 s, closing");
+                    Ok(())
+                }
+            }
         });
         // Stop taking requests; the worker finishes the run in progress, and
         // queued requests stay queued (CTL-1, CTL-21).

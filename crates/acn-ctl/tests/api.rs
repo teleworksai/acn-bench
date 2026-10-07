@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 
 use acn_ctl::CtlConfig;
+use acn_ctl::registry::Ctl;
 use acn_ctl::server::{Server, Summary};
 use acn_trace::identity::{BuildParts, Digest};
 use serde_json::{Value, json};
@@ -34,7 +35,22 @@ struct Running {
     join: std::thread::JoinHandle<Summary>,
 }
 
+fn config(dir: &Path) -> CtlConfig {
+    CtlConfig {
+        root: dir.to_path_buf(),
+        runs_dir: "runs".into(),
+        engine_hash: Digest::of(b"engine"),
+        build: build(),
+        profiles: None,
+    }
+}
+
 fn serve() -> Running {
+    serve_with(|c| c)
+}
+
+/// A server whose registry `f` sets up (its hooks) before it binds.
+fn serve_with(f: impl FnOnce(Ctl) -> Ctl) -> Running {
     let dir = tempfile::tempdir().unwrap();
     let smoke = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -42,17 +58,8 @@ fn serve() -> Running {
     ))
     .unwrap();
     std::fs::write(dir.path().join("w.toml"), smoke).unwrap();
-    let s = Server::bind(
-        CtlConfig {
-            root: dir.path().to_path_buf(),
-            runs_dir: "runs".into(),
-            engine_hash: Digest::of(b"engine"),
-            build: build(),
-            profiles: None,
-        },
-        0,
-    )
-    .unwrap();
+    let ctl = f(Ctl::open(config(dir.path())).unwrap());
+    let s = Server::bind_with(ctl, 0).unwrap();
     let addr = s.addr();
     let join = std::thread::spawn(move || s.run());
     Running { addr, dir, join }
@@ -168,10 +175,36 @@ fn every_route_answers_json_and_origins_types_and_ids_are_checked() {
         }
         let m = route.method.as_str().to_uppercase();
         let (st, out) = call(a, &m, &path, route.body, b"{}");
-        let v: Value = serde_json::from_slice(&out).unwrap_or(json!({"ok": "bytes"}));
+        assert_ne!(st, 405, "{m} {path}: the router does not take its method");
+        // Every answer but a bundle file's bytes is one JSON object.
+        let v: Value = if route.op == "get_bundle_file" {
+            serde_json::from_slice(&out).unwrap_or(json!({"ok": "bytes"}))
+        } else {
+            serde_json::from_slice(&out)
+                .unwrap_or_else(|_| panic!("{m} {path}: {}", String::from_utf8_lossy(&out)))
+        };
         assert!(v.get("ok").is_some(), "{m} {path}: {v}");
         assert_ne!(v["code"], "not_found", "{m} {path} hit the fallback ({st})");
     }
+    // axum's own refusals are JSON too: a method a path does not take, and a
+    // body over the limit (CTL-2).
+    let (st, v) = json_call(a, "PATCH", "/v1/runs", &json!({}));
+    assert_eq!((st, v["code"].as_str()), (405, Some("method_not_allowed")));
+    let big = vec![b' '; (1 << 20) + 1];
+    let (st, out) = call(a, "POST", "/v1/runs", Some("application/json"), &big);
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!((st, v["code"].as_str()), (413, Some("payload_too_large")));
+    // A route that takes no body takes only `{}` or nothing.
+    let (st, v) = json_call(a, "DELETE", "/v1/endpoints/none", &json!({"force": true}));
+    assert_eq!((st, v["code"].as_str()), (400, Some("bad_request")));
+    let (st, _) = call(
+        a,
+        "DELETE",
+        "/v1/endpoints/none",
+        Some("application/json"),
+        b"",
+    );
+    assert_eq!(st, 404);
     let (st, doc) = json_call(a, "GET", "/v1/openapi.json", &json!({}));
     assert_eq!((st, doc["openapi"].as_str()), (200, Some("3.1.0")));
     // An unknown path: one JSON object, 404.
@@ -181,6 +214,13 @@ fn every_route_answers_json_and_origins_types_and_ids_are_checked() {
     let (st, out) = raw(a, "GET /v1/runs HTTP/1.1\r\nHost: evil.example:80\r\n", b"");
     assert_eq!(st, 421, "{}", String::from_utf8_lossy(&out));
     let (st, _) = raw(a, "GET /v1/runs HTTP/1.1\r\n", b"");
+    assert!(st == 421 || st == 400, "{st}");
+    // Two Hosts, one of them right, are not this server's (CTL-3).
+    let (st, _) = raw(
+        a,
+        &format!("GET /v1/runs HTTP/1.1\r\nHost: {a}\r\nHost: evil.example:80\r\n"),
+        b"",
+    );
     assert!(st == 421 || st == 400, "{st}");
     // A plain form cannot start a run or stop the server.
     let (st, _) = call(
@@ -357,7 +397,16 @@ fn a_scenario_is_stored_by_its_hash_and_a_trace_driven_one_is_refused() {
 /// Cites: CTL-30
 #[test]
 fn endpoints_are_named_checked_and_held_while_a_request_uses_them() {
-    let r = serve();
+    // The run waits at the gate until the test has tried the delete.
+    let (open_tx, open_rx) = std::sync::mpsc::channel::<()>();
+    let (at_tx, at_rx) = std::sync::mpsc::channel::<()>();
+    let open_rx = std::sync::Mutex::new(open_rx);
+    let r = serve_with(move |c| {
+        c.with_before_run(std::sync::Arc::new(move || {
+            let _ = at_tx.send(());
+            let _ = open_rx.lock().unwrap().recv();
+        }))
+    });
     let a = r.addr;
     let (st, v) = json_call(
         a,
@@ -391,17 +440,28 @@ fn endpoints_are_named_checked_and_held_while_a_request_uses_them() {
     assert_eq!(st, 400);
     let (_, l) = json_call(a, "GET", "/v1/endpoints", &json!({}));
     assert_eq!(l["endpoints"].as_array().unwrap().len(), 1);
-    // A long live run names it: it cannot be deleted meanwhile.
+    // A running request names it: it cannot be deleted meanwhile.
     let mut q = request("7");
     q["mode"] = "live".into();
-    q["replicates"] = 2.into();
     q["opt"] = json!({"endpoint_name": "mock"});
     let (st, v) = json_call(a, "POST", "/v1/runs", &q);
     assert_eq!(st, 202, "{v}");
+    let id = v["request_id"].as_str().unwrap().to_owned();
+    at_rx
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .unwrap();
     let (st, v) = json_call(a, "DELETE", "/v1/endpoints/mock", &json!({}));
     assert_eq!((st, v["code"].as_str()), (409, Some("endpoint_in_use")));
     let (st, _) = json_call(a, "DELETE", "/v1/endpoints/none", &json!({}));
     assert_eq!(st, 404);
+    open_tx.send(()).unwrap();
+    let path = format!("/v1/runs/{id}");
+    assert!(wait(|| json_call(a, "GET", &path, &json!({})).1["status"]
+        ["state"]
+        == "done"));
+    // Done, it no longer holds the endpoint.
+    let (st, v) = json_call(a, "DELETE", "/v1/endpoints/mock", &json!({}));
+    assert_eq!(st, 200, "{v}");
     stop(r);
 }
 
@@ -410,6 +470,11 @@ fn endpoints_are_named_checked_and_held_while_a_request_uses_them() {
 fn no_answer_carries_a_credential_the_environment_holds() {
     // `set_var` is unsafe: the check runs in a child with the key set.
     if std::env::var("ACN_CTL_CHILD").is_ok() {
+        // The child logs as the binary does, so its stderr is checked too.
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_max_level(tracing::Level::DEBUG)
+            .init();
         let secret = std::env::var("OPENAI_API_KEY").unwrap();
         let r = serve();
         let a = r.addr;
@@ -425,13 +490,17 @@ fn no_answer_carries_a_credential_the_environment_holds() {
         q["backend"] = "openai".into();
         q["mode"] = "live".into();
         q["opt"] = json!({"endpoint_name": "oai", "request_timeout_ms": 1000, "max_retries": 0});
-        let (_, v) = json_call(a, "POST", "/v1/runs", &q);
+        let (st, v) = json_call(a, "POST", "/v1/runs", &q);
         seen.push_str(&v.to_string());
-        if let Some(id) = v["request_id"].as_str() {
-            let path = format!("/v1/runs/{id}");
-            wait(|| json_call(a, "GET", &path, &json!({})).1["status"]["state"] == "failed");
-            seen.push_str(&json_call(a, "GET", &path, &json!({})).1.to_string());
-        }
+        assert_eq!(st, 202, "{v}");
+        let id = v["request_id"].as_str().unwrap().to_owned();
+        let path = format!("/v1/runs/{id}");
+        // Without `real-api` the run is refused; with it, the host does not
+        // resolve. Either way it fails, and its error is served.
+        assert!(wait(|| json_call(a, "GET", &path, &json!({})).1["status"]
+            ["state"]
+            == "failed"));
+        seen.push_str(&json_call(a, "GET", &path, &json!({})).1.to_string());
         for p in ["/v1/runs", "/v1/endpoints", "/v1/openapi.json"] {
             seen.push_str(&json_call(a, "GET", p, &json!({})).1.to_string());
         }
@@ -455,4 +524,47 @@ fn no_answer_carries_a_credential_the_environment_holds() {
         String::from_utf8_lossy(&out.stdout)
     );
     assert!(!String::from_utf8_lossy(&out.stderr).contains("sk-ctl-test-secret-0000"));
+}
+
+/// Cites: CTL-1, CTL-12
+#[test]
+fn one_server_holds_a_runs_directory_and_one_that_cannot_bind_touches_nothing() {
+    let r = serve();
+    // A second registry on the same runs directory is refused.
+    let err = Ctl::open(config(r.dir.path())).err().unwrap();
+    assert_eq!((err.status, err.code), (409, "registry_in_use"));
+    // A server that cannot bind opens no registry.
+    let other = tempfile::tempdir().unwrap();
+    let err = Server::bind(config(other.path()), r.addr.port())
+        .err()
+        .unwrap();
+    assert_eq!(err.code, "bind");
+    assert!(!other.path().join("runs").exists());
+    stop(r);
+}
+
+/// Cites: CTL-1, CTL-21
+#[test]
+fn a_stopping_server_serves_reads_and_refuses_writes() {
+    let mut held = None;
+    let r = serve_with(|c| {
+        held = Some(c.clone());
+        c
+    });
+    let a = r.addr;
+    // The registry stops as a signal stops it, before the listener closes.
+    held.unwrap().stop();
+    let (st, v) = json_call(
+        a,
+        "PUT",
+        "/v1/endpoints/mock",
+        &json!({"backend": "mockllm", "url": "acn-mock://loopback"}),
+    );
+    assert_eq!((st, v["code"].as_str()), (503, Some("shutting_down")));
+    let (st, v) = json_call(a, "POST", "/v1/runs", &request("7"));
+    assert_eq!((st, v["code"].as_str()), (503, Some("shutting_down")));
+    let (st, _) = json_call(a, "GET", "/v1/runs", &json!({}));
+    assert_eq!(st, 200);
+    let s = stop(r);
+    assert!(s.ok);
 }

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::body::Bytes;
+use axum::extract::rejection::{BytesRejection, RawPathParamsRejection};
 use axum::extract::{RawPathParams, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
@@ -79,7 +80,7 @@ pub const ROUTES: &[Route] = &[
         op: "get_scenario",
         summary: "A stored scenario (CTL-20).",
         body: None,
-        codes: &[200, 400, 404],
+        codes: &[200, 400, 404, 409],
     },
     Route {
         method: Method::Post,
@@ -162,7 +163,10 @@ fn status_text(code: u16) -> &'static str {
         400 => "A malformed request or id",
         404 => "Unknown",
         409 => "A conflict",
+        413 => "The body is over 1 MiB",
         415 => "Wrong content type",
+        421 => "The Host is not this server's loopback address",
+        500 => "An internal failure",
         503 => "Shutting down",
         _ => "Other",
     }
@@ -181,14 +185,34 @@ pub fn openapi() -> Value {
             .filter_map(|s| s.split('}').next())
             .map(|n| json!({"name": n, "in": "path", "required": true, "schema": {"type": "string"}}))
             .collect();
-        let responses: serde_json::Map<String, Value> = r
-            .codes
+        // Every route may also answer a wrong Host, a body over the limit or
+        // a write while stopping, and an internal failure.
+        let mut codes: Vec<u16> = r.codes.to_vec();
+        codes.extend([421, 500]);
+        if r.body.is_some() {
+            codes.push(413);
+        }
+        if r.method != Method::Get {
+            codes.push(503);
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        codes.retain(|c| seen.insert(*c));
+        let responses: serde_json::Map<String, Value> = codes
             .iter()
             .map(|c| {
-                (
-                    c.to_string(),
-                    json!({"description": status_text(*c), "content": {JSON: {"schema": {"$ref": "#/components/schemas/Answer"}}}}),
-                )
+                let schema = match (r.op, *c) {
+                    ("openapi", 200) => json!({"type": "object", "description": "This document."}),
+                    ("get_bundle_file", 200) => {
+                        json!({"description": status_text(*c), "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}})
+                    }
+                    _ => json!({"$ref": "#/components/schemas/Answer"}),
+                };
+                let resp = if schema.get("content").is_some() {
+                    schema
+                } else {
+                    json!({"description": status_text(*c), "content": {JSON: {"schema": schema}}})
+                };
+                (c.to_string(), resp)
             })
             .collect();
         let mut op = json!({
@@ -200,7 +224,17 @@ pub fn openapi() -> Value {
             op["parameters"] = Value::Array(params);
         }
         if let Some(ct) = r.body {
-            op["requestBody"] = json!({"required": true, "content": {ct: {"schema": {"type": if ct == JSON {"object"} else {"string"}}}}});
+            let schema = match r.op {
+                "submit_run" => json!({"$ref": "#/components/schemas/Submit"}),
+                "put_endpoint" => json!({"$ref": "#/components/schemas/Endpoint"}),
+                "store_scenario" => {
+                    json!({"type": "string", "description": "A SPEC 020 scenario."})
+                }
+                _ => json!({"$ref": "#/components/schemas/Empty"}),
+            };
+            // An empty body is the empty object on the routes that take one.
+            let required = !matches!(r.op, "shutdown" | "delete_endpoint");
+            op["requestBody"] = json!({"required": required, "content": {ct: {"schema": schema}}});
         }
         paths
             .entry(path)
@@ -212,15 +246,58 @@ pub fn openapi() -> Value {
         "info": {"title": "acn-ctl", "version": "1", "description": "The acn-bench control plane (SPEC 070)."},
         "servers": [{"url": "http://127.0.0.1:{port}", "variables": {"port": {"default": "8080"}}}],
         "paths": paths,
-        "components": {"schemas": {"Answer": {
-            "type": "object",
-            "required": ["ok"],
-            "properties": {
-                "ok": {"type": "boolean"},
-                "code": {"type": "string"},
-                "error": {"type": "string"}
+        "components": {"schemas": {
+            "Answer": {
+                "type": "object",
+                "required": ["ok"],
+                "properties": {
+                    "ok": {"type": "boolean"},
+                    "code": {"type": "string"},
+                    "error": {"type": "string"}
+                }
+            },
+            "Empty": {"type": "object", "additionalProperties": false},
+            "Endpoint": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["backend", "url"],
+                "properties": {
+                    "backend": {"type": "string"},
+                    "url": {"type": "string"}
+                }
+            },
+            "Submit": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "A run request (SPEC 070 §2, CTL-10).",
+                "required": ["kind", "scenario"],
+                "properties": {
+                    "kind": {"enum": ["harness", "generator"]},
+                    "workload": {"type": "string"},
+                    "backend": {"type": "string"},
+                    "model": {"type": "string"},
+                    "sheet": {"type": "string"},
+                    "mode": {"type": "string"},
+                    "arm": {"type": "string"},
+                    "replicates": {"type": "integer", "minimum": 1},
+                    "vary": {"type": "object", "additionalProperties": {"type": "string"}},
+                    "hypothesis": {"type": "string"},
+                    "seed": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+                    "opt": {"type": "object", "additionalProperties": false, "properties": {
+                        "endpoint": {"type": "string"},
+                        "endpoint_name": {"type": "string"},
+                        "max_retries": {"type": "integer", "minimum": 0},
+                        "retry_base_ms": {"type": "integer", "minimum": 0},
+                        "request_timeout_ms": {"type": "integer", "minimum": 0},
+                        "stall_threshold_ms": {"type": "number", "minimum": 0}
+                    }},
+                    "scenario": {"oneOf": [
+                        {"type": "object", "additionalProperties": false, "required": ["path"], "properties": {"path": {"type": "string"}}},
+                        {"type": "object", "additionalProperties": false, "required": ["hash"], "properties": {"hash": {"type": "string"}}}
+                    ]}
+                }
             }
-        }}}
+        }}
     })
 }
 
@@ -240,6 +317,9 @@ pub struct AppState {
     pub port: u16,
     pub shutdown: Arc<tokio::sync::Notify>,
     pub requests: Arc<AtomicU64>,
+    /// Numbers each scenario staging directory, so two stores of the same
+    /// bytes never share one (CTL-20).
+    pub staging: Arc<AtomicU64>,
 }
 
 /// A JSON answer (CTL-2).
@@ -259,13 +339,14 @@ fn refusal(r: &Refusal) -> Response {
 /// is not the loopback address and port (CTL-1, CTL-3).
 pub async fn guard(State(s): State<AppState>, req: Request, next: Next) -> Response {
     s.requests.fetch_add(1, Ordering::SeqCst);
-    let host_ok = req
-        .headers()
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .is_some_and(|h| {
-            h == format!("127.0.0.1:{}", s.port) || h == format!("localhost:{}", s.port)
-        });
+    let mut hosts = req.headers().get_all(header::HOST).iter();
+    let host = match (hosts.next(), hosts.next()) {
+        (Some(h), None) => Some(h),
+        _ => None,
+    };
+    let host_ok = host.and_then(|h| h.to_str().ok()).is_some_and(|h| {
+        h == format!("127.0.0.1:{}", s.port) || h == format!("localhost:{}", s.port)
+    });
     let (method, path) = (req.method().clone(), req.uri().path().to_owned());
     let resp = if host_ok {
         next.run(req).await
@@ -278,6 +359,15 @@ pub async fn guard(State(s): State<AppState>, req: Request, next: Next) -> Respo
     };
     tracing::info!(%method, path, status = resp.status().as_u16(), "acn ctl");
     resp
+}
+
+/// The answer to a method a path of the table does not take.
+pub async fn method_not_allowed() -> Response {
+    refusal(&Refusal::new(
+        405,
+        "method_not_allowed",
+        "this path does not take that method (SPEC 070 §3)",
+    ))
 }
 
 /// The answer to a path the table does not have.
@@ -308,19 +398,45 @@ fn hex_id(id: &str, what: &str) -> Result<(), Refusal> {
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, Refusal> + Send + 'static,
 ) -> Result<T, Refusal> {
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| Refusal::internal(format!("a handler failed: {e}")))?
+    tokio::task::spawn_blocking(f).await.map_err(|e| {
+        tracing::error!(error = %e, "acn ctl handler failed");
+        Refusal::internal("a handler failed")
+    })?
 }
 
 /// Every route's handler: the content type, then the route's own work.
 pub async fn dispatch(
     route: &'static Route,
     s: AppState,
-    params: RawPathParams,
+    params: Result<RawPathParams, RawPathParamsRejection>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Result<Bytes, BytesRejection>,
 ) -> Response {
+    // axum's own refusals, in JSON as every other answer (CTL-2).
+    let params = match params {
+        Ok(p) => p,
+        Err(e) => return refusal(&Refusal::bad("bad_id", e.body_text())),
+    };
+    let body = match body {
+        Ok(b) => b,
+        Err(e) if e.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            return refusal(&Refusal::new(
+                413,
+                "payload_too_large",
+                "a body is at most 1 MiB (CTL-3)",
+            ));
+        }
+        Err(e) => return refusal(&Refusal::bad("bad_request", e.body_text())),
+    };
+    // While stopping only reads and a repeated shutdown are served: nothing
+    // new is stored, queued or removed (CTL-1, CTL-21).
+    if route.method != Method::Get && route.op != "shutdown" && s.ctl.stopping() {
+        return refusal(&Refusal::new(
+            503,
+            "shutting_down",
+            "the server is stopping (CTL-21)",
+        ));
+    }
     if let Some(ct) = route.body {
         let given = headers
             .get(header::CONTENT_TYPE)
@@ -356,7 +472,8 @@ async fn handle(
     match route.op {
         "openapi" => Ok(answer(200, openapi())),
         "store_scenario" => {
-            let r = blocking(move || store_scenario(&ctl, &body)).await?;
+            let seq = s.staging.fetch_add(1, Ordering::SeqCst);
+            let r = blocking(move || store_scenario(&ctl, &body, seq)).await?;
             Ok(answer(200, r))
         }
         "get_scenario" => {
@@ -428,10 +545,12 @@ async fn handle(
         }
         "delete_endpoint" => {
             let name = param(p, "name").to_owned();
-            blocking(move || delete_endpoint(&ctl, &name)).await?;
+            empty(&body)?;
+            blocking(move || ctl.delete_endpoint(&name)).await?;
             Ok(answer(200, json!({"ok": true})))
         }
         "shutdown" => {
+            empty(&body)?;
             s.ctl.stop();
             s.shutdown.notify_one();
             Ok(answer(200, json!({"ok": true})))
@@ -440,9 +559,22 @@ async fn handle(
     }
 }
 
+/// The body of a route that takes none: empty, or the empty object.
+fn empty(body: &[u8]) -> Result<(), Refusal> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Empty {}
+    if body.iter().all(u8::is_ascii_whitespace) {
+        return Ok(());
+    }
+    serde_json::from_slice::<Empty>(body)
+        .map(|_| ())
+        .map_err(|e| Refusal::bad("bad_request", format!("this route takes `{{}}`: {e}")))
+}
+
 /// CTL-20: a scenario stored under its hash and its own name, loaded as
 /// SPEC 020 §3 loads it; a trace-driven one is refused.
-fn store_scenario(ctl: &Ctl, body: &[u8]) -> Result<Value, Refusal> {
+fn store_scenario(ctl: &Ctl, body: &[u8], seq: u64) -> Result<Value, Refusal> {
     let text =
         std::str::from_utf8(body).map_err(|e| Refusal::bad("scenario_invalid", e.to_string()))?;
     let table: toml::Table =
@@ -478,7 +610,7 @@ fn store_scenario(ctl: &Ctl, body: &[u8]) -> Result<Value, Refusal> {
         let staging = ctl
             .ctl_dir()
             .join("scenarios")
-            .join(format!(".staging-{hash}"));
+            .join(format!(".staging-{hash}-{seq}"));
         let _ = std::fs::remove_dir_all(&staging);
         std::fs::create_dir_all(&staging).map_err(Refusal::internal)?;
         let file = staging.join(format!("{name}.toml"));
@@ -487,9 +619,13 @@ fn store_scenario(ctl: &Ctl, body: &[u8]) -> Result<Value, Refusal> {
             let _ = std::fs::remove_dir_all(&staging);
             return Err(Refusal::bad("scenario_invalid", e.to_string()));
         }
-        if std::fs::rename(&staging, &dir).is_err() {
-            // Stored meanwhile by another call: the same bytes.
+        if let Err(e) = std::fs::rename(&staging, &dir) {
             let _ = std::fs::remove_dir_all(&staging);
+            // Stored meanwhile by another call, with the same bytes; else a
+            // real failure.
+            if !dir.join(format!("{name}.toml")).is_file() {
+                return Err(Refusal::internal(e));
+            }
         }
     }
     Ok(json!({"ok": true, "hash": hash, "name": name}))
@@ -544,7 +680,7 @@ fn bundle_file(ctl: &Ctl, run_id: &str, path: &str) -> Result<(Vec<u8>, &'static
     let want = manifest.files.get(path).ok_or_else(unknown)?;
     let canon_dir = std::fs::canonicalize(&dir).map_err(|_| unknown())?;
     let file = std::fs::canonicalize(dir.join(path)).map_err(|_| unknown())?;
-    if file != canon_dir.join(path) {
+    if file.strip_prefix(&canon_dir).ok() != Some(std::path::Path::new(path)) {
         return Err(Refusal::new(
             409,
             "bundle_invalid",
@@ -630,29 +766,4 @@ fn put_endpoint(ctl: &Ctl, name: &str, body: &[u8]) -> Result<Value, Refusal> {
     std::fs::write(&tmp, &bytes).map_err(Refusal::internal)?;
     std::fs::rename(&tmp, dir.join(format!("{name}.json"))).map_err(Refusal::internal)?;
     Ok(json!({"ok": true, "name": name}))
-}
-
-fn delete_endpoint(ctl: &Ctl, name: &str) -> Result<(), Refusal> {
-    if !resolve::is_endpoint_name(name) {
-        return Err(Refusal::bad(
-            "bad_id",
-            "an endpoint name is 1 to 64 of a-z, 0-9 and - (CTL-30)",
-        ));
-    }
-    let file = endpoints_dir(ctl).join(format!("{name}.json"));
-    if !file.exists() {
-        return Err(Refusal::new(
-            404,
-            "unknown_endpoint",
-            format!("no endpoint `{name}` (CTL-30)"),
-        ));
-    }
-    if ctl.endpoint_in_use(name)? {
-        return Err(Refusal::new(
-            409,
-            "endpoint_in_use",
-            format!("a queued or running request names `{name}` (CTL-30)"),
-        ));
-    }
-    std::fs::remove_file(&file).map_err(Refusal::internal)
 }

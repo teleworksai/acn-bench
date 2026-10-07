@@ -98,6 +98,9 @@ struct Inner {
     exec: Mutex<()>,
     /// Called on the run's thread before it runs; tests use it.
     before_run: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Held while this registry is open: one control plane per runs
+    /// directory (CTL-12). The OS releases it if the process dies.
+    _lock: std::fs::File,
 }
 
 /// The control plane's registry and worker (CTL-11 to CTL-13).
@@ -187,6 +190,28 @@ impl Ctl {
         }
         let ctl = runs.join("ctl");
         std::fs::create_dir_all(ctl.join("requests")).map_err(Refusal::internal)?;
+        // Before anything is read or recovered: a second server on the same
+        // runs directory would take over a live one's requests (CTL-12).
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(ctl.join("lock"))
+            .map_err(Refusal::internal)?;
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(Refusal::new(
+                    409,
+                    "registry_in_use",
+                    format!(
+                        "another control plane holds {} (CTL-12)",
+                        ctl.join("lock").display()
+                    ),
+                ));
+            }
+            Err(std::fs::TryLockError::Error(e)) => return Err(Refusal::internal(e)),
+        }
         let mut statuses = BTreeMap::new();
         let mut queued: Vec<(u64, String)> = Vec::new();
         let mut orphans: Vec<String> = Vec::new();
@@ -241,6 +266,7 @@ impl Ctl {
                 fault: AtomicBool::new(false),
                 exec: Mutex::new(()),
                 before_run: None,
+                _lock: lock,
             }),
         };
         for (id, mut st) in statuses {
@@ -368,9 +394,11 @@ impl Ctl {
                 "the server is stopping (CTL-21)",
             ));
         }
+        // Under the registry's lock from resolution on, so an endpoint cannot
+        // be deleted between its lookup and the request's queuing (CTL-30).
+        let mut statuses = self.lock_statuses()?;
         let resolved = resolve::resolve(&self.inner.cfg.root, &self.inner.ctl, r)?;
         let id = resolved.request_id()?;
-        let mut statuses = self.lock_statuses()?;
         if let Some(st) = statuses.get(&id).cloned() {
             return match (st.state, r.retry) {
                 (State::Failed, true) => {
@@ -504,21 +532,56 @@ impl Ctl {
         self.inner.fault.load(Ordering::SeqCst)
     }
 
-    /// Whether a queued or running request names endpoint `name` (CTL-30).
-    pub fn endpoint_in_use(&self, name: &str) -> Result<bool, Refusal> {
-        let ids: Vec<String> = self
-            .lock_statuses()?
+    /// Whether a queued or running request names endpoint `name`, with the
+    /// registry's lock held (CTL-30).
+    fn in_use(&self, statuses: &BTreeMap<String, Status>, name: &str) -> bool {
+        statuses
             .iter()
             .filter(|(_, s)| matches!(s.state, State::Queued | State::Running))
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in ids {
-            let (r, _) = self.get(&id)?;
-            if r.request.opt.endpoint_name.as_deref() == Some(name) {
-                return Ok(true);
-            }
+            .any(|(id, _)| {
+                std::fs::read(self.request_dir(id).join("request.json"))
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<Resolved>(&b).ok())
+                    .is_some_and(|r| r.request.opt.endpoint_name.as_deref() == Some(name))
+            })
+    }
+
+    /// Whether a queued or running request names endpoint `name` (CTL-30).
+    pub fn endpoint_in_use(&self, name: &str) -> Result<bool, Refusal> {
+        let statuses = self.lock_statuses()?;
+        Ok(self.in_use(&statuses, name))
+    }
+
+    /// Remove endpoint `name`, unless a queued or running request names it:
+    /// checked and removed under the lock submissions take (CTL-30).
+    pub fn delete_endpoint(&self, name: &str) -> Result<(), Refusal> {
+        if !resolve::is_endpoint_name(name) {
+            return Err(Refusal::bad(
+                "bad_id",
+                "an endpoint name is 1 to 64 of a-z, 0-9 and - (CTL-30)",
+            ));
         }
-        Ok(false)
+        let statuses = self.lock_statuses()?;
+        let file = self
+            .inner
+            .ctl
+            .join("endpoints")
+            .join(format!("{name}.json"));
+        if !file.exists() {
+            return Err(Refusal::new(
+                404,
+                "unknown_endpoint",
+                format!("no endpoint `{name}` (CTL-30)"),
+            ));
+        }
+        if self.in_use(&statuses, name) {
+            return Err(Refusal::new(
+                409,
+                "endpoint_in_use",
+                format!("a queued or running request names `{name}` (CTL-30)"),
+            ));
+        }
+        std::fs::remove_file(&file).map_err(Refusal::internal)
     }
 
     /// Stop taking requests; the worker finishes the run in progress, and
