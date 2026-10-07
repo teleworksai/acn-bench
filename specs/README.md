@@ -9,7 +9,7 @@
 | 040 | 040-harness.md | HAR | draft v0.3 (harness: agent loop, six cache-discipline knobs, two wire dialects, recording, isolation, workloads; implemented by T04) |
 | 050 | 050-workload-generator.md | GEN | draft v0.2 (sheet of distributions, seeded sessions/turns/calls on the harness's run path; plain-RPC control deferred to T13b; for T13) |
 | 060 | 060-replayer.md | RPL | to write (T50) |
-| 070 | 070-control-plane.md | CTL | to write (T14) |
+| 070 | 070-control-plane.md | CTL | draft v0.1 (a local HTTP/JSON service: scenarios, runs, bundles, endpoints; a registry of requests by hash; one worker; for T14) |
 | 080 | 080-hypotheses.md | HYP | draft v0.1 (format, typed predicate grammar, slices and verdicts; implemented by T05) |
 | 085 | 085-feedback-loop.md | LOOP | draft v0.3 (layered, verifiable loop; L1 runner, report and evidence chain; v0.3 thins the verdict trajectory; implemented by T05b, T06b3) |
 | 090 | 090-attribution.md | ATR | to write (T15) |

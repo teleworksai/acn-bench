@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 220
+Specs: 11 · IDs: 254 · MUSTs: 231 · implemented: 185 · cited: 220
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -183,6 +183,18 @@ Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 220
 | GEN-22 | `050-workload-generator.md` | 3 | MUST | no | `crates/acn-cli/tests/gen_cli.rs` `gen_run_prints_one_object_with_its_bundle_and_counts`<br>`crates/acn-cli/tests/gen_cli.rs` `gen_run_refuses_a_knob_vary_with_ok_false`<br>`crates/acn-cli/tests/gen_cli.rs` `gen_run_in_live_with_no_endpoint_serves_the_mock`<br>`crates/acn-cli/tests/gen_cli.rs` `gen_run_refuses_the_served_mock_in_sim`<br>`tests/accept/gen_sim.rs` `a_live_run_on_the_served_mock_draws_the_plans_of_its_sim_twin` |
 | GEN-23 | `050-workload-generator.md` | 3 | MUST | no | `tests/accept/gen_sim.rs` `a_sim_run_twice_is_bit_identical` |
 | GEN-30 | `050-workload-generator.md` | 4 | MUST | no | `crates/acn-gen/tests/sessions.rs` `sessions_turns_chains_and_fan_out_are_sent_as_planned` |
+| CTL-1 | `070-control-plane.md` | 1 | MUST | no | — |
+| CTL-2 | `070-control-plane.md` | 1 | MUST | no | — |
+| CTL-10 | `070-control-plane.md` | 2 | MUST | no | — |
+| CTL-11 | `070-control-plane.md` | 2 | MUST | no | — |
+| CTL-12 | `070-control-plane.md` | 2 | MUST | no | — |
+| CTL-13 | `070-control-plane.md` | 2 | MUST | no | — |
+| CTL-20 | `070-control-plane.md` | 3 | MUST | no | — |
+| CTL-21 | `070-control-plane.md` | 3 | MUST | no | — |
+| CTL-22 | `070-control-plane.md` | 3 | MUST | no | — |
+| CTL-23 | `070-control-plane.md` | 3 | MUST | no | — |
+| CTL-24 | `070-control-plane.md` | 3 | MUST | no | — |
+| CTL-30 | `070-control-plane.md` | 4 | MUST | no | — |
 | HYP-1 | `080-hypotheses.md` | 2 | MUST | yes | `crates/acn-hyp/tests/format.rs` `every_table_rejects_unknown_keys_and_names_the_key_path`<br>`crates/acn-hyp/tests/freeze.rs` `a_file_under_hypotheses_that_is_not_toml_never_loads_as_frozen`<br>`crates/xtask/tests/freeze.rs` `pr_check_enforces_the_shape_of_a_freeze`<br>`crates/xtask/tests/freeze.rs` `every_file_under_hypotheses_is_checked_and_each_bad_one_reported`<br>`tests/accept/hyp_lint.rs` `a_broken_file_is_reported_with_its_reason` |
 | HYP-2 | `080-hypotheses.md` | 2 | MUST | yes | `crates/acn-hyp/tests/format.rs` `the_tables_poc_and_stem_rules_hold`<br>`crates/acn-hyp/tests/format.rs` `a_frozen_file_names_a_real_spec_and_a_unique_id`<br>`crates/xtask/tests/freeze.rs` `pr_check_enforces_the_shape_of_a_freeze` |
 | HYP-3 | `080-hypotheses.md` | 2 | MUST | yes | `crates/acn-harness/tests/record.rs` `a_frozen_file_may_not_choose_its_seed`<br>`crates/acn-hyp/tests/format.rs` `status_is_decided_by_location_and_by_a_record_that_matches`<br>`crates/acn-hyp/tests/freeze.rs` `a_changed_hypothesis_file_breaks_the_record_and_is_no_longer_frozen`<br>`crates/xtask/tests/freeze.rs` `pr_check_enforces_the_shape_of_a_freeze` |
