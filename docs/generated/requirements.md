@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 211
+Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 212
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -173,12 +173,12 @@ Specs: 10 · IDs: 242 · MUSTs: 219 · implemented: 185 · cited: 211
 | GEN-3 | `050-workload-generator.md` | 2 | MUST | no | `crates/acn-gen/tests/plan.rs` `changing_one_parameter_shifts_no_other_draw`<br>`crates/acn-gen/tests/plan.rs` `a_sessions_draws_are_its_start_turns_and_think_times_in_order` |
 | GEN-4 | `050-workload-generator.md` | 2 | MUST | no | `crates/acn-gen/tests/plan.rs` `a_turns_plan_is_drawn_whole_in_gen_4_order`<br>`crates/acn-gen/tests/plan.rs` `a_turn_that_does_not_fan_out_is_drawn_in_gen_4_order_too` |
 | GEN-10 | `050-workload-generator.md` | 2 | MUST | no | — |
-| GEN-11 | `050-workload-generator.md` | 2 | MUST | no | — |
+| GEN-11 | `050-workload-generator.md` | 2 | MUST | no | `crates/acn-harness/tests/driver.rs` `only_one_tool_is_encoded_as_gen_11_writes_it`<br>`crates/acn-harness/tests/driver.rs` `a_driver_makes_its_own_calls_through_the_run_paths_call` |
 | GEN-12 | `050-workload-generator.md` | 2 | MUST | no | `crates/acn-gen/tests/plan.rs` `a_turns_plan_is_drawn_whole_in_gen_4_order` |
 | GEN-13 | `050-workload-generator.md` | 2 | MUST | no | `crates/acn-gen/tests/plan.rs` `text_is_four_lowercase_letters_per_token_from_its_own_stream` |
 | GEN-14 | `050-workload-generator.md` | 2 | MUST | no | — |
 | GEN-15 | `050-workload-generator.md` | 2 | MUST | no | — |
-| GEN-20 | `050-workload-generator.md` | 3 | MUST | no | `crates/acn-harness/tests/driver.rs` `a_driver_runs_on_the_run_path_under_its_own_producer` |
+| GEN-20 | `050-workload-generator.md` | 3 | MUST | no | `crates/acn-harness/tests/driver.rs` `a_driver_runs_on_the_run_path_under_its_own_producer`<br>`crates/acn-harness/tests/driver.rs` `a_driver_makes_its_own_calls_through_the_run_paths_call` |
 | GEN-21 | `050-workload-generator.md` | 3 | MUST | no | `crates/acn-harness/tests/driver.rs` `a_driver_runs_on_the_run_path_under_its_own_producer`<br>`crates/acn-harness/tests/driver.rs` `a_driver_with_fixed_knobs_refuses_a_knob_vary` |
 | GEN-22 | `050-workload-generator.md` | 3 | MUST | no | — |
 | GEN-23 | `050-workload-generator.md` | 3 | MUST | no | — |

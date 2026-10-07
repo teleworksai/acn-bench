@@ -98,7 +98,11 @@ pub enum ToolChoice {
     /// Only these tools, by name, in this order: a forked child's own.
     Allowed(Vec<String>),
     /// Exactly this tool: the generator's choice of a drawn class (SPEC 050
-    /// GEN-11), encoded as that requirement writes it.
+    /// GEN-11), encoded as that requirement writes it. It is for the mock
+    /// (`mockllm`, the only backend of a generator run, GEN-21): a provider
+    /// may require `mode` in `allowed_tools`, and the mock does not read the
+    /// Messages form. Like every choice, it is dropped when the context has
+    /// no tools.
     Only(String),
 }
 

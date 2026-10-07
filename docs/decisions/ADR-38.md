@@ -68,3 +68,8 @@ T13 asks for a session/turn/call generator "from the Appendix C parameter sheet"
 - **`ToolChoice::Only`.** It encodes GEN-11's choice exactly: `allowed_tools` with one tool and no `mode`. HAR-14's `Allowed` keeps its own encoding, `mode: auto`, on which the pinned bundles depend.
 - **Sampling.** The generator's calls use temperature 0 and streaming, as the harness's smoke workload does. Streaming gives the TTFT, ITL and stall measurements.
 - **The timestamp of HAR-11.** The knob is on by default, and GEN-21 fixes the knobs at their defaults. So a generator session's system prompt carries its turn's start time, as the harness's does. The shared system words then follow a line that differs per turn. This is the cache-breaking habit the knob exists to measure, and leaving it out would make the recorded knob map untrue.
+- **After review (PR 51).**
+  - `ToolChoice::Only` is for the mock, which is the only backend of a generator run. A provider may require `mode` in `allowed_tools`, and the mock does not read the Messages form (`{"type": "tool"}`).
+  - The run refuses a session attribute missing from the inventory instead of silently keeping it (TRC-20).
+  - `Cx` is re-exported, so a driver calls `Replicate::call` without its own `opentelemetry` dependency.
+  - A test driver builds its own session and turn spans and makes two calls through `call`. Ingest's checks hold its spans to SPEC 010 as they hold the harness's.

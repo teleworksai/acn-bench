@@ -8,8 +8,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use acn_trace::normalise::{self, Normalised};
 use acn_trace::schema::Inventory;
+/// The trace context a span is started under: re-exported so that a driver
+/// (SPEC 050 GEN-20) needs no `opentelemetry` of its own to call
+/// [`Replicate::call`].
+pub use opentelemetry::Context as Cx;
+use opentelemetry::KeyValue;
 use opentelemetry::trace::{Span as _, SpanKind, TraceContextExt as _, Tracer as _};
-use opentelemetry::{Context as Cx, KeyValue};
 use opentelemetry_sdk::trace::SdkTracer;
 use rand_chacha::ChaCha20Rng;
 use rand_core::Rng as _;
@@ -248,7 +252,9 @@ struct Lineage {
 
 /// What one lineage's calls carry from one to the next (TRC-12). The agent
 /// loop keeps one per lineage, and so does any other driver of the run path
-/// (SPEC 050 GEN-20).
+/// (SPEC 050 GEN-20). A driver resets `call_index` to 0 at each turn's start,
+/// and sets `prev` to the spawning call's `compared` before a sub-agent's
+/// first call, as the agent loop does.
 #[derive(Debug, Clone, Default)]
 pub struct CallState {
     /// The bytes the next call is compared with: the previous call's context
@@ -262,10 +268,13 @@ pub struct CallState {
 }
 
 /// One call's result.
+#[derive(Debug)]
 pub struct Called {
     /// The response, or `None` when the call failed after its retries.
     pub reply: Option<Reply>,
+    /// The call's `acn.call.index` (TRC-12).
     pub index: i64,
+    /// The input tokens the response reported, when it did.
     pub input_tokens: Option<u64>,
     /// The context sent and its compared bytes, for fan-out.
     pub context: Context,

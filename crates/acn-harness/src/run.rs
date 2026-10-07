@@ -255,11 +255,7 @@ pub fn run_with_scenario(
     cfg: &RunConfig,
     scenario: Option<&Path>,
 ) -> Result<Written, HarnessError> {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| HarnessError::Internal(format!("runtime: {e}")))?
-        .block_on(run_async_with(cfg, scenario))
+    run_driven_blocking(cfg, scenario, &AgentDriver)
 }
 
 /// [`run`] on the caller's runtime. The future is not `Send`: the agent's
@@ -283,7 +279,9 @@ struct RunScenario {
 /// harness never depends on it (ADR-38).
 pub trait Driver {
     /// The workload the run is identified by, whose hash enters `run_id`
-    /// (CON-29), and whose `[agent]` settings every call uses.
+    /// (CON-29), and whose `[agent]` settings every call uses. A workload
+    /// built in memory sets `hash` to the BLAKE3 of the file it stands for
+    /// (CON-27(a)): nothing else checks it.
     fn workload(&self, cfg: &RunConfig) -> Result<Workload, HarnessError>;
     /// The `service.name` and `service.version` of the run's spans (TRC-19).
     fn producer(&self) -> (&'static str, &'static str);
@@ -516,13 +514,21 @@ pub async fn run_driven<D: Driver>(
         // Only the attributes SPEC 010 lists for this producer (TRC-19,
         // SPEC 050 GEN-21): the harness's own list is unchanged.
         let inv = acn_trace::schema::inventory()?;
-        let session_attrs: Vec<KeyValue> = session_attrs
-            .into_iter()
-            .filter(|kv| {
-                inv.attribute(kv.key.as_str())
-                    .is_none_or(|a| a.producers.iter().any(|p| p == producer))
-            })
-            .collect();
+        // The inventory lists every attribute (TRC-20): one it does not know
+        // is the harness's fault, not a key to keep or drop silently.
+        let mut kept = Vec::with_capacity(session_attrs.len());
+        for kv in session_attrs {
+            let Some(a) = inv.attribute(kv.key.as_str()) else {
+                return Err(HarnessError::Internal(format!(
+                    "`{}` is not in the attribute inventory (TRC-20)",
+                    kv.key
+                )));
+            };
+            if a.producers.iter().any(|p| p == producer) {
+                kept.push(kv);
+            }
+        }
+        let session_attrs = kept;
         let setup = Setup {
             workload,
             knobs,
