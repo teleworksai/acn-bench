@@ -170,6 +170,7 @@ impl Server {
                     () = term => {}
                     () = shutdown.notified() => {}
                 }
+                tracing::info!("acn ctl stopping");
                 // From here writes are refused while connections drain.
                 stopping.stop();
                 let _ = stopped_tx.send(true);

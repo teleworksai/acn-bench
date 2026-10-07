@@ -47,4 +47,11 @@ toml.workspace = true
 
 [dev-dependencies]
 acn-emu = { path = "../acn-emu" }
+blake3.workspace = true
 tempfile.workspace = true
+
+# SPEC 070's acceptance suite drives the `acn` binary, which only this
+# package's tests can name (CARGO_BIN_EXE_acn; ADR-39).
+[[test]]
+name = "accept_ctl"
+path = "../../tests/accept/ctl.rs"

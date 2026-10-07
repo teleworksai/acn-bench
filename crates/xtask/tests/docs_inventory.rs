@@ -342,3 +342,58 @@ fn docs_inventory_fails_on_a_missing_or_wrong_coverage_mapping_and_renders_a_goo
         "{page}"
     );
 }
+
+/// Cites: CTL-24
+#[test]
+fn the_api_page_is_rendered_from_the_committed_document_and_checked() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    copy_dir(&fixture("ok"), dir.path());
+    let doc = dir.path().join("crates/acn-ctl/openapi.json");
+    fs::create_dir_all(doc.parent().expect("parent")).expect("mkdir");
+    fs::copy(repo_root().join("crates/acn-ctl/openapi.json"), &doc).expect("copy");
+    let run = xtask_at(dir.path(), &["docs-inventory"]);
+    assert!(run.ok(), "{}", run.json);
+    let fresh = xtask_at(dir.path(), &["docs-inventory", "--check"]);
+    assert!(fresh.ok(), "{}", fresh.json);
+    let page = fs::read_to_string(dir.path().join("docs/generated/ctl-api.md")).expect("page");
+    for needle in [
+        // A whole route row, statuses included.
+        "| POST | `/v1/shutdown` | `shutdown` | Finish the run in progress and stop (CTL-1). | `application/json` [`Empty`](#empty) | 200, 400, 413, 415, 421, 500 |",
+        "| POST | `/v1/runs` | `submit_run` |",
+        // Each response row, refusals included.
+        "| 202 | Accepted: queued | `application/json` [`Submitted`](#submitted) |",
+        "| 503 | Shutting down | `application/json` [`Refusal`](#refusal) |",
+        "`application/vnd.apache.parquet` string (binary)",
+        // Required and optional fields, nested ones, forms and constraints.
+        "| `kind` | `\"harness\"` \\| `\"generator\"` | yes |  |",
+        "| `workload` | string |  | harness: the workload file. |",
+        "| `opt.max_retries` | integer |  | minimum 0 |",
+        "| `scenario (form 2).hash` | string | yes | pattern `^[0-9a-f]{64}$`; A stored scenario (CTL-20). |",
+        "### Endpoint",
+        "Other fields are refused.",
+    ] {
+        assert!(page.contains(needle), "the page lacks `{needle}`\n{page}");
+    }
+    // A change to the document makes the page stale.
+    let text = fs::read_to_string(&doc).expect("read");
+    fs::write(&doc, text.replace("submit_run", "start_run")).expect("write");
+    let stale = xtask_at(dir.path(), &["docs-inventory", "--check"]);
+    assert!(!stale.ok(), "{}", stale.json);
+    assert!(
+        strings(&stale.json, "changed")
+            .iter()
+            .any(|f| f.ends_with("ctl-api.md")),
+        "{}",
+        stale.json
+    );
+    // A method the page does not render fails the task, rather than vanish.
+    fs::write(&doc, text.replace("\"post\": {", "\"patch\": {")).expect("write");
+    assert!(!xtask_at(dir.path(), &["docs-inventory"]).ok());
+    // A document that is not one fails the task.
+    fs::write(&doc, "{}").expect("write");
+    assert!(!xtask_at(dir.path(), &["docs-inventory"]).ok());
+    // Without the document there is no page.
+    fs::remove_file(&doc).expect("rm");
+    assert!(xtask_at(dir.path(), &["docs-inventory"]).ok());
+    assert!(!dir.path().join("docs/generated/ctl-api.md").exists());
+}
