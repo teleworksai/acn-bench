@@ -65,7 +65,7 @@ acn-bench/
   runs/           bundles (gitignored)
 ```
 
-Crate dependency direction (no cycles): `acn-trace` ← everything; `acn-emu` ← `acn-gen`, `acn-harness`, `acn-replay`; `acn-harness` ← `acn-gen`, which plugs into the harness's run path through a driver seam the harness defines (ADR-38; the harness never depends on `acn-gen`); `acn-ctl` ← all runtime crates; `acn-hyp`, `acn-attrib` ← `acn-trace` only; `acn-cli` ← all.
+Crate dependency direction (no cycles): `acn-trace` ← everything; `acn-emu` ← `acn-gen`, `acn-harness`, `acn-replay`; `acn-harness` ← `acn-gen`, which plugs into the harness's run path through a driver seam the harness defines (ADR-38; the harness never depends on `acn-gen`); `acn-ctl` ← all runtime crates; `acn-attrib` ← `acn-trace` only; `acn-hyp` ← `acn-trace` and `acn-attrib` without its `plots` feature, so only the frozen core is compiled in (SPEC 090 ATR-22; `acn-attrib` never depends on `acn-hyp`); `acn-cli` ← all.
 
 ## 4. The requirement-ID system
 

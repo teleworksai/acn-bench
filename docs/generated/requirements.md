@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 11 · IDs: 255 · MUSTs: 232 · implemented: 216 · cited: 233
+Specs: 12 · IDs: 272 · MUSTs: 247 · implemented: 216 · cited: 233
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -236,6 +236,23 @@ Specs: 11 · IDs: 255 · MUSTs: 232 · implemented: 216 · cited: 233
 | LOOP-21 | `085-feedback-loop.md` | 3 | MUST | no | — |
 | LOOP-30 | `085-feedback-loop.md` | 4 | MUST | no | — |
 | LOOP-31 | `085-feedback-loop.md` | 4 | MUST | no | — |
+| ATR-1 | `090-attribution.md` | 1 | MUST | no | — |
+| ATR-2 | `090-attribution.md` | 1 | MUST | no | — |
+| ATR-10 | `090-attribution.md` | 2 | MUST | no | — |
+| ATR-11 | `090-attribution.md` | 2 | — | no | — |
+| ATR-12 | `090-attribution.md` | 2 | — | no | — |
+| ATR-13 | `090-attribution.md` | 2 | MUST | no | — |
+| ATR-14 | `090-attribution.md` | 2 | MUST | no | — |
+| ATR-15 | `090-attribution.md` | 2 | MUST | no | — |
+| ATR-20 | `090-attribution.md` | 3 | MUST | no | — |
+| ATR-21 | `090-attribution.md` | 3 | MUST | no | — |
+| ATR-22 | `090-attribution.md` | 3 | MUST | no | — |
+| ATR-23 | `090-attribution.md` | 3 | MUST | no | — |
+| ATR-30 | `090-attribution.md` | 4 | MUST | no | — |
+| ATR-31 | `090-attribution.md` | 4 | MUST | no | — |
+| ATR-40 | `090-attribution.md` | 5 | MUST | no | — |
+| ATR-41 | `090-attribution.md` | 5 | MUST | no | — |
+| ATR-42 | `090-attribution.md` | 5 | MUST | no | — |
 | GATE-1 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found_alone` |
 | GATE-2 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found_alone` |
 | GATE-3 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found_alone` |
