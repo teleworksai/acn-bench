@@ -47,7 +47,10 @@ pub struct GenWritten {
 /// Run `cfg` into one bundle, its calls crossing `scenario`'s network when
 /// one is given (GEN-20).
 pub fn run(cfg: &GenConfig, scenario: Option<&Path>) -> Result<GenWritten, HarnessError> {
-    let text = std::fs::read_to_string(&cfg.sheet)
+    // One read: the bytes parsed are the bytes hashed (CON-27(a)).
+    let bytes = std::fs::read(&cfg.sheet)
+        .map_err(|e| HarnessError::Workload(format!("{}: {e}", cfg.sheet.display())))?;
+    let text = String::from_utf8(bytes.clone())
         .map_err(|e| HarnessError::Workload(format!("{}: {e}", cfg.sheet.display())))?;
     let profiles = match &cfg.profiles {
         Some(p) => p.clone(),
@@ -57,8 +60,7 @@ pub fn run(cfg: &GenConfig, scenario: Option<&Path>) -> Result<GenWritten, Harne
     };
     let sheet =
         Sheet::parse(&text, &profiles).map_err(|e| HarnessError::Workload(e.to_string()))?;
-    // CON-27(a): the sheet's bytes as read.
-    let hash = acn_trace::identity::file_hash(&cfg.sheet)?;
+    let hash = Digest::of(&bytes);
     let mut opts = cfg.opts.clone();
     // GEN-22: in `live` with no endpoint, the harness serves the mock (HAR-26).
     if cfg.mode == Mode::Live && opts.endpoint.is_empty() {

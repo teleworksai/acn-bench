@@ -71,15 +71,17 @@ impl GenDriver {
         self.calls.set(self.calls.get() + 1);
     }
 
-    /// The tools every call carries (GEN-11), in TRC-13's order.
-    fn tools(&self, with_subagent: bool) -> Vec<ToolDef> {
+    /// The tools every call carries (GEN-11), in TRC-13's order. Each
+    /// description starts with the replicate's isolation marker, as HAR-42
+    /// requires of every tool definition (ADR-38).
+    fn tools(&self, marker: &str, with_subagent: bool) -> Vec<ToolDef> {
         self.sheet
             .tool_classes()
             .into_iter()
             .filter(|c| with_subagent || *c != SUBAGENT)
             .map(|c| ToolDef {
                 name: tool_name(c),
-                description: format!("A {c} tool."),
+                description: format!("{marker} A {c} tool."),
                 parameters: serde_json_object(),
             })
             .collect()
@@ -153,8 +155,8 @@ impl Driver for GenDriver {
         let origin = rep.env.now();
         let mut system_rng = plan::system_stream(rep.seed).map_err(gen_err)?;
         let system = words(&mut system_rng, self.sheet.system_tokens);
-        let tools = self.tools(true);
-        let child_tools = self.tools(false);
+        let tools = self.tools(&rep.marker, true);
+        let child_tools = self.tools(&rep.marker, false);
         let shared = Shared {
             system: &system,
             tools: &tools,
@@ -364,20 +366,18 @@ impl GenDriver {
             let Some(tc) = reply.tool_calls.first().cloned() else {
                 continue;
             };
-            let content = if step.class == SUBAGENT {
-                match self
-                    .fan_out(rep, shared, k, t, &p.children, &c, &tc, &cx)
+            let (content, failed) = if step.class == SUBAGENT {
+                self.fan_out(rep, shared, &system, k, t, &p.children, &c, &tc, &cx)
                     .await?
-                {
-                    Some(r) => r,
-                    None => {
-                        aborted = true;
-                        break;
-                    }
-                }
             } else {
-                self.run_tool(rep, &tc, step, &mut text, c.index, &cx).await
+                (
+                    self.run_tool(rep, &tc, step, &mut text, c.index, &cx).await,
+                    false,
+                )
             };
+            // The tool call always gets its result, the sub-agents' partial
+            // answers when one of them failed, so no later call carries a
+            // tool call without one (ADR-38).
             lin.messages.push(Msg::ToolResult {
                 call_id: tc.id.clone(),
                 tool: tc.name.clone(),
@@ -385,6 +385,10 @@ impl GenDriver {
                 content,
             });
             lin.ordinal += 1;
+            if failed {
+                aborted = true;
+                break;
+            }
         }
         let outcome = if aborted { "aborted" } else { "success" };
         let span = cx.span();
@@ -437,19 +441,49 @@ impl GenDriver {
 
     /// GEN-12: the turn's sub-agents, spawned by its first tool call as HAR-5
     /// spawns them; their answers, joined in index order, are its result.
-    /// `None` when a sub-agent's call failed after its retries.
+    /// The result, and whether a sub-agent's call failed after its retries.
+    /// Sub-agents share the turn's system prompt, as the harness's do.
     #[allow(clippy::too_many_arguments)]
     async fn fan_out<E: Env>(
         &self,
         rep: &Replicate<'_, E>,
         shared: &Shared<'_>,
+        system: &str,
         k: u64,
         t: u64,
         children: &[Chain],
         spawning: &Called,
         tc: &ToolCall,
         turn_cx: &Cx,
-    ) -> Result<Option<String>, HarnessError> {
+    ) -> Result<(String, bool), HarnessError> {
+        // Every sub-agent's first context and its comparison bytes, before
+        // any span opens, so an error leaves no span open.
+        let mut firsts = Vec::with_capacity(children.len());
+        for (i, chain) in children.iter().enumerate() {
+            let c = (i as u64).saturating_add(1);
+            let mut text = plan::text_stream(rep.seed, k, t, c).map_err(gen_err)?;
+            let messages = vec![Msg::User {
+                text: words(&mut text, chain.user_tokens),
+            }];
+            let first = Self::context(
+                system.to_owned(),
+                shared.child_tools,
+                &messages,
+                ToolChoice::Forbid,
+            );
+            let child_bytes = rep.compared(&first)?;
+            // As the harness counts it: by the spawning call's tokens when it
+            // reported them, else by whole 4-byte tokens (TRC-14).
+            let basis = spawning
+                .input_tokens
+                .unwrap_or_else(|| (spawning.compared.len() as u64).div_ceil(4));
+            let shared_tokens = rep.shared_tokens(
+                &spawning.compared,
+                &child_bytes,
+                (basis, spawning.compared.len()),
+            );
+            firsts.push((chain, text, messages, shared_tokens));
+        }
         let start = rep.env.now();
         let tool_span = rep
             .tracer
@@ -466,26 +500,8 @@ impl GenDriver {
             .start_with_context(rep.tracer, turn_cx);
         let tool_cx = turn_cx.with_span(tool_span);
         let width = children.len() as u64;
-        let system = rep.system(shared.system, start);
-        let mut runs = Vec::with_capacity(children.len());
-        for (i, chain) in children.iter().enumerate() {
-            let c = (i as u64).saturating_add(1);
-            let mut text = plan::text_stream(rep.seed, k, t, c).map_err(gen_err)?;
-            let messages = vec![Msg::User {
-                text: words(&mut text, chain.user_tokens),
-            }];
-            let first = Self::context(
-                system.clone(),
-                shared.child_tools,
-                &messages,
-                ToolChoice::Forbid,
-            );
-            let child_bytes = rep.compared(&first)?;
-            let shared_tokens = rep.shared_tokens(
-                &spawning.compared,
-                &child_bytes,
-                (spawning.input_tokens.unwrap_or(0), spawning.compared.len()),
-            );
+        let mut runs = Vec::with_capacity(firsts.len());
+        for (chain, text, messages, shared_tokens) in firsts {
             let span = rep
                 .tracer
                 .span_builder("invoke_agent")
@@ -509,7 +525,7 @@ impl GenDriver {
             runs.push(self.sub_agent(
                 rep,
                 shared,
-                system.clone(),
+                system.to_owned(),
                 chain,
                 messages,
                 state,
@@ -532,7 +548,7 @@ impl GenDriver {
             int(result.len() as u64),
         ));
         span.end_with_timestamp(at(rep.env.now()));
-        Ok((!failed).then_some(result))
+        Ok((result, failed))
     }
 
     /// One sub-agent's chain (GEN-12): its tool calls, then its answer, on
