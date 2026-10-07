@@ -76,7 +76,8 @@ pub fn scenario_dir(ctl: &Path, hash: &str) -> PathBuf {
     ctl.join("scenarios").join(hash)
 }
 
-/// A stored scenario's file: the one TOML in its directory.
+/// A stored scenario's file: the one TOML in its directory, whose bytes
+/// still have their hash (CTL-20).
 pub fn stored_scenario(ctl: &Path, hash: &str) -> Result<PathBuf, Refusal> {
     let unknown = || {
         Refusal::new(
@@ -97,7 +98,12 @@ pub fn stored_scenario(ctl: &Path, hash: &str) -> Result<PathBuf, Refusal> {
         .collect();
     tomls.sort();
     match tomls.as_slice() {
-        [one] => Ok(one.clone()),
+        [one] if hash_file(one).ok().as_deref() == Some(hash) => Ok(one.clone()),
+        [_] => Err(Refusal::new(
+            409,
+            "input_changed",
+            format!("stored scenario {hash} no longer has its hash (CTL-20)"),
+        )),
         _ => Err(unknown()),
     }
 }
@@ -142,6 +148,12 @@ pub fn resolve(root: &Path, ctl: &Path, r: &Submit) -> Result<Resolved, Refusal>
     r.validate()?;
     let mut request = r.clone();
     request.retry = false;
+    // CON-27(c): −0 is written as 0.
+    if let Some(f) = request.opt.stall_threshold_ms
+        && f == 0.0
+    {
+        request.opt.stall_threshold_ms = Some(0.0);
+    }
     let mut hashes = BTreeMap::new();
     let take = |p: &mut String, hashes: &mut BTreeMap<String, String>| -> Result<(), Refusal> {
         let (abs, rel) = inside(root, p)?;

@@ -72,8 +72,11 @@ fn request(seed: &str) -> Submit {
 /// Cites: CTL-11
 #[test]
 fn a_request_id_is_the_hash_of_its_context_and_canonical_bytes() {
+    // CON-27(d): the first vector of a preimage carries a float.
+    let mut q = request("7");
+    q.opt.stall_threshold_ms = Some(2000.0);
     let r = Resolved {
-        request: request("7"),
+        request: q,
         hashes: BTreeMap::from([("w.toml".into(), "ab".repeat(32))]),
         endpoint_url: None,
     };
@@ -84,7 +87,7 @@ fn a_request_id_is_the_hash_of_its_context_and_canonical_bytes() {
         concat!(
             r#"{"hashes":{"w.toml":"abababababababababababababababababababababababababababababababab"},"#,
             r#""request":{"arm":"treatment","backend":"mockllm","kind":"harness","mode":"sim","#,
-            r#""model":"mock-auto","opt":{},"replicates":1,"seed":"7","vary":{},"workload":"w.toml"}}"#,
+            r#""model":"mock-auto","opt":{"stall_threshold_ms":2000.0},"replicates":1,"seed":"7","vary":{},"workload":"w.toml"}}"#,
             "\n"
         )
     );
@@ -96,7 +99,7 @@ fn a_request_id_is_the_hash_of_its_context_and_canonical_bytes() {
 }
 
 /// The known-answer `request_id` of the request above (CON-27(d)).
-const KAV: &str = "bbfa01752a676db886444e883e51cbe6c423390e157ca6dfcd606ae87820b4a0";
+const KAV: &str = "bfc5ccd88f792389eed70ed190617fdc41d5936c729f64b36a3d0ff7631207af";
 
 /// Cites: CTL-13, CTL-12
 #[test]
@@ -225,7 +228,7 @@ fn an_existing_bundle_is_adopted_and_a_failed_request_reruns_only_on_retry() {
     let out = ctl.run_next().unwrap().status;
     assert_eq!(out.state, State::Done, "{out:?}");
     assert_eq!(out.reused, Some(false));
-    assert!(out.seq > 2);
+    assert_eq!(out.seq, 3);
 }
 
 /// Cites: CTL-10, CTL-1
@@ -278,4 +281,284 @@ fn paths_outside_the_workspace_bad_fields_and_protected_runs_dirs_are_refused() 
         .unwrap();
         assert_eq!(e.code, "runs_dir_refused", "{bad}");
     }
+}
+
+/// Whether `cond` holds within a minute, looking every 10 ms. A channel that
+/// never receives does the waiting: `std::thread::sleep` is banned (CON-5).
+fn wait(cond: impl Fn() -> bool) -> bool {
+    let (_tx, rx) = std::sync::mpsc::channel::<()>();
+    for _ in 0..6000 {
+        if cond() {
+            return true;
+        }
+        let _ = rx.recv_timeout(std::time::Duration::from_millis(10));
+    }
+    cond()
+}
+
+fn status_path(dir: &Path, id: &str) -> std::path::PathBuf {
+    dir.join("runs/ctl/requests").join(id).join("status.json")
+}
+
+fn set_state(dir: &Path, id: &str, state: &str) {
+    let sp = status_path(dir, id);
+    let mut st: serde_json::Value = serde_json::from_slice(&std::fs::read(&sp).unwrap()).unwrap();
+    st["state"] = state.into();
+    std::fs::write(&sp, serde_json::to_vec(&st).unwrap()).unwrap();
+}
+
+/// Cites: CTL-11
+#[test]
+fn a_restart_requeues_in_seq_order_and_handles_broken_requests() {
+    let (dir, ctl) = workspace();
+    // Ids in submission order, whatever their hex order.
+    let ids: Vec<String> = ["5", "1", "9", "3"]
+        .iter()
+        .map(|s| ctl.submit(&request(s)).unwrap().request_id)
+        .collect();
+    let mut hex = ids.clone();
+    hex.sort();
+    assert_ne!(hex, ids, "pick seeds whose ids are not in submission order");
+    // A request whose status was never written: queued last.
+    std::fs::remove_file(status_path(dir.path(), &ids[1])).unwrap();
+    // A directory with no request in it: removed.
+    let stray = dir.path().join("runs/ctl/requests").join("ef".repeat(32));
+    std::fs::create_dir_all(&stray).unwrap();
+    // A request whose bytes are not its id's: failed, not run.
+    let bad = &ids[2];
+    std::fs::write(
+        dir.path()
+            .join("runs/ctl/requests")
+            .join(bad)
+            .join("request.json"),
+        b"{}",
+    )
+    .unwrap();
+    drop(ctl);
+    let ctl = open(dir.path());
+    assert!(!stray.exists());
+    let ran: Vec<String> = std::iter::from_fn(|| ctl.run_next())
+        .map(|o| o.request_id)
+        .collect();
+    assert_eq!(ran, [ids[0].clone(), ids[3].clone(), ids[1].clone()]);
+    let st: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(status_path(dir.path(), bad)).unwrap()).unwrap();
+    assert_eq!(st["state"], "failed");
+    assert_eq!(st["code"], "internal");
+}
+
+/// Cites: CTL-11
+#[test]
+fn a_restart_keeps_a_bundle_that_verifies() {
+    let (dir, ctl) = workspace();
+    let a = ctl.submit(&request("7")).unwrap().request_id;
+    let run_id = ctl.run_next().unwrap().status.run_id.unwrap();
+    set_state(dir.path(), &a, "running");
+    drop(ctl);
+    let ctl = open(dir.path());
+    let (_, st) = ctl.get(&a).unwrap();
+    assert_eq!(st.code.as_deref(), Some("interrupted"));
+    assert!(
+        dir.path()
+            .join("runs")
+            .join(&run_id)
+            .join("manifest.json")
+            .exists()
+    );
+    // A retry adopts it.
+    let mut r = request("7");
+    r.retry = true;
+    ctl.submit(&r).unwrap();
+    let out = ctl.run_next().unwrap().status;
+    assert_eq!((out.state, out.reused), (State::Done, Some(true)));
+}
+
+/// Cites: CTL-12, CTL-13
+#[test]
+fn the_worker_runs_one_at_a_time_refuses_a_retry_while_running_and_stops() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    let (dir, _) = workspace();
+    let now = Arc::new(AtomicUsize::new(0));
+    let most = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(Mutex::new(()));
+    let (n, m, g) = (now.clone(), most.clone(), gate.clone());
+    let ctl = open(dir.path()).with_before_run(Arc::new(move || {
+        let k = n.fetch_add(1, Ordering::SeqCst) + 1;
+        m.fetch_max(k, Ordering::SeqCst);
+        drop(g.lock().unwrap());
+        n.fetch_sub(1, Ordering::SeqCst);
+    }));
+    let held = gate.lock().unwrap();
+    let a = ctl.submit(&request("1")).unwrap().request_id;
+    ctl.submit(&request("2")).unwrap();
+    // Two workers on one registry: runs still never overlap.
+    let w1 = std::thread::spawn({
+        let c = ctl.clone();
+        move || c.work()
+    });
+    let w2 = std::thread::spawn({
+        let c = ctl.clone();
+        move || c.work()
+    });
+    // While the first runs, a retry of it is refused.
+    assert!(
+        wait(|| ctl.get(&a).unwrap().1.state == State::Running),
+        "the first request never started"
+    );
+    let mut retry = request("1");
+    retry.retry = true;
+    assert_eq!(ctl.submit(&retry).unwrap_err().status, 409);
+    drop(held);
+    assert!(
+        wait(|| ctl.list().unwrap().iter().all(|(_, s)| *s == State::Done)),
+        "{:?}",
+        ctl.list().unwrap()
+    );
+    ctl.stop();
+    w1.join().unwrap();
+    w2.join().unwrap();
+    assert_eq!(most.load(Ordering::SeqCst), 1, "two runs overlapped");
+    // After stopping, submissions are refused.
+    assert_eq!(ctl.submit(&request("3")).unwrap_err().status, 503);
+}
+
+/// Cites: CTL-12
+#[test]
+fn a_run_that_panics_fails_its_request_and_nothing_else() {
+    let (dir, _) = workspace();
+    let ctl = open(dir.path()).with_before_run(std::sync::Arc::new(|| panic!("boom")));
+    ctl.submit(&request("7")).unwrap();
+    let out = ctl.run_next().unwrap().status;
+    assert_eq!(out.state, State::Failed);
+    assert_eq!(out.code.as_deref(), Some("internal"));
+    // The next request still runs on a registry without the hook.
+    drop(ctl);
+    let ctl = open(dir.path());
+    ctl.submit(&request("8")).unwrap();
+    assert_eq!(ctl.run_next().unwrap().status.state, State::Done);
+}
+
+/// Cites: CTL-10, CTL-30
+#[test]
+fn a_named_endpoint_resolves_to_its_url_and_must_match_the_backend() {
+    let (dir, ctl) = workspace();
+    let eps = dir.path().join("runs/ctl/endpoints");
+    std::fs::create_dir_all(&eps).unwrap();
+    std::fs::write(
+        eps.join("mock.json"),
+        r#"{"backend":"mockllm","url":"acn-mock://loopback"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        eps.join("oai.json"),
+        r#"{"backend":"openai","url":"https://api.example.com"}"#,
+    )
+    .unwrap();
+    let mut r = request("7");
+    r.mode = "live".into();
+    r.opt.endpoint_name = Some("mock".into());
+    let id = ctl.submit(&r).unwrap().request_id;
+    let (resolved, _) = ctl.get(&id).unwrap();
+    assert_eq!(
+        resolved.endpoint_url.as_deref(),
+        Some("acn-mock://loopback")
+    );
+    r.opt.endpoint_name = Some("oai".into());
+    assert_eq!(ctl.submit(&r).unwrap_err().code, "backend_mismatch");
+    r.opt.endpoint_name = Some("nope".into());
+    let e = ctl.submit(&r).unwrap_err();
+    assert_eq!((e.status, e.code), (404, "unknown_endpoint"));
+    // A generator runs on the mock: a provider's endpoint is a mismatch.
+    std::fs::write(dir.path().join("s.toml"), SHEET).unwrap();
+    let mut g = generator("7");
+    g.opt.endpoint_name = Some("oai".into());
+    assert_eq!(ctl.submit(&g).unwrap_err().code, "backend_mismatch");
+}
+
+const SHEET: &str = r#"schema_version = 1
+placeholder = true
+doc = "a small sheet"
+model = "mock-agentic"
+sessions = 1
+system_tokens = 20
+summary_instruction_tokens = 4
+summary_max_tokens = 8
+compact_at_tokens = 0
+session_start_ns = { const = 0 }
+turns_per_session = { const = 1 }
+think_time_ns = { const = 0 }
+chain_length = { const = 1 }
+fanout_width = { const = 0 }
+user_tokens = { const = 5 }
+answer_tokens = { const = 8 }
+tool_class = { weighted = [["file", 1]] }
+
+[tool_result_tokens]
+file = { const = 10 }
+
+[tool_duration_ns]
+file = { const = 1_000_000 }
+"#;
+
+fn generator(seed: &str) -> Submit {
+    Submit {
+        kind: Kind::Generator,
+        workload: None,
+        backend: None,
+        model: None,
+        sheet: Some("s.toml".into()),
+        ..request(seed)
+    }
+}
+
+/// Cites: CTL-10, CTL-13
+#[test]
+fn a_generator_request_and_a_stored_scenario_run_through_the_registry() {
+    let (dir, ctl) = workspace();
+    std::fs::write(dir.path().join("s.toml"), SHEET).unwrap();
+    let out = {
+        ctl.submit(&generator("7")).unwrap();
+        ctl.run_next().unwrap().status
+    };
+    assert_eq!(out.state, State::Done, "{out:?}");
+    // A stored scenario, named by the hash of its bytes.
+    let toml = "schema_version = 1\nname = \"p\"\n\n[[link]]\nname = \"p\"\ndirection = \"up\"\n\n[[link]]\nname = \"p\"\ndirection = \"down\"\n";
+    let hash = blake3::hash(toml.as_bytes()).to_hex().to_string();
+    let sd = dir.path().join("runs/ctl/scenarios").join(&hash);
+    std::fs::create_dir_all(&sd).unwrap();
+    std::fs::write(sd.join("p.toml"), toml).unwrap();
+    let mut r = request("7");
+    r.scenario = Some(acn_ctl::ScenarioRef::Hash(acn_ctl::request::ByHash {
+        hash: hash.clone(),
+    }));
+    ctl.submit(&r).unwrap();
+    let out = ctl.run_next().unwrap().status;
+    assert_eq!(out.state, State::Done, "{out:?}");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(
+            dir.path()
+                .join("runs")
+                .join(out.run_id.unwrap())
+                .join("manifest.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["scenario_hash"], hash);
+    r.scenario = Some(acn_ctl::ScenarioRef::Hash(acn_ctl::request::ByHash {
+        hash: "0".repeat(64),
+    }));
+    let e = ctl.submit(&r).unwrap_err();
+    assert_eq!((e.status, e.code), (404, "unknown_scenario"));
+}
+
+/// Cites: CTL-10
+#[test]
+fn a_seed_has_one_text() {
+    let (_dir, ctl) = workspace();
+    assert_eq!(ctl.submit(&request("007")).unwrap_err().code, "bad_request");
+    let mut r = request("7");
+    r.opt.stall_threshold_ms = Some(-1.0);
+    assert_eq!(ctl.submit(&r).unwrap_err().code, "bad_request");
 }

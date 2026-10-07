@@ -123,11 +123,15 @@ impl Submit {
         match (&self.hypothesis, &self.seed) {
             (Some(_), None) => {}
             (None, Some(s)) => {
+                // CON-27(c): decimal with no leading zero, so one seed has one text.
                 let ok = !s.is_empty()
                     && s.bytes().all(|b| b.is_ascii_digit())
+                    && (s == "0" || !s.starts_with('0'))
                     && s.parse::<u64>().is_ok_and(|v| v <= i64::MAX as u64);
                 if !ok {
-                    return bad("`seed` is a decimal string from 0 to 2^63 - 1");
+                    return bad(
+                        "`seed` is a decimal string from 0 to 2^63 - 1, with no leading zero",
+                    );
                 }
             }
             _ => return bad("give exactly one of `hypothesis` and `seed`"),
@@ -150,9 +154,9 @@ impl Submit {
             return bad("give `endpoint` or `endpoint_name`, not both");
         }
         if let Some(f) = self.opt.stall_threshold_ms
-            && !f.is_finite()
+            && !(f.is_finite() && f >= 0.0)
         {
-            return bad("`stall_threshold_ms` must be finite");
+            return bad("`stall_threshold_ms` must be finite and not negative");
         }
         Ok(())
     }

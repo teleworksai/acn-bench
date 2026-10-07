@@ -94,6 +94,10 @@ struct Inner {
     stopping: AtomicBool,
     run_ids: Mutex<BTreeSet<String>>,
     fault: AtomicBool,
+    /// Held across every run: one at a time, whoever calls (CTL-12).
+    exec: Mutex<()>,
+    /// Called on the run's thread before it runs; tests use it.
+    before_run: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 /// The control plane's registry and worker (CTL-11 to CTL-13).
@@ -126,6 +130,7 @@ fn code_of(e: &HarnessError) -> &'static str {
         HarnessError::BackendMismatch(_) => "backend_mismatch",
         HarnessError::Backend(_) => "backend",
         HarnessError::Env(_) => "preflight",
+        HarnessError::Identity(_) => "config",
         HarnessError::Bundle(_) => "bundle",
         _ => "internal",
     }
@@ -144,29 +149,48 @@ impl Ctl {
     /// `seq`.
     pub fn open(cfg: CtlConfig) -> Result<Self, Refusal> {
         let root = std::fs::canonicalize(&cfg.root).map_err(Refusal::internal)?;
-        let rel = cfg.runs_dir.to_string_lossy().replace('\\', "/");
-        let rel_path = Path::new(&rel);
-        if rel_path.is_absolute()
-            || rel_path
-                .components()
-                .any(|c| !matches!(c, std::path::Component::Normal(_)))
-            || PROTECTED
-                .iter()
-                .any(|p| rel == *p || rel.starts_with(&format!("{p}/")))
-        {
-            return Err(Refusal::bad(
+        let rel = cfg.runs_dir.clone();
+        let refuse = || {
+            Refusal::bad(
                 "runs_dir_refused",
                 format!(
-                    "--runs-dir `{rel}` must lie inside the workspace and outside its protected paths (CTL-1, LOOP-20)"
+                    "--runs-dir `{}` must lie inside the workspace and outside its protected paths (CTL-1, LOOP-20)",
+                    rel.display()
                 ),
-            ));
+            )
+        };
+        if rel.as_os_str().is_empty()
+            || rel.is_absolute()
+            || rel
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(refuse());
         }
-        let runs = root.join(rel_path);
+        std::fs::create_dir_all(root.join(&rel)).map_err(Refusal::internal)?;
+        // Canonical, so a link or `.` cannot hide where it lies.
+        let runs = std::fs::canonicalize(root.join(&rel)).map_err(Refusal::internal)?;
+        let Ok(under) = runs.strip_prefix(&root) else {
+            return Err(refuse());
+        };
+        let parts: Vec<String> = under
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+            .collect();
+        let protected = parts.is_empty()
+            || PROTECTED.iter().any(|p| {
+                let pp: Vec<&str> = p.split('/').collect();
+                parts.len() >= pp.len() && parts.iter().zip(&pp).all(|(a, b)| a == b)
+            });
+        if protected {
+            return Err(refuse());
+        }
         let ctl = runs.join("ctl");
         std::fs::create_dir_all(ctl.join("requests")).map_err(Refusal::internal)?;
         let mut statuses = BTreeMap::new();
         let mut queued: Vec<(u64, String)> = Vec::new();
         let mut orphans: Vec<String> = Vec::new();
+        let mut broken: Vec<(String, Status)> = Vec::new();
         let mut next = 0u64;
         for e in std::fs::read_dir(ctl.join("requests")).map_err(Refusal::internal)? {
             let e = e.map_err(Refusal::internal)?;
@@ -174,16 +198,34 @@ impl Ctl {
             if !resolve::is_hex64(&id) {
                 continue;
             }
-            let sp = e.path().join("status.json");
-            match std::fs::read(&sp)
+            // A request whose file is missing or is not its id's is not a
+            // request (CTL-11).
+            let sound = std::fs::read(e.path().join("request.json"))
                 .ok()
-                .and_then(|b| serde_json::from_slice::<Status>(&b).ok())
-            {
-                Some(st) => {
+                .is_some_and(|b| request_id_of(&b) == id);
+            let sp = e.path().join("status.json");
+            let st = std::fs::read(&sp)
+                .ok()
+                .and_then(|b| serde_json::from_slice::<Status>(&b).ok());
+            match (sound, st) {
+                (true, Some(st)) => {
                     next = next.max(st.seq + 1);
                     statuses.insert(id, st);
                 }
-                None => orphans.push(id),
+                (true, None) => orphans.push(id),
+                (false, Some(mut st)) => {
+                    next = next.max(st.seq + 1);
+                    if !matches!(st.state, State::Done | State::Failed) {
+                        st.state = State::Failed;
+                        st.code = Some("internal".into());
+                        st.error = Some("request.json is missing or does not match its id".into());
+                        st.ended_at = Some(now());
+                    }
+                    broken.push((id, st));
+                }
+                (false, None) => {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
             }
         }
         let c = Self {
@@ -197,6 +239,8 @@ impl Ctl {
                 stopping: AtomicBool::new(false),
                 run_ids: Mutex::new(BTreeSet::new()),
                 fault: AtomicBool::new(false),
+                exec: Mutex::new(()),
+                before_run: None,
             }),
         };
         for (id, mut st) in statuses {
@@ -222,6 +266,10 @@ impl Ctl {
             }
             c.lock_statuses()?.insert(id, st);
         }
+        for (id, st) in broken {
+            c.write_status(&id, &st)?;
+            c.lock_statuses()?.insert(id, st);
+        }
         // A request written without its status: queued, last.
         orphans.sort();
         for id in orphans {
@@ -245,6 +293,17 @@ impl Ctl {
         queued.sort();
         c.lock_queue()?.extend(queued.into_iter().map(|(_, id)| id));
         Ok(c)
+    }
+
+    /// Call `f` on each run's thread before it runs. For tests: a hook that
+    /// panics stands for a run that does.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_before_run(mut self, f: Arc<dyn Fn() + Send + Sync>) -> Self {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.before_run = Some(f);
+        }
+        self
     }
 
     fn lock_statuses(
@@ -315,8 +374,8 @@ impl Ctl {
         if let Some(st) = statuses.get(&id).cloned() {
             return match (st.state, r.retry) {
                 (State::Failed, true) => {
+                    // Under the lock: two retries queue it once (CTL-13).
                     let seq = statuses.values().map(|s| s.seq + 1).max().unwrap_or(0);
-                    drop(statuses);
                     let st = Status {
                         seq,
                         state: State::Queued,
@@ -329,7 +388,9 @@ impl Ctl {
                         started_at: None,
                         ended_at: None,
                     };
-                    self.set(&id, st)?;
+                    self.write_status(&id, &st)?;
+                    statuses.insert(id.clone(), st);
+                    drop(statuses);
                     self.enqueue(&id)?;
                     Ok(Submitted {
                         request_id: id,
@@ -362,8 +423,14 @@ impl Ctl {
                 f.write_all(text.as_bytes()).map_err(Refusal::internal)?;
                 f.sync_all().map_err(Refusal::internal)?;
             }
-            // Written by an earlier call that stopped before its status.
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            // Written by an earlier call that stopped before its status:
+            // kept if whole, written again if not.
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let path = dir.join("request.json");
+                if std::fs::read(&path).ok().as_deref() != Some(text.as_bytes()) {
+                    replace(&path, text.as_bytes()).map_err(Refusal::internal)?;
+                }
+            }
             Err(e) => return Err(Refusal::internal(e)),
         }
         let st = Status {
@@ -457,6 +524,8 @@ impl Ctl {
     /// Stop taking requests; the worker finishes the run in progress, and
     /// queued requests stay queued (CTL-21).
     pub fn stop(&self) {
+        // Under the queue's lock, so a worker about to wait cannot miss it.
+        let _q = self.inner.queue.lock();
         self.inner.stopping.store(true, Ordering::SeqCst);
         self.inner.ready.notify_all();
     }
@@ -592,12 +661,26 @@ impl Ctl {
         Ok((c, scenario))
     }
 
-    /// Run request `id` (CTL-12, CTL-13).
+    /// Run request `id` (CTL-12, CTL-13), one at a time whoever calls.
+    #[allow(clippy::too_many_lines)]
     fn execute(&self, id: &str) {
+        let Ok(_one) = self.inner.exec.lock() else {
+            return;
+        };
         let (r, mut st) = match self.get(id) {
             Ok(x) => x,
             Err(e) => {
-                tracing::error!(request = id, "{e}");
+                // A request that cannot be read fails, rather than staying
+                // queued.
+                if let Some(st) = self
+                    .inner
+                    .statuses
+                    .lock()
+                    .ok()
+                    .and_then(|m| m.get(id).cloned())
+                {
+                    self.fail(id, st, "internal", e.to_string());
+                }
                 return;
             }
         };
@@ -626,6 +709,45 @@ impl Ctl {
             Ok(p) => p,
             Err(e) => return self.fail(id, st, code_of(&e), e.to_string()),
         };
+        // The plan read the inputs again: they must be the ones resolved.
+        let q = &r.request;
+        let input = q.workload.as_ref().or(q.sheet.as_ref());
+        let mut expected: Vec<(&str, Option<String>, Digest)> = vec![(
+            "workload",
+            input.and_then(|p| r.hashes.get(p).cloned()),
+            planned.workload_hash,
+        )];
+        if let Some(h) = &q.hypothesis {
+            expected.push((
+                "hypothesis",
+                r.hashes.get(h).cloned(),
+                planned.hypothesis_hash,
+            ));
+        }
+        match &q.scenario {
+            Some(ScenarioRef::Path(p)) => {
+                expected.push((
+                    "scenario",
+                    r.hashes.get(&p.path).cloned(),
+                    planned.scenario_hash,
+                ));
+            }
+            Some(ScenarioRef::Hash(h)) => {
+                expected.push(("scenario", Some(h.hash.clone()), planned.scenario_hash));
+            }
+            None => {}
+        }
+        if let Some((what, _, _)) = expected
+            .iter()
+            .find(|(_, want, got)| want.as_deref() != Some(got.to_hex().as_str()))
+        {
+            return self.fail(
+                id,
+                st,
+                "input_changed",
+                format!("the {what} the run read is not the one resolved (CTL-12)"),
+            );
+        }
         // CTL-13: an existing bundle is adopted when it verifies.
         if planned.dir.exists() {
             return match acn_trace::bundle::verify(&planned.dir) {
@@ -642,27 +764,66 @@ impl Ctl {
         }
         // A run builds its own runtime, so it runs on a thread of its own;
         // a panic there fails the request and nothing else (CTL-12).
+        let hook = self.inner.before_run.clone();
         let ran = std::thread::Builder::new()
             .name("acn-ctl-run".into())
-            .spawn(move || match config {
-                Config::Harness(c) => acn_harness::run::run_with_scenario(&c, scenario.as_deref()),
-                Config::Generator(c) => {
-                    acn_gen::run::run(&c, scenario.as_deref()).map(|w| w.written)
+            .spawn(move || {
+                if let Some(h) = hook {
+                    h();
+                }
+                match config {
+                    Config::Harness(c) => {
+                        acn_harness::run::run_with_scenario(&c, scenario.as_deref())
+                    }
+                    Config::Generator(c) => {
+                        acn_gen::run::run(&c, scenario.as_deref()).map(|w| w.written)
+                    }
                 }
             })
             .map_err(|e| e.to_string())
             .and_then(|h| h.join().map_err(|_| "the run panicked".to_owned()));
         match ran {
-            Ok(Ok(w)) => self.done(id, st, &w.run_id, &w.bundle_digest, false),
+            Ok(Ok(w)) if w.run_id == planned.run_id => {
+                self.done(id, st, &w.run_id, &w.bundle_digest, false);
+            }
+            Ok(Ok(w)) => self.fail(
+                id,
+                st,
+                "internal",
+                format!(
+                    "the run made {}, not the planned {} (CON-29)",
+                    w.run_id.to_hex(),
+                    planned.run_id.to_hex()
+                ),
+            ),
             // Made by someone else since the plan: adopt it if it verifies.
-            Ok(Err(HarnessError::Bundle(acn_trace::bundle::BundleError::Refused(_)))) => {
-                match acn_trace::bundle::verify(&planned.dir) {
-                    Ok(v) => self.done(id, st, &planned.run_id, &v.bundle_digest, true),
-                    Err(e) => self.fail(id, st, "bundle_invalid", e.to_string()),
+            Ok(Err(HarnessError::Bundle(acn_trace::bundle::BundleError::Refused(m)))) => {
+                if planned.dir.exists() {
+                    match acn_trace::bundle::verify(&planned.dir) {
+                        Ok(v) => self.done(id, st, &planned.run_id, &v.bundle_digest, true),
+                        Err(e) => self.fail(id, st, "bundle_invalid", e.to_string()),
+                    }
+                } else {
+                    self.fail(id, st, "bundle", m);
                 }
             }
             Ok(Err(e)) => self.fail(id, st, code_of(&e), e.to_string()),
-            Err(e) => self.fail(id, st, "internal", e),
+            Err(e) => {
+                // The run did not clean up after itself (HAR-23): its
+                // unfinished bundle would refuse every retry.
+                if planned.dir.exists() && acn_trace::bundle::verify(&planned.dir).is_err() {
+                    let _ = std::fs::remove_dir_all(&planned.dir);
+                }
+                self.fail(id, st, "internal", e);
+            }
         }
     }
+}
+
+/// The `request_id` of `request.json`'s bytes (CTL-11).
+fn request_id_of(bytes: &[u8]) -> String {
+    let mut h = blake3::Hasher::new();
+    h.update(resolve::REQUEST_CONTEXT);
+    h.update(bytes);
+    h.finalize().to_hex().to_string()
 }

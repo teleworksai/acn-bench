@@ -59,3 +59,14 @@ SPEC 070 was "to write". T14 asks for an axum HTTP/JSON API to create scenarios,
   - `trace-scope.toml` now lists SPEC 050's GEN ids and SPEC 070's CTL-10 to CTL-13.
   - It also lists the ids already implemented by T11b and T13 that it had missed: LOOP-12, LOOP-16 and HAR-26.
   - All were already cited by tests; trace-check had not required them.
+- **After review (PR 57).**
+  - **One run at a time, whoever calls.** An execution lock is held across every run, so two workers, or a worker and `run_next`, never overlap. `stop()` takes the queue's lock, so a worker about to wait cannot miss it.
+  - **Retries.** A retry is queued under the registry's lock, so two concurrent retries queue it once.
+  - **Request files.** On opening, a request whose `request.json` is missing or is not its id's bytes is dropped when it has no status, and failed with `internal` when it has one. A resubmission rewrites a partial file. A request that cannot be read when its turn comes fails instead of staying queued.
+  - **The plan's inputs.** The planned workload, hypothesis and scenario hashes must be the resolved ones, and a stored scenario's file must still have its hash; otherwise `input_changed`. A run that makes another `run_id` than planned is an internal fault. A refusal that is not an existing directory is reported as itself.
+  - **A crashed run.** A run that panicked did not clean up after itself (HAR-23). Its unfinished bundle is removed, so a retry can run.
+  - **The runs directory.** It is checked after canonicalizing, so neither a link nor a `.` hides a protected path. The comparison ignores case, for case-insensitive file systems. An empty path is refused.
+  - **One writer.** The control plane assumes it is the only process writing its runs directory while it runs. A restart removes an unfinished bundle at a `running` request's run_id, which would also remove a CLI run in progress there. Run the CLI into another runs directory, or stop the server first.
+  - **Canonical values.** A seed has no leading zero, and a stall threshold is not negative; −0 is written 0 (CON-27(c)). The known-answer vector carries the one float, as CON-27(d) asks.
+  - **Adopting another build's bundle** is a reuse, not a mismatch: the build is not part of `run_id` (CON-31), and HYP-20 still refuses a set that mixes builds within one mode.
+  - An identity error from a request's input maps to `config`.

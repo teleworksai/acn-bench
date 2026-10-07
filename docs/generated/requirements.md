@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 11 · IDs: 255 · MUSTs: 232 · implemented: 207 · cited: 225
+Specs: 11 · IDs: 255 · MUSTs: 232 · implemented: 207 · cited: 226
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -186,16 +186,16 @@ Specs: 11 · IDs: 255 · MUSTs: 232 · implemented: 207 · cited: 225
 | CTL-1 | `070-control-plane.md` | 1 | MUST | no | `crates/acn-ctl/tests/registry.rs` `paths_outside_the_workspace_bad_fields_and_protected_runs_dirs_are_refused` |
 | CTL-2 | `070-control-plane.md` | 1 | MUST | no | — |
 | CTL-3 | `070-control-plane.md` | 1 | MUST | no | — |
-| CTL-10 | `070-control-plane.md` | 2 | MUST | yes | `crates/acn-ctl/tests/registry.rs` `paths_outside_the_workspace_bad_fields_and_protected_runs_dirs_are_refused` |
-| CTL-11 | `070-control-plane.md` | 2 | MUST | yes | `crates/acn-ctl/tests/registry.rs` `a_request_id_is_the_hash_of_its_context_and_canonical_bytes`<br>`crates/acn-ctl/tests/registry.rs` `an_edited_input_is_a_new_request_and_an_edit_after_submission_fails`<br>`crates/acn-ctl/tests/registry.rs` `a_restart_marks_an_unfinished_run_interrupted_and_requeues_the_rest` |
-| CTL-12 | `070-control-plane.md` | 2 | MUST | yes | `crates/acn-ctl/tests/registry.rs` `a_request_runs_once_and_a_resubmission_returns_its_status`<br>`crates/acn-ctl/tests/registry.rs` `an_edited_input_is_a_new_request_and_an_edit_after_submission_fails`<br>`crates/acn-ctl/tests/registry.rs` `requests_run_in_submission_order` |
-| CTL-13 | `070-control-plane.md` | 2 | MUST | yes | `crates/acn-ctl/tests/registry.rs` `a_request_runs_once_and_a_resubmission_returns_its_status`<br>`crates/acn-ctl/tests/registry.rs` `an_existing_bundle_is_adopted_and_a_failed_request_reruns_only_on_retry`<br>`crates/acn-gen/tests/plan_run.rs` `a_plans_run_id_is_its_runs_in_sim_and_live`<br>`crates/acn-harness/tests/plan.rs` `a_plans_run_id_is_its_runs_in_sim_with_and_without_a_scenario`<br>`crates/acn-harness/tests/plan.rs` `a_plans_run_id_is_its_runs_in_live_on_the_served_mock`<br>`crates/acn-harness/tests/plan.rs` `a_plan_refuses_what_a_run_refuses` |
+| CTL-10 | `070-control-plane.md` | 2 | MUST | yes | `crates/acn-ctl/tests/registry.rs` `paths_outside_the_workspace_bad_fields_and_protected_runs_dirs_are_refused`<br>`crates/acn-ctl/tests/registry.rs` `a_named_endpoint_resolves_to_its_url_and_must_match_the_backend`<br>`crates/acn-ctl/tests/registry.rs` `a_generator_request_and_a_stored_scenario_run_through_the_registry`<br>`crates/acn-ctl/tests/registry.rs` `a_seed_has_one_text` |
+| CTL-11 | `070-control-plane.md` | 2 | MUST | yes | `crates/acn-ctl/tests/registry.rs` `a_request_id_is_the_hash_of_its_context_and_canonical_bytes`<br>`crates/acn-ctl/tests/registry.rs` `an_edited_input_is_a_new_request_and_an_edit_after_submission_fails`<br>`crates/acn-ctl/tests/registry.rs` `a_restart_marks_an_unfinished_run_interrupted_and_requeues_the_rest`<br>`crates/acn-ctl/tests/registry.rs` `a_restart_requeues_in_seq_order_and_handles_broken_requests`<br>`crates/acn-ctl/tests/registry.rs` `a_restart_keeps_a_bundle_that_verifies` |
+| CTL-12 | `070-control-plane.md` | 2 | MUST | yes | `crates/acn-ctl/tests/registry.rs` `a_request_runs_once_and_a_resubmission_returns_its_status`<br>`crates/acn-ctl/tests/registry.rs` `an_edited_input_is_a_new_request_and_an_edit_after_submission_fails`<br>`crates/acn-ctl/tests/registry.rs` `requests_run_in_submission_order`<br>`crates/acn-ctl/tests/registry.rs` `the_worker_runs_one_at_a_time_refuses_a_retry_while_running_and_stops`<br>`crates/acn-ctl/tests/registry.rs` `a_run_that_panics_fails_its_request_and_nothing_else` |
+| CTL-13 | `070-control-plane.md` | 2 | MUST | yes | `crates/acn-ctl/tests/registry.rs` `a_request_runs_once_and_a_resubmission_returns_its_status`<br>`crates/acn-ctl/tests/registry.rs` `an_existing_bundle_is_adopted_and_a_failed_request_reruns_only_on_retry`<br>`crates/acn-ctl/tests/registry.rs` `the_worker_runs_one_at_a_time_refuses_a_retry_while_running_and_stops`<br>`crates/acn-ctl/tests/registry.rs` `a_generator_request_and_a_stored_scenario_run_through_the_registry`<br>`crates/acn-gen/tests/plan_run.rs` `a_plans_run_id_is_its_runs_in_sim_and_live`<br>`crates/acn-harness/tests/plan.rs` `a_plans_run_id_is_its_runs_in_sim_with_and_without_a_scenario`<br>`crates/acn-harness/tests/plan.rs` `a_plans_run_id_is_its_runs_in_live_on_the_served_mock`<br>`crates/acn-harness/tests/plan.rs` `a_plan_refuses_what_a_run_refuses` |
 | CTL-20 | `070-control-plane.md` | 3 | MUST | no | — |
 | CTL-21 | `070-control-plane.md` | 3 | MUST | no | — |
 | CTL-22 | `070-control-plane.md` | 3 | MUST | no | — |
 | CTL-23 | `070-control-plane.md` | 3 | MUST | no | — |
 | CTL-24 | `070-control-plane.md` | 3 | MUST | no | — |
-| CTL-30 | `070-control-plane.md` | 4 | MUST | no | — |
+| CTL-30 | `070-control-plane.md` | 4 | MUST | no | `crates/acn-ctl/tests/registry.rs` `a_named_endpoint_resolves_to_its_url_and_must_match_the_backend` |
 | HYP-1 | `080-hypotheses.md` | 2 | MUST | yes | `crates/acn-hyp/tests/format.rs` `every_table_rejects_unknown_keys_and_names_the_key_path`<br>`crates/acn-hyp/tests/freeze.rs` `a_file_under_hypotheses_that_is_not_toml_never_loads_as_frozen`<br>`crates/xtask/tests/freeze.rs` `pr_check_enforces_the_shape_of_a_freeze`<br>`crates/xtask/tests/freeze.rs` `every_file_under_hypotheses_is_checked_and_each_bad_one_reported`<br>`tests/accept/hyp_lint.rs` `a_broken_file_is_reported_with_its_reason` |
 | HYP-2 | `080-hypotheses.md` | 2 | MUST | yes | `crates/acn-hyp/tests/format.rs` `the_tables_poc_and_stem_rules_hold`<br>`crates/acn-hyp/tests/format.rs` `a_frozen_file_names_a_real_spec_and_a_unique_id`<br>`crates/xtask/tests/freeze.rs` `pr_check_enforces_the_shape_of_a_freeze` |
 | HYP-3 | `080-hypotheses.md` | 2 | MUST | yes | `crates/acn-harness/tests/record.rs` `a_frozen_file_may_not_choose_its_seed`<br>`crates/acn-hyp/tests/format.rs` `status_is_decided_by_location_and_by_a_record_that_matches`<br>`crates/acn-hyp/tests/freeze.rs` `a_changed_hypothesis_file_breaks_the_record_and_is_no_longer_frozen`<br>`crates/xtask/tests/freeze.rs` `pr_check_enforces_the_shape_of_a_freeze` |
