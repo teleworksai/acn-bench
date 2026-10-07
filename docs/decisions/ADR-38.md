@@ -73,3 +73,18 @@ T13 asks for a session/turn/call generator "from the Appendix C parameter sheet"
   - The run refuses a session attribute missing from the inventory instead of silently keeping it (TRC-20).
   - `Cx` is re-exported, so a driver calls `Replicate::call` without its own `opentelemetry` dependency.
   - A test driver builds its own session and turn spans and makes two calls through `call`. Ingest's checks hold its spans to SPEC 010 as they hold the harness's.
+- **T13.3b, the sessions.**
+  - The generator's workload is built in memory: its hash is the sheet's, and its `[agent]` settings are temperature 0 and streaming.
+  - Every session of a replicate runs in one `join_all`, which is deterministic in `sim`. Each session waits for its drawn start, and its span starts there.
+  - The system words are drawn once per replicate. Text is drawn in use order on each lineage's stream: the user message first, then tool results and any summary instruction in the order the calls need them.
+  - A main-lineage tool result carries a session-wide ordinal as the harness's do (HAR-13); a sub-agent's carries none.
+  - **If the mock answers with text where a tool call was asked for,** the text is kept and that step runs no tool. With `ToolChoice::Only` and a profile allowing the chain, the mock does not do so (MLM-40).
+  - **Compaction is evaluated before every main-lineage call.** The trigger is HAR-15's estimate on the context about to be sent.
+  - **Sub-agents.** Each sub-agent's first call is compared with the spawning context. Its `acn.fanout.shared_prefix_tokens` is the harness's measure.
+  - **Practical scale.** `join_all` polls every pending session on each round. Sheets with a few hundred sessions per replicate run well; the 10^6 limit of the T13.2 notes is a bound on memory, not a speed claim.
+- **After review (PR 52).**
+  - **The marker in the tools.** Tool descriptions start with the replicate's isolation marker, as HAR-42 requires of every tool definition. GEN-11's literal `A <class> tool.` omits it, and without it the tool block would be a cached prefix shared across replicates and arms. Issue #53 (`spec-conflict: GEN-11, GEN-13 vs HAR-42, HAR-11`) proposes the spec wording; the code follows HAR-42 meanwhile.
+  - **The timestamp.** HAR-11's timestamp is on by default and GEN-21 fixes the knobs. So turns share a cached prefix only up to the marker line, and the cache extends within a turn. The tests check exactly that (issue #53, SPEC 050 §6 question 3).
+  - **Sub-agents** get the turn's own system prompt, so their timestamp is the parent's. A sub-agent's tools are its parent's without `gen_subagent` (GEN-12), so the prefix it shares with the spawning call ends where the two tool lists part.
+  - **A failed sub-agent.** The spawning tool call still gets its result, the answers that came back, before the turn aborts. No later call then carries a tool call without its result.
+  - **Caps and counts.** A tool call carries the chain's `answer_tokens` as `max_tokens`. GEN-11 defines the cap for the answer only, and a tool-call reply ignores it (MLM-40). The shared-prefix count falls back to whole 4-byte tokens when the spawning call reported no input tokens, as the harness's does. The sheet is read once, and the bytes parsed are the bytes hashed.

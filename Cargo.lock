@@ -79,8 +79,11 @@ dependencies = [
  "acn-harness",
  "acn-mockllm",
  "acn-trace",
+ "opentelemetry",
  "rand_chacha 0.10.0",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror",
  "toml",
 ]

@@ -4,6 +4,8 @@
 #![forbid(unsafe_code)]
 
 pub mod plan;
+pub mod run;
+pub mod sessions;
 pub mod sheet;
 pub mod text;
 
