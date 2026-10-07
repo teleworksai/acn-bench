@@ -6,6 +6,7 @@ version = 4
 name = "acn-accept"
 version = "0.1.0"
 dependencies = [
+ "acn-attrib",
  "acn-cli",
  "acn-emu",
  "acn-gen",
@@ -33,6 +34,7 @@ dependencies = [
 name = "acn-cli"
 version = "0.1.0"
 dependencies = [
+ "acn-attrib",
  "acn-ctl",
  "acn-emu",
  "acn-gen",
@@ -41,9 +43,14 @@ dependencies = [
  "acn-mockllm",
  "acn-trace",
  "anyhow",
+ "arrow-array",
+ "arrow-schema",
  "blake3",
  "clap",
+ "parquet",
+ "plotters",
  "reqwest",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -1393,6 +1400,34 @@ name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
+
+[[package]]
+name = "plotters"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5aeb6f403d7a4911efb1e33402027fc44f29b5bf6def3effcc22d7bb75f2b747"
+dependencies = [
+ "num-traits",
+ "plotters-backend",
+ "plotters-svg",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "plotters-backend"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df42e13c12958a16b3f7f4386b9ab1f3e7933914ecea48da7139435263a4172a"
+
+[[package]]
+name = "plotters-svg"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51bae2ac328883f7acdfea3d66a7c35751187f870bc81f94563733a154d7a670"
+dependencies = [
+ "plotters-backend",
+]
 
 [[package]]
 name = "portable-atomic"

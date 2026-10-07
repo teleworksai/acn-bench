@@ -1,6 +1,6 @@
 # SPEC 090 — Attribution
 
-**Status:** Draft v0.2 (October 2026; v0.2: the frozen boundary and the rules the T15.2 reviews sharpened, ADR-40; v0.1 written for T15). **Inherits:** SPEC 000, 010, 020, 040, 080. **Prefix:** ATR. **Crates:** `acn-attrib` (frozen whole, CON-7), `acn-trace` (the critical path its frozen ingester exposes), `acn-hyp` (the quantities it registers), `acn-cli` (`acn attrib` and the heatmap).
+**Status:** Draft v0.3 (October 2026; v0.3: the calibration's verdict step moved to `acn-hyp`'s tests, issue #63; v0.2: the frozen boundary and the rules the T15.2 reviews sharpened, ADR-40; v0.1 written for T15). **Inherits:** SPEC 000, 010, 020, 040, 080. **Prefix:** ATR. **Crates:** `acn-attrib` (frozen whole, CON-7), `acn-trace` (the critical path its frozen ingester exposes), `acn-hyp` (the quantities it registers), `acn-cli` (`acn attrib` and the heatmap).
 **Purpose:**
 - say where a turn's time went: how much the emulated network took, on which hop, and how much the model, the tools, retries and everything else took;
 - define the attribution quantities a hypothesis names, above all `network_attributable_share`, once, in frozen code, so that a verdict and a report compute the same number;
@@ -108,9 +108,12 @@ So no number depends on evaluation order or platform.
 - `crates/acn-attrib/tests/quantities.rs` — ATR-20 to ATR-22, ATR-30: known answers for every share and tail share, ties at the tail's threshold, `n` = 1, 10 and 100, and the undefined cases; `acn-hyp`'s table resolves each name to `acn-attrib`.
 - `crates/acn-trace/tests/` — ATR-2: the leaves attribution reads are the ones the turn view used.
 - `crates/acn-cli/tests/attrib_cli.rs` — ATR-40, ATR-41, CON-8: one JSON object; byte-identical Parquet and SVG on reruns; the labels; an empty cell marked; the errors of ATR-41.
-- `tests/accept/attrib.rs` — ATR-11, ATR-20, ATR-23, CON-18. A calibration on the mock in `sim`:
-  - a non-streamed workload with no tools over a scenario of one-way delay `d` against the same workload with no delay, the control: each call's `network_ns` is exactly `2d`, the treatment's share is its known value, and the verdict's `effect` is the known difference, inside its bootstrap interval;
-  - the same, streamed.
+- `tests/accept/attrib.rs` — ATR-11, ATR-20, CON-18. A calibration on the mock in `sim`:
+  - a non-streamed workload with no tools over a scenario of one-way delay `d` against the same workload and seed with no delay, the control: each call's `network_ns` is exactly `2d`, the model's time is the control's, each turn is longer by exactly its network time, and the treatment's share is its known value;
+  - the same, streamed, its answers carried by several messages.
+  
+  The two arms differ in `scenario_hash`, so no verdict compares them (HYP-20; issue #63).
+- `crates/acn-hyp/tests/attribution.rs` — ATR-23: on bundles whose arms differ by a varied parameter, the verdict's `effect` of an attribution quantity is the known difference, inside its bootstrap interval.
 
 ## 7. Open questions
 
