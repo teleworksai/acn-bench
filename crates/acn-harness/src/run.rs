@@ -158,8 +158,15 @@ fn hypothesis(arg: &HypothesisArg, start: &Path) -> Result<Hyp, HarnessError> {
 
 /// The base URL a live run calls, and its host for the manifest (CON-26).
 fn endpoint(backend: Backend, opts: &Opts) -> Result<(String, String), HarnessError> {
+    endpoint_url(backend, &opts.endpoint)
+}
+
+/// The base URL a live run of `backend` calls for `endpoint`, and its host:
+/// `--endpoint`'s checks (HAR-22, HAR-25, HAR-26), shared with the control
+/// plane's endpoint registry (SPEC 070 CTL-30). No error echoes the URL.
+pub fn endpoint_url(backend: Backend, endpoint: &str) -> Result<(String, String), HarnessError> {
     // HAR-26: the mock the harness serves itself, a fresh one per replicate.
-    if opts.endpoint == crate::served::LOOPBACK {
+    if endpoint == crate::served::LOOPBACK {
         if backend != Backend::Mockllm {
             return Err(HarnessError::Config(format!(
                 "{} serves the mock, not `{}` (HAR-26)",
@@ -169,7 +176,7 @@ fn endpoint(backend: Backend, opts: &Opts) -> Result<(String, String), HarnessEr
         }
         return Ok((String::new(), crate::served::LOOPBACK_HOST.to_owned()));
     }
-    let url = if opts.endpoint.is_empty() {
+    let url = if endpoint.is_empty() {
         match backend {
             Backend::Openai => "https://api.openai.com".to_owned(),
             Backend::Anthropic => "https://api.anthropic.com".to_owned(),
@@ -181,7 +188,7 @@ fn endpoint(backend: Backend, opts: &Opts) -> Result<(String, String), HarnessEr
             }
         }
     } else {
-        opts.endpoint.clone()
+        endpoint.to_owned()
     };
     let parsed =
         reqwest::Url::parse(&url).map_err(|e| HarnessError::Config(format!("--endpoint: {e}")))?;

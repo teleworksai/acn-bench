@@ -3,7 +3,7 @@
 //! `version` (T01), `bundle verify` (TRC-23, T02b), `harness run` (HAR-50, T04),
 //! `hyp lint` (HYP-27, T05), `hyp verdict` (HYP-20, T05.2b), `loop run` (LOOP-10,
 //! LOOP-14, T05b.1), `evidence verify` (LOOP-2, T05b.2), `loop twin` (LOOP-12,
-//! LOOP-16, T11b.3), `gen run` (GEN-22, T13.3).
+//! LOOP-16, T11b.3), `gen run` (GEN-22, T13.3), `ctl serve` (CTL-1, T14.2).
 #![forbid(unsafe_code)]
 
 mod build_info;
@@ -48,6 +48,11 @@ enum Cmd {
     Gen {
         #[command(subcommand)]
         cmd: GenCmd,
+    },
+    /// The control plane (SPEC 070).
+    Ctl {
+        #[command(subcommand)]
+        cmd: CtlCmd,
     },
     /// Hypothesis files and verdicts (SPEC 080).
     Hyp {
@@ -165,6 +170,20 @@ enum HypCmd {
         bundles: Vec<PathBuf>,
         /// The `runs` directory `verdicts/` goes under; it must be named `runs`
         /// (HYP-4).
+        #[arg(long, default_value = "runs")]
+        runs_dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum CtlCmd {
+    /// Serve the control plane's API on 127.0.0.1 until SIGINT, SIGTERM or
+    /// `POST /v1/shutdown`; then print one object with the runs it made (CTL-1).
+    Serve {
+        /// The port; 0 lets the system pick one, logged on stderr.
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// The runs directory, relative to the workspace root (CTL-1).
         #[arg(long, default_value = "runs")]
         runs_dir: PathBuf,
     },
@@ -557,6 +576,31 @@ fn harness_run(a: &HarnessRun) -> Value {
             "run_id": w.run_id.to_hex(),
             "bundle_digest": w.bundle_digest.to_hex(),
             "dir": w.dir.display().to_string(),
+        }))
+    })
+}
+
+/// `acn ctl serve` (CTL-1): its one object is printed when it stops.
+fn ctl_serve(port: u16, runs_dir: &std::path::Path) -> Value {
+    respond("ctl serve", || {
+        let cwd = std::env::current_dir()?;
+        let root = acn_trace::env::find_root(&cwd)?
+            .ok_or_else(|| anyhow::anyhow!("`acn ctl serve` runs inside a workspace (CON-28)"))?;
+        let cfg = acn_ctl::CtlConfig {
+            root,
+            runs_dir: runs_dir.to_path_buf(),
+            engine_hash: build_info::engine_hash()?,
+            build: build_info::build_info()?,
+            profiles: None,
+        };
+        let server =
+            acn_ctl::server::Server::bind(cfg, port).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let s = server.run();
+        Ok(json!({
+            "ok": s.ok,
+            "addr": s.addr,
+            "requests": s.requests,
+            "run_ids": s.run_ids,
         }))
     })
 }
@@ -954,6 +998,9 @@ fn run() -> Value {
         Cmd::Gen {
             cmd: GenCmd::Run(a),
         } => gen_run(&a),
+        Cmd::Ctl {
+            cmd: CtlCmd::Serve { port, runs_dir },
+        } => ctl_serve(port, &runs_dir),
         Cmd::Hyp {
             cmd: HypCmd::Lint { file },
         } => hyp_lint(&file),

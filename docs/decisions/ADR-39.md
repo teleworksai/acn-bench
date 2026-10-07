@@ -70,3 +70,15 @@ SPEC 070 was "to write". T14 asks for an axum HTTP/JSON API to create scenarios,
   - **Canonical values.** A seed has no leading zero, and a stall threshold is not negative; −0 is written 0 (CON-27(c)). The known-answer vector carries the one float, as CON-27(d) asks.
   - **Adopting another build's bundle** is a reuse, not a mismatch: the build is not part of `run_id` (CON-31), and HYP-20 still refuses a set that mixes builds within one mode.
   - An identity error from a request's input maps to `config`.
+- **T14.2b, the API.**
+  - **One table builds the router.** Its handlers are the table's routes, each dispatched by operation, with the content-type check before any work. Unknown paths answer the JSON fallback, so every answer is one object.
+  - **The answers that are not `{ok, ...}`.** A bundle file's bytes (CTL-23), and the OpenAPI document itself (CTL-24). A top-level `ok` would make the document invalid OpenAPI.
+  - **The committed document.** `crates/acn-ctl/openapi.json`: pretty, sorted JSON with one newline. A test keeps it equal to the table's; `ACN_WRITE_OPENAPI=1` rewrites it. The response schemas name one common `Answer` object (`ok`, `code`, `error`), and the request schemas give each body's media type.
+  - **Status codes.** `bundle_invalid` is 409; an unknown scenario, endpoint, request or bundle is 404. A request missing `Host` gets hyper's own 400 or the guard's 421.
+  - **Handlers run off the runtime.** The registry's file work runs on `spawn_blocking`.
+  - **Bodies are capped.** 1 MiB.
+  - **Shutdown.** `POST /v1/shutdown` stops the registry, so later submissions get 503, and then the server. The worker finishes the run in progress before the summary is printed.
+  - **Endpoints** are checked by the harness's own `--endpoint` check, `endpoint_url`, now public, so a registered URL is one a CLI run accepts. `acn-mock://loopback` is accepted for `mockllm` only. An endpoint is written by temporary file and rename.
+  - **Scenarios** are written to a staging directory and loaded there by `acn_emu::scenario::load`, so the name-is-stem rule (EMU-20) applies, then renamed into place.
+  - **`acn ctl serve`** runs only inside a workspace, resolving `--runs-dir` against its root as `loop run` does.
+  - **Credentials.** The credential test runs the server in a child process with a key in its environment, because `set_var` is `unsafe`.

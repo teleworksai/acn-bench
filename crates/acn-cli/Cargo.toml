@@ -25,6 +25,7 @@ workspace = true
 real-api = ["acn-harness/real-api"]
 
 [dependencies]
+acn-ctl = { path = "../acn-ctl" }
 acn-gen = { path = "../acn-gen" }
 acn-harness = { path = "../acn-harness" }
 acn-hyp = { path = "../acn-hyp" }

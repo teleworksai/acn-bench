@@ -1,0 +1,621 @@
+{
+  "components": {
+    "schemas": {
+      "Answer": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "The acn-bench control plane (SPEC 070).",
+    "title": "acn-ctl",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/bundles/{run_id}": {
+      "get": {
+        "operationId": "get_bundle",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A malformed request or id"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Unknown"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A conflict"
+          }
+        },
+        "summary": "A bundle, verified: its manifest and files (CTL-22)."
+      }
+    },
+    "/v1/bundles/{run_id}/files/{path}": {
+      "get": {
+        "operationId": "get_bundle_file",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A malformed request or id"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Unknown"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A conflict"
+          }
+        },
+        "summary": "One file the manifest lists, after a hash check (CTL-23)."
+      }
+    },
+    "/v1/endpoints": {
+      "get": {
+        "operationId": "list_endpoints",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "The registered endpoints (CTL-30)."
+      }
+    },
+    "/v1/endpoints/{name}": {
+      "delete": {
+        "operationId": "delete_endpoint",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A malformed request or id"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Unknown"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A conflict"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Wrong content type"
+          }
+        },
+        "summary": "Remove a named endpoint (CTL-30)."
+      },
+      "put": {
+        "operationId": "put_endpoint",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A malformed request or id"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Wrong content type"
+          }
+        },
+        "summary": "Register a named endpoint: a backend and a URL (CTL-30)."
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "operationId": "openapi",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "The API's OpenAPI 3.1 document (CTL-24)."
+      }
+    },
+    "/v1/runs": {
+      "get": {
+        "operationId": "list_runs",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Every request's id and state, in submission order (CTL-21)."
+      },
+      "post": {
+        "operationId": "submit_run",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Accepted: queued"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A malformed request or id"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Unknown"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A conflict"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Wrong content type"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Shutting down"
+          }
+        },
+        "summary": "Submit a run request (CTL-10, CTL-21)."
+      }
+    },
+    "/v1/runs/{request_id}": {
+      "get": {
+        "operationId": "get_run",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A malformed request or id"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Unknown"
+          }
+        },
+        "summary": "A request and its status (CTL-21)."
+      }
+    },
+    "/v1/scenarios": {
+      "post": {
+        "operationId": "store_scenario",
+        "requestBody": {
+          "content": {
+            "application/toml": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A malformed request or id"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Wrong content type"
+          }
+        },
+        "summary": "Store a scenario's TOML, named by its BLAKE3 (CTL-20)."
+      }
+    },
+    "/v1/scenarios/{hash}": {
+      "get": {
+        "operationId": "get_scenario",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "hash",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "A malformed request or id"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Unknown"
+          }
+        },
+        "summary": "A stored scenario (CTL-20)."
+      }
+    },
+    "/v1/shutdown": {
+      "post": {
+        "operationId": "shutdown",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Answer"
+                }
+              }
+            },
+            "description": "Wrong content type"
+          }
+        },
+        "summary": "Finish the run in progress and stop (CTL-1)."
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:{port}",
+      "variables": {
+        "port": {
+          "default": "8080"
+        }
+      }
+    }
+  ]
+}
