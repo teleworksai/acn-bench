@@ -97,6 +97,13 @@ pub enum ToolChoice {
     Forbid,
     /// Only these tools, by name, in this order: a forked child's own.
     Allowed(Vec<String>),
+    /// Exactly this tool: the generator's choice of a drawn class (SPEC 050
+    /// GEN-11), encoded as that requirement writes it. It is for the mock
+    /// (`mockllm`, the only backend of a generator run, GEN-21): a provider
+    /// may require `mode` in `allowed_tools`, and the mock does not read the
+    /// Messages form. Like every choice, it is dropped when the context has
+    /// no tools.
+    Only(String),
 }
 
 /// Everything one call sends, before encoding.
@@ -179,6 +186,15 @@ impl Context {
                 // No subset restriction on this backend: the instruction line
                 // carries it (HAR-14).
                 (ToolChoice::Allowed(_), _) => None,
+                (ToolChoice::Only(name), Dialect::ChatCompletions) => Some(json!({
+                    "type": "allowed_tools",
+                    "allowed_tools": {
+                        "tools": [{ "type": "function", "function": { "name": name } }]
+                    }
+                })),
+                (ToolChoice::Only(name), Dialect::Messages) => {
+                    Some(json!({ "type": "tool", "name": name }))
+                }
             };
             if let Some(v) = value {
                 map.insert("tool_choice".into(), v);

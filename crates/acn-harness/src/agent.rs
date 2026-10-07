@@ -8,8 +8,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use acn_trace::normalise::{self, Normalised};
 use acn_trace::schema::Inventory;
+/// The trace context a span is started under: re-exported so that a driver
+/// (SPEC 050 GEN-20) needs no `opentelemetry` of its own to call
+/// [`Replicate::call`].
+pub use opentelemetry::Context as Cx;
+use opentelemetry::KeyValue;
 use opentelemetry::trace::{Span as _, SpanKind, TraceContextExt as _, Tracer as _};
-use opentelemetry::{Context as Cx, KeyValue};
 use opentelemetry_sdk::trace::SdkTracer;
 use rand_chacha::ChaCha20Rng;
 use rand_core::Rng as _;
@@ -232,14 +236,9 @@ struct Lineage {
     messages: Vec<Msg>,
     /// The start of the turn in progress, for the timestamp (HAR-11).
     turn_start: i64,
-    /// The bytes the next call is compared with: the previous call's context
-    /// followed by its response (TRC-12), and, for a sub-agent's first call, the
-    /// spawning context.
-    prev: Option<Vec<u8>>,
-    /// The previous call's uncached input tokens, for `read_cost_threshold`.
-    last_uncached: Option<u64>,
-    /// The `acn.call.index` of the next call in this turn (TRC-12).
-    call_index: i64,
+    /// What `call` reads and moves on: comparison bytes, uncached tokens and
+    /// the next call index (TRC-12).
+    state: CallState,
     /// A sub-agent's first context under `fork_from_prefix`, sent as it is (HAR-14).
     first: Option<Context>,
     /// Under `fork_from_prefix`, the only tools the sub-agent may call: it
@@ -251,14 +250,35 @@ struct Lineage {
     own: Option<std::rc::Rc<RefCell<Streams>>>,
 }
 
+/// What one lineage's calls carry from one to the next (TRC-12). The agent
+/// loop keeps one per lineage, and so does any other driver of the run path
+/// (SPEC 050 GEN-20). A driver resets `call_index` to 0 at each turn's start,
+/// and sets `prev` to the spawning call's `compared` before a sub-agent's
+/// first call, as the agent loop does.
+#[derive(Debug, Clone, Default)]
+pub struct CallState {
+    /// The bytes the next call is compared with: the previous call's context
+    /// followed by its response (TRC-12), and, for a sub-agent's first call, the
+    /// spawning context.
+    pub prev: Option<Vec<u8>>,
+    /// The previous call's uncached input tokens, for `read_cost_threshold`.
+    pub last_uncached: Option<u64>,
+    /// The `acn.call.index` of the next call in this turn (TRC-12).
+    pub call_index: i64,
+}
+
 /// One call's result.
-struct Called {
-    reply: Option<Reply>,
-    index: i64,
-    input_tokens: Option<u64>,
+#[derive(Debug)]
+pub struct Called {
+    /// The response, or `None` when the call failed after its retries.
+    pub reply: Option<Reply>,
+    /// The call's `acn.call.index` (TRC-12).
+    pub index: i64,
+    /// The input tokens the response reported, when it did.
+    pub input_tokens: Option<u64>,
     /// The context sent and its compared bytes, for fan-out.
-    context: Context,
-    compared: Vec<u8>,
+    pub context: Context,
+    pub compared: Vec<u8>,
 }
 
 /// How a turn ended (TRC-11).
@@ -293,7 +313,7 @@ impl<E: Env> Replicate<'_, E> {
     }
 
     /// The system prompt of HAR-11 and HAR-42.
-    fn system(&self, base: &str, turn_start: i64) -> String {
+    pub fn system(&self, base: &str, turn_start: i64) -> String {
         let mut s = format!("Session: {}\n", self.marker);
         if self.setup.knobs.timestamp_in_system_prompt {
             s.push_str(&format!("Current time: {}\n", turn_start / 1_000_000));
@@ -344,7 +364,7 @@ impl<E: Env> Replicate<'_, E> {
     }
 
     /// The bytes a context is compared by (HAR-32).
-    fn compared(&self, ctx: &Context) -> Result<Vec<u8>, HarnessError> {
+    pub fn compared(&self, ctx: &Context) -> Result<Vec<u8>, HarnessError> {
         match &self.setup.counting {
             Counting::Tokens(profile) => {
                 // The mock's prompt bytes read only the tools and messages
@@ -366,7 +386,7 @@ impl<E: Env> Replicate<'_, E> {
     /// Tokens of a common prefix of `a` and `b` (TRC-12): whole tokens, or the
     /// shared bytes scaled by `tokens / bytes` of the one request whose token
     /// count is known, `basis`.
-    fn shared_tokens(&self, a: &[u8], b: &[u8], basis: (u64, usize)) -> u64 {
+    pub fn shared_tokens(&self, a: &[u8], b: &[u8], basis: (u64, usize)) -> u64 {
         let lcp = common_prefix(a, b) as u64;
         match self.setup.counting {
             Counting::Tokens(_) => lcp / BYTES_PER_TOKEN,
@@ -377,9 +397,9 @@ impl<E: Env> Replicate<'_, E> {
     /// Make one call with its retries (HAR-24) and record its `chat` span. An
     /// attempt is abandoned at `opt.request_timeout_ms` or at the turn's
     /// deadline, whichever comes first.
-    async fn call(
+    pub async fn call(
         &self,
-        lin: &mut Lineage,
+        st: &mut CallState,
         ctx: Context,
         max_tokens: u64,
         deadline: Option<i64>,
@@ -395,8 +415,8 @@ impl<E: Env> Replicate<'_, E> {
         ))
         .map_err(|e| HarnessError::Internal(e.to_string()))?;
         let compared = self.compared(&ctx)?;
-        let index = lin.call_index;
-        lin.call_index += 1;
+        let index = st.call_index;
+        st.call_index += 1;
         let start = self.env.now();
         let request_timeout = int(s.opts.request_timeout_ms.saturating_mul(1_000_000));
         let (mut up, mut down, mut retries) = (0u64, 0u64, 0u64);
@@ -502,7 +522,7 @@ impl<E: Env> Replicate<'_, E> {
         if let Some(n) = &norm {
             if let Some(v) = n.input_tokens {
                 attrs.push(KeyValue::new("acn.call.input_tokens", int(v)));
-                let shared = lin
+                let shared = st
                     .prev
                     .as_deref()
                     .map_or(0, |p| self.shared_tokens(p, &compared, (v, compared.len())));
@@ -526,13 +546,13 @@ impl<E: Env> Replicate<'_, E> {
             if let Some(v) = &n.stop_reason_raw {
                 attrs.push(KeyValue::new("acn.call.stop_reason_raw", v.clone()));
             }
-            lin.last_uncached = match (n.input_tokens, n.cache_read_tokens) {
+            st.last_uncached = match (n.input_tokens, n.cache_read_tokens) {
                 (Some(i), Some(c)) => Some(i.saturating_sub(c)),
                 (Some(i), None) => Some(i),
                 _ => None,
             };
         } else {
-            lin.last_uncached = None;
+            st.last_uncached = None;
         }
         if let Some(st) = stop {
             attrs.push(KeyValue::new("acn.call.stop_reason", st));
@@ -597,7 +617,7 @@ impl<E: Env> Replicate<'_, E> {
         if let Some(r) = &reply {
             after.messages.push(assistant(r));
         }
-        lin.prev = Some(self.compared(&after)?);
+        st.prev = Some(self.compared(&after)?);
         Ok(Called {
             reply,
             index,
@@ -719,9 +739,7 @@ impl<E: Env> Replicate<'_, E> {
             tools: task.tools.clone(),
             messages: Vec::new(),
             turn_start: 0,
-            prev: None,
-            last_uncached: None,
-            call_index: 0,
+            state: CallState::default(),
             first: None,
             allowed: None,
             task: task_index,
@@ -753,7 +771,7 @@ impl<E: Env> Replicate<'_, E> {
         let s = self.setup;
         let start = self.env.now();
         lin.turn_start = start;
-        lin.call_index = 0;
+        lin.state.call_index = 0;
         let turn_span = self
             .tracer
             .span_builder("acn.turn")
@@ -829,7 +847,7 @@ impl<E: Env> Replicate<'_, E> {
                 cctx.tool_choice = Some(ToolChoice::Forbid);
                 let c = self
                     .call(
-                        lin,
+                        &mut lin.state,
                         cctx,
                         s.workload.agent.summary_max_tokens,
                         deadline,
@@ -850,12 +868,18 @@ impl<E: Env> Replicate<'_, E> {
                 }];
                 lin.messages.extend(current);
                 turn_first = 1;
-                lin.last_uncached = None;
+                lin.state.last_uncached = None;
                 compaction = Some(s.knobs.compaction_trigger);
             }
             let ctx = self.context(lin)?;
             let c = self
-                .call(lin, ctx, s.workload.agent.max_tokens, deadline, &cx)
+                .call(
+                    &mut lin.state,
+                    ctx,
+                    s.workload.agent.max_tokens,
+                    deadline,
+                    &cx,
+                )
                 .await?;
             calls += 1;
             // HAR-1: an answer that arrives after the deadline is a timeout.
@@ -937,6 +961,7 @@ impl<E: Env> Replicate<'_, E> {
                     >= a.compact_at_tokens
             }
             Compaction::ReadCostThreshold => lin
+                .state
                 .last_uncached
                 .is_some_and(|u| u > a.read_cost_threshold_tokens),
         }
@@ -999,9 +1024,7 @@ impl<E: Env> Replicate<'_, E> {
                         tools: parent.tools.clone(),
                         messages: first.messages.clone(),
                         turn_start: parent.turn_start,
-                        prev: None,
-                        last_uncached: None,
-                        call_index: 0,
+                        state: CallState::default(),
                         first: Some(first),
                         allowed: Some(child.tools.clone()),
                         task: parent.task,
@@ -1013,9 +1036,7 @@ impl<E: Env> Replicate<'_, E> {
                     tools: child.tools.clone(),
                     messages: vec![Msg::User { text: instruction }],
                     turn_start: parent.turn_start,
-                    prev: None,
-                    last_uncached: None,
-                    call_index: 0,
+                    state: CallState::default(),
                     first: None,
                     allowed: None,
                     task: parent.task,
@@ -1023,7 +1044,7 @@ impl<E: Env> Replicate<'_, E> {
                 },
             };
             // TRC-12: a sub-agent's first call is compared with the spawning context.
-            lin.prev = Some(spawning.compared.clone());
+            lin.state.prev = Some(spawning.compared.clone());
             let first_ctx = match lin.first.take() {
                 Some(f) => f,
                 None => self.context(&lin)?,
@@ -1090,7 +1111,7 @@ impl<E: Env> Replicate<'_, E> {
         for _ in 0..max_calls {
             let c = self
                 .call(
-                    &mut lin,
+                    &mut lin.state,
                     ctx,
                     self.setup.workload.agent.max_tokens,
                     None,

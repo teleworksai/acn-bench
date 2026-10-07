@@ -51,3 +51,25 @@ T13 asks for a session/turn/call generator "from the Appendix C parameter sheet"
   - **Size limits.** A sheet is refused at load when a count (sessions, turns, sub-agents) can exceed 1 000 000, or a text (any `*_tokens`) can exceed 2^24 tokens. A plan and a text are held in memory, and a value near `i64::MAX` would otherwise abort the run.
   - **The range of a sheet's values.** TOML integers are signed, so a sheet can state only values from 0 to `i64::MAX`. The guard against a uniform range over all 64 bits is defensive.
   - **Plans fail closed.** A class or parameter missing from a loaded sheet is an internal error, never a default value.
+
+## T13.3 notes
+- **T13.3 is three PRs:**
+  - T13.3a, the seam, in `acn-harness`;
+  - T13.3b, the generator's sessions, in `acn-gen`;
+  - T13.3c, `acn gen run` and the acceptance suite.
+  
+  All are Class B. `RunConfig` does not change, because a frozen test builds it field by field.
+- **The seam is smaller than a second call path.**
+  - `run::Driver` gives the run path its workload, its producer name and its sessions. `AgentDriver` is the agent loop, unchanged; `run_async_with` uses it, so every harness bundle is byte for byte what it was (the pinned digests hold).
+  - A driver hands the run path a `Workload` built in memory. Its hash is what enters `run_id`, and its `[agent]` settings are those every call uses.
+  - `Replicate::call` is public, taking a `CallState`: the comparison bytes, the uncached tokens and the call index that one lineage carries from call to call. Retries, usage normalisation, the `chat` span and its link spans are therefore the harness's own for every driver.
+  - The simpler session, turn, tool and sub-agent spans are emitted by the driver, with SPEC 010's keys.
+- **The producer's attributes.** The run keeps only the `acn.session` attributes that the frozen inventory lists for its producer. For the harness that is every one, so nothing changes. For `acn-gen` the four `acn.harness.*` run options the inventory gives the harness alone are omitted, and the knob map is kept (GEN-21).
+- **`ToolChoice::Only`.** It encodes GEN-11's choice exactly: `allowed_tools` with one tool and no `mode`. HAR-14's `Allowed` keeps its own encoding, `mode: auto`, on which the pinned bundles depend.
+- **Sampling.** The generator's calls use temperature 0 and streaming, as the harness's smoke workload does. Streaming gives the TTFT, ITL and stall measurements.
+- **The timestamp of HAR-11.** The knob is on by default, and GEN-21 fixes the knobs at their defaults. So a generator session's system prompt carries its turn's start time, as the harness's does. The shared system words then follow a line that differs per turn. This is the cache-breaking habit the knob exists to measure, and leaving it out would make the recorded knob map untrue.
+- **After review (PR 51).**
+  - `ToolChoice::Only` is for the mock, which is the only backend of a generator run. A provider may require `mode` in `allowed_tools`, and the mock does not read the Messages form (`{"type": "tool"}`).
+  - The run refuses a session attribute missing from the inventory instead of silently keeping it (TRC-20).
+  - `Cx` is re-exported, so a driver calls `Replicate::call` without its own `opentelemetry` dependency.
+  - A test driver builds its own session and turn spans and makes two calls through `call`. Ingest's checks hold its spans to SPEC 010 as they hold the harness's.

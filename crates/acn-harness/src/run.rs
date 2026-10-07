@@ -255,11 +255,7 @@ pub fn run_with_scenario(
     cfg: &RunConfig,
     scenario: Option<&Path>,
 ) -> Result<Written, HarnessError> {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| HarnessError::Internal(format!("runtime: {e}")))?
-        .block_on(run_async_with(cfg, scenario))
+    run_driven_blocking(cfg, scenario, &AgentDriver)
 }
 
 /// [`run`] on the caller's runtime. The future is not `Send`: the agent's
@@ -276,11 +272,81 @@ struct RunScenario {
     hash: Digest,
 }
 
+/// What decides a run's sessions (SPEC 050 GEN-20). The run path does
+/// everything else: identity, environments, network, proxy, served mock,
+/// retries, spans and the bundle. The agent loop over a workload file
+/// (HAR-1) is [`AgentDriver`]; another crate's driver plugs in here, and the
+/// harness never depends on it (ADR-38).
+pub trait Driver {
+    /// The workload the run is identified by, whose hash enters `run_id`
+    /// (CON-29), and whose `[agent]` settings every call uses. A workload
+    /// built in memory sets `hash` to the BLAKE3 of the file it stands for
+    /// (CON-27(a)): nothing else checks it.
+    fn workload(&self, cfg: &RunConfig) -> Result<Workload, HarnessError>;
+    /// The `service.name` and `service.version` of the run's spans (TRC-19).
+    fn producer(&self) -> (&'static str, &'static str);
+    /// Whether every knob must stay at its default (SPEC 050 GEN-21).
+    fn knobs_fixed(&self) -> bool {
+        false
+    }
+    /// One replicate's sessions, `seed` being the run seed (`acn.seed`).
+    fn replicate<E: Env>(
+        &self,
+        rep: &Replicate<'_, E>,
+        seed: i64,
+    ) -> impl std::future::Future<Output = Result<(), HarnessError>>;
+}
+
+/// The agent loop over a workload file (HAR-1).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AgentDriver;
+
+impl Driver for AgentDriver {
+    fn workload(&self, cfg: &RunConfig) -> Result<Workload, HarnessError> {
+        Workload::load(&cfg.workload)
+    }
+    fn producer(&self) -> (&'static str, &'static str) {
+        ("acn-harness", env!("CARGO_PKG_VERSION"))
+    }
+    async fn replicate<E: Env>(
+        &self,
+        rep: &Replicate<'_, E>,
+        seed: i64,
+    ) -> Result<(), HarnessError> {
+        sessions(rep, rep.setup.workload.tasks.len(), seed).await
+    }
+}
+
 /// [`run_with_scenario`] on the caller's runtime.
 pub async fn run_async_with(
     cfg: &RunConfig,
     scenario: Option<&Path>,
 ) -> Result<Written, HarnessError> {
+    run_driven(cfg, scenario, &AgentDriver).await
+}
+
+/// [`run_driven`] on a runtime of its own.
+pub fn run_driven_blocking<D: Driver>(
+    cfg: &RunConfig,
+    scenario: Option<&Path>,
+    driver: &D,
+) -> Result<Written, HarnessError> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| HarnessError::Internal(format!("runtime: {e}")))?
+        .block_on(run_driven(cfg, scenario, driver))
+}
+
+/// One cell and arm into one bundle, its sessions decided by `driver`
+/// (SPEC 050 GEN-20): the run path of HAR-50 with the driver's workload,
+/// producer and sessions.
+pub async fn run_driven<D: Driver>(
+    cfg: &RunConfig,
+    scenario: Option<&Path>,
+    driver: &D,
+) -> Result<Written, HarnessError> {
+    let (producer, producer_version) = driver.producer();
     if !matches!(cfg.arm.as_str(), "treatment" | "control") {
         return Err(HarnessError::Config(format!(
             "--arm is treatment or control, not `{}`",
@@ -332,10 +398,15 @@ pub async fn run_async_with(
         }
     };
     let scenario_hash = scenario.as_ref().map_or(Digest::ZERO, |s| s.hash);
-    let workload = Workload::load(&cfg.workload)?;
+    let workload = driver.workload(cfg)?;
     let hyp = hypothesis(&cfg.hypothesis, &cfg.start_dir)?;
     let vary = typed_vary(&cfg.vary, hyp.varies.as_ref())?;
     let knobs = Knobs::from_vary(&vary)?;
+    if driver.knobs_fixed() && knobs != Knobs::default() {
+        return Err(HarnessError::Knob(format!(
+            "`{producer}` runs every knob at its default; a knob `vary` is refused (SPEC 050 GEN-21)"
+        )));
+    }
     let profiles = match &cfg.profiles {
         Some(p) => p.clone(),
         None => {
@@ -440,13 +511,31 @@ pub async fn run_async_with(
             &workload.hash,
             &scenario_hash,
         );
+        // Only the attributes SPEC 010 lists for this producer (TRC-19,
+        // SPEC 050 GEN-21): the harness's own list is unchanged.
+        let inv = acn_trace::schema::inventory()?;
+        // The inventory lists every attribute (TRC-20): one it does not know
+        // is the harness's fault, not a key to keep or drop silently.
+        let mut kept = Vec::with_capacity(session_attrs.len());
+        for kv in session_attrs {
+            let Some(a) = inv.attribute(kv.key.as_str()) else {
+                return Err(HarnessError::Internal(format!(
+                    "`{}` is not in the attribute inventory (TRC-20)",
+                    kv.key
+                )));
+            };
+            if a.producers.iter().any(|p| p == producer) {
+                kept.push(kv);
+            }
+        }
+        let session_attrs = kept;
         let setup = Setup {
             workload,
             knobs,
             backend: cfg.backend,
             model: cfg.model.clone(),
             opts: cfg.opts.clone(),
-            inv: acn_trace::schema::inventory()?,
+            inv,
             counting,
             session_attrs,
         };
@@ -515,14 +604,9 @@ pub async fn run_async_with(
             let url = mock_server
                 .as_ref()
                 .map_or_else(|| url.clone(), |s| s.url());
-            let harness_resource = producer_resource(
-                "acn-harness",
-                env!("CARGO_PKG_VERSION"),
-                &pf.engine_hash(),
-                &build_hash,
-            );
+            let harness_resource =
+                producer_resource(producer, producer_version, &pf.engine_hash(), &build_hash);
             let streams = std::cell::RefCell::new(Streams::new(rseed)?);
-            let tasks = setup.workload.tasks.len();
             if let (Some(sc), Some(scenario_cx)) = (&scenario, &scenario_cx) {
                 // EMU-36: the harness's and the network's spans draw from one
                 // replicate stream, in program order.
@@ -539,7 +623,7 @@ pub async fn run_async_with(
                     .with_resource(emu_resource())
                     .with_simple_exporter(collector.exporter())
                     .build();
-                let tracer = provider.tracer("acn-harness");
+                let tracer = provider.tracer(producer);
                 let emu_tracer = emu.tracer("acn-emu");
                 let model = |d| {
                     sc.scenario
@@ -622,7 +706,7 @@ pub async fn run_async_with(
                         seed: rseed,
                         streams,
                     };
-                    let ran = sessions(&rep, tasks, seed).await;
+                    let ran = driver.replicate(&rep, seed).await;
                     let ended = clock.now_ns();
                     proxy.shutdown().await;
                     // A proxy fault explains whatever the sessions saw: it
@@ -650,7 +734,7 @@ pub async fn run_async_with(
                         seed: rseed,
                         streams,
                     };
-                    env.drive(sessions(&rep, tasks, seed))??;
+                    env.drive(driver.replicate(&rep, seed))??;
                     scenario_log.record(&sc.scenario, &env.fates(), env.now(), 0);
                 }
                 for p in [provider, emu] {
@@ -666,7 +750,7 @@ pub async fn run_async_with(
                 .with_resource(harness_resource)
                 .with_simple_exporter(collector.exporter())
                 .build();
-            let tracer = provider.tracer("acn-harness");
+            let tracer = provider.tracer(producer);
             if live {
                 let client = live_client.clone().ok_or_else(|| {
                     HarnessError::Internal("a live run without its client".into())
@@ -687,7 +771,7 @@ pub async fn run_async_with(
                     seed: rseed,
                     streams,
                 };
-                sessions(&rep, tasks, seed).await?;
+                driver.replicate(&rep, seed).await?;
                 if let Some(s) = mock_server.take() {
                     s.shutdown().await?;
                 }
@@ -705,7 +789,7 @@ pub async fn run_async_with(
                     seed: rseed,
                     streams,
                 };
-                env.drive(sessions(&rep, tasks, seed))??;
+                env.drive(driver.replicate(&rep, seed))??;
             }
             provider
                 .shutdown()
