@@ -712,6 +712,24 @@ fn build_arms(
         for (k, c) in b.calls.iter().enumerate() {
             calls_of.entry(c.session_id).or_default().push(k);
         }
+        // SPEC 090: a bundle whose attribution failed refuses a verdict that
+        // reads an attribution quantity, never an undefined value (ATR-15).
+        let mut parts_of: BTreeMap<[u8; 8], Vec<acn_attrib::core::Parts>> = BTreeMap::new();
+        match &b.attrib {
+            Ok(ds) => {
+                for d in ds {
+                    parts_of.entry(d.session_id).or_default().push(d.parts);
+                }
+            }
+            Err(e) => {
+                if measures
+                    .iter()
+                    .any(|q| quantities::attribution(q).is_some())
+                {
+                    return refuse(format!("{}: {e} (SPEC 090 ATR-15)", b.dir.display()));
+                }
+            }
+        }
         let config = match i.role {
             Role::Control => controls.own(&i.cell),
             Role::Treatment => i.cell.clone(),
@@ -748,6 +766,8 @@ fn build_arms(
             for k in calls_of.get(&s.session_id).into_iter().flatten() {
                 rep.calls.push(b.calls[*k].clone());
             }
+            rep.parts
+                .extend(parts_of.get(&s.session_id).into_iter().flatten().copied());
         }
         let arms = by_mode.entry(i.mode).or_default();
         let arm = arms.arms.entry(akey.clone()).or_insert_with(|| Arm {
@@ -766,10 +786,23 @@ fn build_arms(
             if unfinished.contains(&idx) {
                 continue;
             }
-            let values: Values = measures
-                .iter()
-                .map(|q| (q.clone(), quantities::value(q, &rep)))
-                .collect();
+            let mut values = Values::new();
+            for q in &measures {
+                let v = if quantities::attribution(q).is_some() {
+                    match quantities::attribution_value(q, &rep) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return refuse(format!(
+                                "{}: {q}: {e} (SPEC 090 ATR-30)",
+                                b.dir.display()
+                            ));
+                        }
+                    }
+                } else {
+                    quantities::value(q, &rep)
+                };
+                values.insert(q.clone(), v);
+            }
             if let Some(slot) = arm.replicates.get_mut(idx) {
                 *slot = Some(values);
             }

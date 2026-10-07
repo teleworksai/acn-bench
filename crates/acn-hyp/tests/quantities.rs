@@ -6,6 +6,7 @@
 
 mod common;
 
+use acn_attrib::core::Parts;
 use acn_hyp::predicate::is_reserved;
 use acn_hyp::quantities::{
     Call, PRICES, QUANTITIES, Replicate, Session, Turn, get, markdown, prices, value,
@@ -216,11 +217,28 @@ fn replicate(provider: &str) -> Replicate {
             call(2, 1000, 900, 0, 10, 200),
             call(2, 800, 0, 0, 40, 300),
         ],
+        // Each turn's split (SPEC 090 ATR-10): durations 1000, 3000, 1000.
+        parts: vec![
+            parts(1000, [200, 600, 100, 0, 100]),
+            parts(3000, [1500, 1000, 0, 300, 200]),
+            parts(1000, [100, 700, 100, 0, 100]),
+        ],
         price_key: provider.into(),
     }
 }
 
-/// Cites: HYP-12
+fn parts(duration_ns: i64, [network_ns, model_ns, tool_ns, retry_ns, other_ns]: [i64; 5]) -> Parts {
+    Parts {
+        duration_ns,
+        network_ns,
+        model_ns,
+        tool_ns,
+        retry_ns,
+        other_ns,
+    }
+}
+
+/// Cites: HYP-12, ATR-20, ATR-21, ATR-22
 #[test]
 fn every_quantity_has_a_formula_over_one_replicates_rows() {
     let r = replicate("anthropic");
@@ -235,6 +253,32 @@ fn every_quantity_has_a_formula_over_one_replicates_rows() {
     assert_eq!(value("ttft_p99_ms", &r), Some(400.0));
     assert_eq!(value("input_tokens_per_turn", &r), Some(4000.0 / 3.0));
     assert_eq!(value("compactions_per_session", &r), Some(0.5));
+    // SPEC 090, from acn-attrib: sums over the turns, one division (ATR-20).
+    assert_eq!(
+        value("network_attributable_share", &r),
+        Some(1800.0 / 5000.0)
+    );
+    assert_eq!(value("model_share", &r), Some(2300.0 / 5000.0));
+    assert_eq!(value("tool_share", &r), Some(200.0 / 5000.0));
+    assert_eq!(value("retry_share", &r), Some(300.0 / 5000.0));
+    assert_eq!(value("other_share", &r), Some(400.0 / 5000.0));
+    // Three turns: rank ceil(0.99 · 3) = 3, so the tail is the 3000 ns turn (ATR-21).
+    assert_eq!(value("tail_network_share_p99", &r), Some(0.5));
+    assert_eq!(value("tail_retry_share_p99", &r), Some(0.1));
+    assert_eq!(value("tail_other_share_p99", &r), Some(200.0 / 3000.0));
+    // No turn: undefined, never zero.
+    let none = Replicate::default();
+    assert_eq!(value("network_attributable_share", &none), None);
+    assert_eq!(value("tail_network_share_p99", &none), None);
+    for q in QUANTITIES {
+        let is_attrib = acn_hyp::quantities::attribution(q.name).is_some();
+        assert_eq!(is_attrib, q.source.starts_with("SPEC 090"), "{}", q.name);
+    }
+    assert_eq!(acn_hyp::quantities::attribution("network_share"), None);
+    assert_eq!(
+        acn_hyp::quantities::attribution("tail_network_share_p50"),
+        None
+    );
     let mut both = replicate("anthropic");
     both.turns[0].compaction = "read_cost_threshold".into();
     assert_eq!(

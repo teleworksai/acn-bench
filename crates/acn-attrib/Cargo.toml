@@ -11,3 +11,9 @@ description = "attribution and analysis: tail decomposition, network share, plot
 workspace = true
 
 [dependencies]
+# The core reads bundles only through acn-trace (SPEC 090 ATR-1, ATR-22).
+acn-trace = { workspace = true, features = ["io"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+toml.workspace = true

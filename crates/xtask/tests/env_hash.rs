@@ -15,12 +15,15 @@ const FROZEN_FILES: &[&str] = &[
     "scenarios/measured/walk/trace.parquet",
     "crates/acn-hyp/src/lib.rs",
     "crates/acn-attrib/src/core/mod.rs",
+    "crates/acn-attrib/src/lib.rs",
+    "crates/acn-attrib/Cargo.toml",
     "crates/acn-trace/src/schema/mod.rs",
+    "crates/acn-trace/src/ingest/mod.rs",
 ];
 
 const OUTSIDE_FILES: &[&str] = &[
     "crates/acn-trace/src/lib.rs",
-    "crates/acn-attrib/src/lib.rs",
+    "crates/acn-trace/src/parquet_io.rs",
     "scenarios/synthetic/a.toml",
     "lab/hypotheses/p17-a2a.toml",
     "specs/000-constitution.md",
@@ -336,7 +339,7 @@ fn engine_hash_is_the_record_hash_of_the_frozen_crate_paths_only() {
         .filter(|(p, _)| p.starts_with("crates/"))
         .cloned()
         .collect();
-    assert_eq!(engine.len(), 3, "{engine:?}");
+    assert_eq!(engine.len(), 6, "{engine:?}");
     assert_eq!(
         run.json["engine_hash"].as_str(),
         Some(records_hash(&engine).as_str())
@@ -352,7 +355,7 @@ fn engine_hash_is_the_record_hash_of_the_frozen_crate_paths_only() {
 /// Freezing another POC's hypothesis, or adding a measured trace, must not change
 /// the identity of any existing run: that is the whole point of the second hash.
 ///
-/// Cites: CON-28
+/// Cites: CON-28, ATR-31
 #[test]
 fn engine_hash_ignores_hypotheses_and_measured_scenarios_and_follows_the_frozen_crates() {
     let dir = frozen_fixture();
@@ -380,7 +383,10 @@ fn engine_hash_ignores_hypotheses_and_measured_scenarios_and_follows_the_frozen_
     for frozen_code in [
         "crates/acn-hyp/src/lib.rs",
         "crates/acn-attrib/src/core/mod.rs",
+        "crates/acn-attrib/src/lib.rs",
+        "crates/acn-attrib/Cargo.toml",
         "crates/acn-trace/src/schema/mod.rs",
+        "crates/acn-trace/src/ingest/mod.rs",
     ] {
         let before = engine_hash_of(dir.path());
         write(dir.path(), frozen_code, "changed\n");

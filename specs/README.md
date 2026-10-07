@@ -12,7 +12,7 @@
 | 070 | 070-control-plane.md | CTL | draft v0.1 (a local HTTP/JSON service: scenarios, runs, bundles, endpoints; a registry of requests by hash; one worker; for T14) |
 | 080 | 080-hypotheses.md | HYP | draft v0.1 (format, typed predicate grammar, slices and verdicts; implemented by T05) |
 | 085 | 085-feedback-loop.md | LOOP | draft v0.3 (layered, verifiable loop; L1 runner, report and evidence chain; v0.3 thins the verdict trajectory; implemented by T05b, T06b3) |
-| 090 | 090-attribution.md | ATR | draft v0.1 (a turn split into network, model, tool, retry and other time, by hop; the attribution quantities; the heatmap; for T15) |
+| 090 | 090-attribution.md | ATR | draft v0.2 (a turn split into network, model, tool, retry and other time, by hop; the attribution quantities; the heatmap; for T15) |
 | 095 | 095-gates.md | GATE | draft v0.1 (§1 rules for every gate and §2 gate M0, written for T07; M1–M4 sections to write with T17 and later gates) |
 | 100 | 100-p4-harness-discipline.md | P4 | draft v0.1 (POC 4 protocol: workloads, providers and mock profiles, the L1 run of record, the mock acceptance suite, live-run prerequisites; implemented by T06) |
 | 110 | 110-p1a-sensitivity-atlas.md | P1A | to write (T20) |

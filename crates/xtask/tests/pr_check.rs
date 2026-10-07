@@ -29,8 +29,9 @@ const FULL_CODEOWNERS: &str = "\
 /hypotheses/                     @owner
 /scenarios/measured/             @owner
 /crates/acn-hyp/                 @owner
-/crates/acn-attrib/src/core/     @owner
+/crates/acn-attrib/              @owner
 /crates/acn-trace/src/schema/    @owner
+/crates/acn-trace/src/ingest/    @owner
 /specs/                          @owner
 /env-hash.json                   @owner
 /trace-scope.toml                @owner
@@ -90,7 +91,7 @@ fn a_spec_edit_without_the_spec_change_label_fails() {
 /// Cites: CON-7
 #[test]
 fn a_frozen_set_edit_needs_env_change_once_m0_is_closed() {
-    let changed = "hypotheses/p4.toml,env-hash.json,crates/acn-attrib/src/core/mod.rs,crates/acn-attrib/src/lib.rs";
+    let changed = "hypotheses/p4.toml,env-hash.json,crates/acn-attrib/src/core/mod.rs,crates/acn-trace/src/lib.rs";
 
     let before = root_with(FULL_CODEOWNERS, false);
     let advisory = xtask_at(
@@ -121,7 +122,7 @@ fn a_frozen_set_edit_needs_env_change_once_m0_is_closed() {
     assert_eq!(
         paths.len(),
         3,
-        "lib.rs outside core/ is not frozen: {paths:?}"
+        "acn-trace's lib.rs, outside schema/ and ingest/, is not frozen: {paths:?}"
     );
 
     let good = xtask_at(

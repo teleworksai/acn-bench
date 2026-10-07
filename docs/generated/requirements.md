@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 12 · IDs: 272 · MUSTs: 247 · implemented: 216 · cited: 233
+Specs: 12 · IDs: 272 · MUSTs: 247 · implemented: 230 · cited: 247
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -236,20 +236,20 @@ Specs: 12 · IDs: 272 · MUSTs: 247 · implemented: 216 · cited: 233
 | LOOP-21 | `085-feedback-loop.md` | 3 | MUST | no | — |
 | LOOP-30 | `085-feedback-loop.md` | 4 | MUST | no | — |
 | LOOP-31 | `085-feedback-loop.md` | 4 | MUST | no | — |
-| ATR-1 | `090-attribution.md` | 1 | MUST | no | — |
-| ATR-2 | `090-attribution.md` | 1 | MUST | no | — |
-| ATR-10 | `090-attribution.md` | 2 | MUST | no | — |
-| ATR-11 | `090-attribution.md` | 2 | — | no | — |
-| ATR-12 | `090-attribution.md` | 2 | — | no | — |
-| ATR-13 | `090-attribution.md` | 2 | MUST | no | — |
-| ATR-14 | `090-attribution.md` | 2 | MUST | no | — |
-| ATR-15 | `090-attribution.md` | 2 | MUST | no | — |
-| ATR-20 | `090-attribution.md` | 3 | MUST | no | — |
-| ATR-21 | `090-attribution.md` | 3 | MUST | no | — |
-| ATR-22 | `090-attribution.md` | 3 | MUST | no | — |
-| ATR-23 | `090-attribution.md` | 3 | MUST | no | — |
-| ATR-30 | `090-attribution.md` | 4 | MUST | no | — |
-| ATR-31 | `090-attribution.md` | 4 | MUST | no | — |
+| ATR-1 | `090-attribution.md` | 1 | MUST | yes | `crates/acn-hyp/tests/attribution.rs` `a_sim_bundle_over_delay_d_has_2d_of_network_time_per_call` |
+| ATR-2 | `090-attribution.md` | 1 | MUST | yes | `crates/acn-trace/tests/views.rs` `attribution_reads_the_critical_path_the_turn_view_walked` |
+| ATR-10 | `090-attribution.md` | 2 | MUST | yes | `crates/acn-attrib/tests/decompose.rs` `a_plain_call_over_delay_d_has_2d_of_network_time`<br>`crates/acn-attrib/tests/decompose.rs` `client_time_before_the_request_and_after_the_answer_is_other`<br>`crates/acn-attrib/tests/decompose.rs` `a_turn_with_no_leaves_is_all_other_and_a_zero_length_turn_is_zero`<br>`crates/acn-attrib/tests/decompose.rs` `overlapping_or_escaping_leaves_are_errors`<br>`crates/acn-attrib/tests/decompose.rs` `a_zero_length_leaf_has_zero_parts_whatever_rows_it_carries`<br>`crates/acn-hyp/tests/attribution.rs` `a_sim_bundle_over_delay_d_has_2d_of_network_time_per_call` |
+| ATR-11 | `090-attribution.md` | 2 | — | yes | `crates/acn-attrib/tests/decompose.rs` `a_plain_call_over_delay_d_has_2d_of_network_time`<br>`crates/acn-attrib/tests/decompose.rs` `a_streamed_answer_is_still_2d_however_its_messages_overlap`<br>`crates/acn-attrib/tests/decompose.rs` `client_time_before_the_request_and_after_the_answer_is_other`<br>`crates/acn-attrib/tests/decompose.rs` `a_lost_request_its_backoff_and_its_retry`<br>`crates/acn-attrib/tests/decompose.rs` `a_request_lost_until_the_timeout_is_network_time`<br>`crates/acn-attrib/tests/decompose.rs` `a_lost_last_message_is_network_time_until_the_call_ends`<br>`crates/acn-attrib/tests/decompose.rs` `an_unanswered_request_waits_on_the_server`<br>`crates/acn-attrib/tests/decompose.rs` `a_cut_stream_and_its_retry_only_the_last_attempt_is_split`<br>`crates/acn-attrib/tests/decompose.rs` `a_message_past_its_call_is_clipped_and_the_clipping_recorded`<br>`crates/acn-attrib/tests/decompose.rs` `rows_that_cannot_happen_are_errors`<br>`crates/acn-attrib/tests/decompose.rs` `of_answers_sent_together_the_last_in_row_order_is_the_last_message`<br>`crates/acn-attrib/tests/decompose.rs` `of_requests_sent_together_the_last_in_row_order_is_the_last_attempt`<br>`crates/acn-attrib/tests/decompose.rs` `an_answered_attempt_then_an_unanswered_one_waits_on_the_server`<br>`crates/acn-attrib/tests/decompose.rs` `a_request_sent_before_its_call_started_is_clipped`<br>`crates/acn-attrib/tests/decompose.rs` `a_zero_length_leaf_has_zero_parts_whatever_rows_it_carries`<br>`crates/acn-attrib/tests/decompose.rs` `row_order_matters_only_for_rows_sent_together`<br>`crates/acn-hyp/tests/attribution.rs` `a_sim_bundle_over_delay_d_has_2d_of_network_time_per_call` |
+| ATR-12 | `090-attribution.md` | 2 | — | yes | `crates/acn-attrib/tests/decompose.rs` `a_remote_tool_is_split_as_a_chat_and_a_local_tool_is_all_tool_time`<br>`crates/acn-attrib/tests/decompose.rs` `a_local_tool_with_link_rows_is_an_error` |
+| ATR-13 | `090-attribution.md` | 2 | MUST | yes | `crates/acn-attrib/tests/decompose.rs` `network_time_is_split_by_hop_in_hop_order` |
+| ATR-14 | `090-attribution.md` | 2 | MUST | yes | `crates/acn-attrib/tests/decompose.rs` `a_message_past_its_call_is_clipped_and_the_clipping_recorded`<br>`crates/acn-attrib/tests/decompose.rs` `link_time_with_no_call_is_reported_not_attributed`<br>`crates/acn-attrib/tests/decompose.rs` `a_turn_the_views_read_differently_fails_the_bundle`<br>`crates/acn-attrib/tests/decompose.rs` `a_request_sent_before_its_call_started_is_clipped`<br>`crates/acn-hyp/tests/attribution.rs` `a_sim_bundle_over_delay_d_has_2d_of_network_time_per_call` |
+| ATR-15 | `090-attribution.md` | 2 | MUST | yes | `crates/acn-attrib/tests/decompose.rs` `overlapping_or_escaping_leaves_are_errors`<br>`crates/acn-attrib/tests/decompose.rs` `rows_that_cannot_happen_are_errors`<br>`crates/acn-attrib/tests/decompose.rs` `a_turn_the_views_read_differently_fails_the_bundle`<br>`crates/acn-hyp/tests/attribution.rs` `a_bundle_whose_attribution_failed_refuses_only_a_verdict_that_reads_it` |
+| ATR-20 | `090-attribution.md` | 3 | MUST | yes | `crates/acn-attrib/tests/quantities.rs` `a_share_is_a_ratio_of_sums_not_a_mean_of_ratios`<br>`crates/acn-hyp/tests/attribution.rs` `the_comparison_with_the_control_is_the_verdicts_effect_with_its_interval`<br>`crates/acn-hyp/tests/quantities.rs` `every_quantity_has_a_formula_over_one_replicates_rows` |
+| ATR-21 | `090-attribution.md` | 3 | MUST | yes | `crates/acn-attrib/tests/quantities.rs` `the_tail_is_the_nearest_rank_percentile_with_its_ties`<br>`crates/acn-hyp/tests/quantities.rs` `every_quantity_has_a_formula_over_one_replicates_rows` |
+| ATR-22 | `090-attribution.md` | 3 | MUST | yes | `crates/acn-attrib/tests/boundary.rs` `attribution_depends_on_the_trace_crate_alone_and_the_verdict_on_it`<br>`crates/acn-hyp/tests/attribution.rs` `a_sim_bundle_over_delay_d_has_2d_of_network_time_per_call`<br>`crates/acn-hyp/tests/quantities.rs` `every_quantity_has_a_formula_over_one_replicates_rows` |
+| ATR-23 | `090-attribution.md` | 3 | MUST | yes | `crates/acn-hyp/tests/attribution.rs` `the_comparison_with_the_control_is_the_verdicts_effect_with_its_interval` |
+| ATR-30 | `090-attribution.md` | 4 | MUST | yes | `crates/acn-attrib/tests/decompose.rs` `a_sum_that_overflows_is_an_error_not_a_wrapped_number`<br>`crates/acn-attrib/tests/decompose.rs` `row_order_matters_only_for_rows_sent_together`<br>`crates/acn-attrib/tests/quantities.rs` `a_share_is_a_ratio_of_sums_not_a_mean_of_ratios`<br>`crates/acn-attrib/tests/quantities.rs` `the_tail_is_the_nearest_rank_percentile_with_its_ties`<br>`crates/acn-hyp/tests/attribution.rs` `a_replicate_whose_sums_overflow_refuses_the_verdict` |
+| ATR-31 | `090-attribution.md` | 4 | MUST | yes | `crates/xtask/tests/env_hash.rs` `engine_hash_ignores_hypotheses_and_measured_scenarios_and_follows_the_frozen_crates` |
 | ATR-40 | `090-attribution.md` | 5 | MUST | no | — |
 | ATR-41 | `090-attribution.md` | 5 | MUST | no | — |
 | ATR-42 | `090-attribution.md` | 5 | MUST | no | — |

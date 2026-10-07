@@ -21,8 +21,9 @@
 /hypotheses/                     @teleworksai
 /scenarios/measured/             @teleworksai
 /crates/acn-hyp/                 @teleworksai
-/crates/acn-attrib/src/core/     @teleworksai
+/crates/acn-attrib/              @teleworksai
 /crates/acn-trace/src/schema/    @teleworksai
+/crates/acn-trace/src/ingest/    @teleworksai
 /specs/                          @teleworksai
 /env-hash.json                   @teleworksai
 /trace-scope.toml                @teleworksai

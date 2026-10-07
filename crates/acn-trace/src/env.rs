@@ -18,8 +18,9 @@ pub const FROZEN_SET: &[&str] = &[
     "hypotheses",
     "scenarios/measured",
     "crates/acn-hyp",
-    "crates/acn-attrib/src/core",
+    "crates/acn-attrib",
     "crates/acn-trace/src/schema",
+    "crates/acn-trace/src/ingest",
 ];
 
 /// The part of the frozen set that is code: `engine_hash` covers exactly the

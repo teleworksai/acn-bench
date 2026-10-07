@@ -370,8 +370,9 @@ fn sum_all(values: impl IntoIterator<Item = Option<i64>>) -> Result<Option<i64>>
 
 /// The critical path below `container` (ADR-14): among its chat, execute_tool and
 /// invoke_agent children, start from the one that ends last and step back to the
-/// child that ends latest at or before the current one's start, ties broken by the
-/// lowest span id. A child that has such children of its own (a sub-agent, or a
+/// child that ends latest at or before the current one's start. Among spans that
+/// end together, the one that started earliest wins, then a chat over a tool over
+/// a sub-agent, then the lowest span id (ADR-14's amendment). A child that has such children of its own (a sub-agent, or a
 /// tool that spawned one) is replaced by its own critical path. The leaves are the
 /// chats and tools whose time the turn waited on, in time order.
 fn critical_path(ix: &Index<'_>, container: usize) -> Vec<usize> {
@@ -544,11 +545,14 @@ fn session_rows(ix: &Index<'_>, inv: &Inventory) -> Result<Vec<Row>> {
     Ok(rows)
 }
 
-fn turn_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
-    let mut rows = Vec::new();
+/// A session and its turns, as (`acn.turn.index`, span) pairs.
+type SessionTurns = (usize, Vec<(i64, usize)>);
+
+/// The turns of every session, in turn-view order: sessions in stored order,
+/// then `acn.turn.index` (ADR-14).
+fn turn_order(ix: &Index<'_>) -> Result<Vec<SessionTurns>> {
+    let mut out = Vec::new();
     for sess in ix.named("acn.session") {
-        let s = ix.span(sess);
-        let run = req_str(s, "acn.run_id")?;
         let mut turns: Vec<(i64, usize)> = Vec::new();
         for &t in ix.children(sess) {
             if ix.span(t).name == "acn.turn" {
@@ -559,6 +563,85 @@ fn turn_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
         if turns.windows(2).any(|w| w[0].0 == w[1].0) {
             return invalid("two turns of a session share an acn.turn.index");
         }
+        out.push((sess, turns));
+    }
+    Ok(out)
+}
+
+/// What a critical-path leaf is (SPEC 090 ATR-2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeafKind {
+    Chat,
+    Tool,
+}
+
+/// One leaf of a turn's critical path (ATR-2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Leaf {
+    pub span_id: [u8; 8],
+    pub kind: LeafKind,
+    pub start_ns: i64,
+    pub end_ns: i64,
+    /// A tool's `acn.tool.placement`; `None` for a chat.
+    pub placement: Option<String>,
+}
+
+/// A turn and the leaves of its critical path, in path order (ATR-2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnPath {
+    pub session_id: [u8; 8],
+    pub turn_id: [u8; 8],
+    pub turn_index: i64,
+    pub start_ns: i64,
+    pub end_ns: i64,
+    pub leaves: Vec<Leaf>,
+}
+
+/// Every turn's critical path, in turn-view order, from the walk the turn view
+/// uses (SPEC 090 ATR-2, ADR-14). The trace must be in stored order.
+pub fn critical_paths(trace: &Trace) -> Result<Vec<TurnPath>> {
+    if !trace.is_sorted() {
+        return invalid("the trace is not in stored order (TRC-25)");
+    }
+    let ix = Index::new(trace)?;
+    let mut out = Vec::new();
+    for (sess, turns) in turn_order(&ix)? {
+        for (turn_index, t) in turns {
+            let ts = ix.span(t);
+            let mut leaves = Vec::new();
+            for leaf in critical_path(&ix, t) {
+                let l = ix.span(leaf);
+                let (kind, placement) = if l.name == "chat" {
+                    (LeafKind::Chat, None)
+                } else {
+                    (LeafKind::Tool, Some(req_str(l, "acn.tool.placement")?))
+                };
+                leaves.push(Leaf {
+                    span_id: l.span_id,
+                    kind,
+                    start_ns: l.start_ns,
+                    end_ns: l.end_ns,
+                    placement,
+                });
+            }
+            out.push(TurnPath {
+                session_id: ix.span(sess).span_id,
+                turn_id: ts.span_id,
+                turn_index,
+                start_ns: ts.start_ns,
+                end_ns: ts.end_ns,
+                leaves,
+            });
+        }
+    }
+    Ok(out)
+}
+
+fn turn_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
+    let mut rows = Vec::new();
+    for (sess, turns) in turn_order(ix)? {
+        let s = ix.span(sess);
+        let run = req_str(s, "acn.run_id")?;
         let mut prev_end: Option<i64> = None;
         for (index, t) in turns {
             let ts = ix.span(t);

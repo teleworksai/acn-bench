@@ -185,6 +185,7 @@ pub fn bundle(h: &Hypothesis, s: &Spec) -> BundleData {
         turns,
         calls,
         methods: BTreeSet::from([s.method.clone()]),
+        attrib: Ok(Vec::new()),
     }
 }
 
