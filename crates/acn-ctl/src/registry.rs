@@ -640,6 +640,7 @@ impl Ctl {
         st.code = Some(code.to_owned());
         st.error = Some(error);
         st.ended_at = Some(now());
+        tracing::warn!(request = id, code, "acn ctl run failed");
         if let Err(e) = self.set(id, st) {
             tracing::error!(request = id, "status: {e}");
         }
@@ -654,6 +655,7 @@ impl Ctl {
         if let Ok(mut r) = self.inner.run_ids.lock() {
             r.insert(run_id.to_hex());
         }
+        tracing::info!(request = id, run_id = %run_id.to_hex(), reused, "acn ctl run done");
         if let Err(e) = self.set(id, st) {
             tracing::error!(request = id, "status: {e}");
         }

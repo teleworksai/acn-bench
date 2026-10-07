@@ -134,6 +134,32 @@ fn wait(cond: impl Fn() -> bool) -> bool {
     cond()
 }
 
+/// `v` has every field the documented success schema of `op` requires
+/// (CTL-24): the document describes what the server answers.
+fn conforms(op: &str, v: &Value) {
+    let doc = acn_ctl::api::openapi();
+    let route = acn_ctl::api::ROUTES.iter().find(|r| r.op == op).unwrap();
+    let path = route.path.replace("{*", "{");
+    let code = route.codes[0].to_string();
+    let schema = &doc["paths"][&path][route.method.as_str()]["responses"][&code]["content"]["application/json"]
+        ["schema"]["$ref"];
+    let name = schema.as_str().unwrap().rsplit('/').next().unwrap();
+    let sc = &doc["components"]["schemas"][name];
+    for k in sc["required"].as_array().unwrap() {
+        let k = k.as_str().unwrap();
+        assert!(
+            v.get(k).is_some(),
+            "{op}: `{k}` is documented and missing: {v}"
+        );
+    }
+    if name == "Run" {
+        let st = &doc["components"]["schemas"]["Status"];
+        for k in st["required"].as_array().unwrap() {
+            assert!(v["status"].get(k.as_str().unwrap()).is_some(), "{v}");
+        }
+    }
+}
+
 fn request(seed: &str) -> Value {
     json!({
         "kind": "harness", "workload": "w.toml", "backend": "mockllm", "model": "mock-auto",
@@ -255,21 +281,25 @@ fn a_run_through_the_api_is_served_as_its_manifest_lists_it() {
     let a = r.addr;
     let (st, v) = json_call(a, "POST", "/v1/runs", &request("7"));
     assert_eq!(st, 202, "{v}");
+    conforms("submit_run", &v);
     let id = v["request_id"].as_str().unwrap().to_owned();
     let path = format!("/v1/runs/{id}");
     assert!(wait(|| json_call(a, "GET", &path, &json!({})).1["status"]
         ["state"]
         == "done"));
     let (_, v) = json_call(a, "GET", &path, &json!({}));
+    conforms("get_run", &v);
     let run_id = v["status"]["run_id"].as_str().unwrap().to_owned();
     // A resubmission: 200, the same request.
     let (st, again) = json_call(a, "POST", "/v1/runs", &request("7"));
     assert_eq!((st, again["request_id"].as_str()), (200, Some(id.as_str())));
     let (_, list) = json_call(a, "GET", "/v1/runs", &json!({}));
+    conforms("list_runs", &list);
     assert_eq!(list["runs"].as_array().unwrap().len(), 1);
     // The bundle, verified, with its files.
     let (st, b) = json_call(a, "GET", &format!("/v1/bundles/{run_id}"), &json!({}));
     assert_eq!(st, 200, "{b}");
+    conforms("get_bundle", &b);
     assert_eq!(b["run_id"], run_id.as_str());
     let files = b["files"].as_array().unwrap();
     assert!(!files.is_empty());
@@ -333,9 +363,11 @@ fn a_scenario_is_stored_by_its_hash_and_a_trace_driven_one_is_refused() {
     );
     let v: Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(st, 200, "{v}");
+    conforms("store_scenario", &v);
     let hash = blake3::hash(toml.as_bytes()).to_hex().to_string();
     assert_eq!(v["hash"], hash.as_str());
     let (st, g) = json_call(a, "GET", &format!("/v1/scenarios/{hash}"), &json!({}));
+    conforms("get_scenario", &g);
     assert_eq!(
         (st, g["toml"].as_str(), g["name"].as_str()),
         (200, Some(toml), Some("p"))
@@ -415,6 +447,7 @@ fn endpoints_are_named_checked_and_held_while_a_request_uses_them() {
         &json!({"backend": "mockllm", "url": "acn-mock://loopback"}),
     );
     assert_eq!(st, 200, "{v}");
+    conforms("put_endpoint", &v);
     let (st, v) = json_call(
         a,
         "PUT",
@@ -439,6 +472,7 @@ fn endpoints_are_named_checked_and_held_while_a_request_uses_them() {
     );
     assert_eq!(st, 400);
     let (_, l) = json_call(a, "GET", "/v1/endpoints", &json!({}));
+    conforms("list_endpoints", &l);
     assert_eq!(l["endpoints"].as_array().unwrap().len(), 1);
     // A running request names it: it cannot be deleted meanwhile.
     let mut q = request("7");
@@ -567,4 +601,121 @@ fn a_stopping_server_serves_reads_and_refuses_writes() {
     assert_eq!(st, 200);
     let s = stop(r);
     assert!(s.ok);
+}
+
+/// Cites: CTL-24, CTL-10
+#[test]
+fn the_documented_request_schema_is_the_one_the_parser_takes() {
+    use acn_ctl::request::{ByPath, Kind, ReqOpts, ScenarioRef, Submit};
+    let doc = acn_ctl::api::openapi();
+    let schema = &doc["components"]["schemas"]["Submit"];
+    let props = schema["properties"].as_object().unwrap();
+    let keys = |v: &Value| v.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+    // Every field of the parser's types, set: a field added to `Submit` or
+    // `ReqOpts` and not named here fails to compile, and one not documented
+    // fails below.
+    let full = Submit {
+        kind: Kind::Harness,
+        workload: Some("w.toml".into()),
+        backend: Some("mockllm".into()),
+        model: Some("m".into()),
+        sheet: Some("s.toml".into()),
+        mode: "sim".into(),
+        arm: "treatment".into(),
+        replicates: 1,
+        vary: [("k".to_owned(), "v".to_owned())].into(),
+        hypothesis: Some("h.toml".into()),
+        seed: Some("1".into()),
+        opt: ReqOpts {
+            endpoint: Some(String::new()),
+            endpoint_name: Some("e".into()),
+            max_retries: Some(0),
+            retry_base_ms: Some(0),
+            request_timeout_ms: Some(0),
+            stall_threshold_ms: Some(0.0),
+        },
+        scenario: Some(ScenarioRef::Path(ByPath {
+            path: "s.toml".into(),
+        })),
+        retry: true,
+    };
+    let mut v = serde_json::to_value(&full).unwrap();
+    // `retry` is read, never written (CTL-13).
+    v["retry"] = true.into();
+    let mut documented = keys(&Value::Object(props.clone()));
+    let mut parsed = keys(&v);
+    documented.sort();
+    parsed.sort();
+    assert_eq!(documented, parsed, "Submit's fields are its schema's");
+    assert_eq!(
+        keys(&props["opt"]["properties"]),
+        keys(&v["opt"]),
+        "ReqOpts' fields are its schema's"
+    );
+    // What the schema documents parses back.
+    Submit::parse(v.to_string().as_bytes()).unwrap();
+    let mut by_hash = v.clone();
+    by_hash["scenario"] = json!({"hash": "0".repeat(64)});
+    Submit::parse(by_hash.to_string().as_bytes()).unwrap();
+    // The required set is the parser's: each alone parses, and without any
+    // one of them a request does not.
+    let required: Vec<&str> = schema["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    let only: serde_json::Map<String, Value> = v
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(k, _)| required.contains(&k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    Submit::parse(Value::Object(only.clone()).to_string().as_bytes()).unwrap();
+    for k in &required {
+        let mut less = only.clone();
+        less.remove(*k);
+        assert!(
+            Submit::parse(Value::Object(less).to_string().as_bytes()).is_err(),
+            "`{k}` is documented as required"
+        );
+    }
+    // The documented enums are the values validation takes. (`full` itself
+    // names both a hypothesis and a seed, which validation refuses.)
+    let valid = |r: &Value| Submit::parse(r.to_string().as_bytes()).unwrap().validate();
+    let base = request("1");
+    assert!(valid(&base).is_ok());
+    for (field, values) in [
+        ("mode", &props["mode"]),
+        ("arm", &props["arm"]),
+        ("backend", &props["backend"]),
+    ] {
+        for val in values["enum"].as_array().unwrap() {
+            let mut r = base.clone();
+            r[field] = val.clone();
+            if field == "mode" && val != "sim" {
+                // Not sim: the mock needs an endpoint.
+                r["opt"] = json!({"endpoint": "acn-mock://loopback"});
+            }
+            let res = valid(&r);
+            assert!(
+                res.is_ok() || field == "backend",
+                "{field} = {val}: {:?}",
+                res.err()
+            );
+        }
+        let mut r = base.clone();
+        r[field] = "nonsense".into();
+        assert!(valid(&r).is_err(), "{field} takes an undocumented value");
+    }
+    let generator = json!({"kind": "generator", "sheet": "s.toml", "mode": "sim", "arm": "control",
+                     "replicates": 1, "seed": "9223372036854775807"});
+    assert!(valid(&generator).is_ok());
+    let mut over = generator.clone();
+    over["seed"] = "9223372036854775808".into();
+    assert!(valid(&over).is_err(), "the seed's documented bound");
+    let mut both = generator.clone();
+    both["hypothesis"] = "h.toml".into();
+    assert!(valid(&both).is_err(), "exactly one of hypothesis and seed");
 }

@@ -152,7 +152,7 @@ pub const ROUTES: &[Route] = &[
         op: "shutdown",
         summary: "Finish the run in progress and stop (CTL-1).",
         body: Some(JSON),
-        codes: &[200, 415],
+        codes: &[200, 400, 415],
     },
 ];
 
@@ -192,7 +192,7 @@ pub fn openapi() -> Value {
         if r.body.is_some() {
             codes.push(413);
         }
-        if r.method != Method::Get {
+        if r.method != Method::Get && r.op != "shutdown" {
             codes.push(503);
         }
         let mut seen = std::collections::BTreeSet::new();
@@ -200,19 +200,15 @@ pub fn openapi() -> Value {
         let responses: serde_json::Map<String, Value> = codes
             .iter()
             .map(|c| {
-                let schema = match (r.op, *c) {
-                    ("openapi", 200) => json!({"type": "object", "description": "This document."}),
-                    ("get_bundle_file", 200) => {
-                        json!({"description": status_text(*c), "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}})
-                    }
-                    _ => json!({"$ref": "#/components/schemas/Answer"}),
-                };
-                let resp = if schema.get("content").is_some() {
-                    schema
+                let content = if *c >= 400 {
+                    json!({JSON: {"schema": schema_ref("Refusal")}})
                 } else {
-                    json!({"description": status_text(*c), "content": {JSON: {"schema": schema}}})
+                    success(r.op)
                 };
-                (c.to_string(), resp)
+                (
+                    c.to_string(),
+                    json!({"description": status_text(*c), "content": content}),
+                )
             })
             .collect();
         let mut op = json!({
@@ -230,11 +226,10 @@ pub fn openapi() -> Value {
                 "store_scenario" => {
                     json!({"type": "string", "description": "A SPEC 020 scenario."})
                 }
-                _ => json!({"$ref": "#/components/schemas/Empty"}),
+                _ => schema_ref("Empty"),
             };
-            // An empty body is the empty object on the routes that take one.
-            let required = !matches!(r.op, "shutdown" | "delete_endpoint");
-            op["requestBody"] = json!({"required": required, "content": {ct: {"schema": schema}}});
+            // The content type is required even for an empty body (CTL-3).
+            op["requestBody"] = json!({"required": true, "content": {ct: {"schema": schema}}});
         }
         paths
             .entry(path)
@@ -246,60 +241,169 @@ pub fn openapi() -> Value {
         "info": {"title": "acn-ctl", "version": "1", "description": "The acn-bench control plane (SPEC 070)."},
         "servers": [{"url": "http://127.0.0.1:{port}", "variables": {"port": {"default": "8080"}}}],
         "paths": paths,
-        "components": {"schemas": {
-            "Answer": {
-                "type": "object",
-                "required": ["ok"],
-                "properties": {
-                    "ok": {"type": "boolean"},
-                    "code": {"type": "string"},
-                    "error": {"type": "string"}
-                }
-            },
-            "Empty": {"type": "object", "additionalProperties": false},
-            "Endpoint": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["backend", "url"],
-                "properties": {
-                    "backend": {"type": "string"},
-                    "url": {"type": "string"}
-                }
-            },
-            "Submit": {
-                "type": "object",
-                "additionalProperties": false,
-                "description": "A run request (SPEC 070 §2, CTL-10).",
-                "required": ["kind", "scenario"],
-                "properties": {
-                    "kind": {"enum": ["harness", "generator"]},
-                    "workload": {"type": "string"},
-                    "backend": {"type": "string"},
-                    "model": {"type": "string"},
-                    "sheet": {"type": "string"},
-                    "mode": {"type": "string"},
-                    "arm": {"type": "string"},
-                    "replicates": {"type": "integer", "minimum": 1},
-                    "vary": {"type": "object", "additionalProperties": {"type": "string"}},
-                    "hypothesis": {"type": "string"},
-                    "seed": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
-                    "opt": {"type": "object", "additionalProperties": false, "properties": {
-                        "endpoint": {"type": "string"},
-                        "endpoint_name": {"type": "string"},
+        "components": {"schemas": schemas()}
+    })
+}
+
+fn schema_ref(name: &str) -> Value {
+    json!({"$ref": format!("#/components/schemas/{name}")})
+}
+
+/// The content of a route's success answer.
+fn success(op: &str) -> Value {
+    let name = match op {
+        "openapi" => {
+            return json!({JSON: {"schema": {"type": "object", "description": "This document."}}});
+        }
+        // CTL-23: the file's bytes, typed by its extension.
+        "get_bundle_file" => {
+            let bin = json!({"schema": {"type": "string", "format": "binary"}});
+            return json!({
+                "application/vnd.apache.parquet": bin,
+                JSON: bin,
+                "application/octet-stream": bin,
+            });
+        }
+        "store_scenario" => "Stored",
+        "get_scenario" => "Scenario",
+        "submit_run" => "Submitted",
+        "list_runs" => "Runs",
+        "get_run" => "Run",
+        "get_bundle" => "Bundle",
+        "list_endpoints" => "Endpoints",
+        "put_endpoint" => "Named",
+        _ => "Ok",
+    };
+    json!({JSON: {"schema": schema_ref(name)}})
+}
+
+/// An answer object: `ok: true` and `fields`, each required.
+fn answer_schema(desc: &str, fields: &[(&str, Value)]) -> Value {
+    let mut props = serde_json::Map::new();
+    props.insert("ok".into(), json!({"const": true}));
+    let mut required = vec![json!("ok")];
+    for (k, v) in fields {
+        props.insert((*k).into(), v.clone());
+        required.push(json!(k));
+    }
+    json!({"type": "object", "description": desc, "required": required, "properties": props})
+}
+
+fn schemas() -> Value {
+    let hex = json!({"type": "string", "pattern": "^[0-9a-f]{64}$"});
+    let state = json!({"enum": ["queued", "running", "done", "failed"]});
+    let text = json!({"type": "string"});
+    json!({
+        "Refusal": {
+            "type": "object",
+            "description": "Every refusal (CTL-2).",
+            "required": ["ok", "code", "error"],
+            "properties": {
+                "ok": {"const": false},
+                "code": {"type": "string", "description": "A stable machine-readable reason."},
+                "error": {"type": "string"}
+            }
+        },
+        "Ok": answer_schema("Done.", &[]),
+        "Named": answer_schema("The endpoint registered (CTL-30).", &[("name", text.clone())]),
+        "Stored": answer_schema("The scenario stored (CTL-20).", &[("hash", hex.clone()), ("name", text.clone())]),
+        "Scenario": answer_schema("A stored scenario (CTL-20).", &[("hash", hex.clone()), ("name", text.clone()), ("toml", text.clone())]),
+        "Submitted": answer_schema("The request: 202 when new, 200 when it was already known (CTL-21).", &[("request_id", hex.clone()), ("state", state.clone())]),
+        "Runs": answer_schema("Every request, in submission order (CTL-21).", &[("runs", json!({"type": "array", "items": {
+            "type": "object", "required": ["request_id", "state"],
+            "properties": {"request_id": hex, "state": state}
+        }}))]),
+        "Run": answer_schema("A request and its status (CTL-21).", &[
+            ("request_id", hex.clone()),
+            ("request", json!({"type": "object", "description": "The resolved request, as `request.json` holds it (CTL-11)."})),
+            ("status", schema_ref("Status")),
+        ]),
+        "Status": {
+            "type": "object",
+            "description": "A request's status (CTL-21). `run_id` is set from `running` on; `bundle_digest` and `reused` when `done`; `code` and `error` when `failed`. Times are RFC 3339 UTC.",
+            "required": ["seq", "state", "submitted_at"],
+            "properties": {
+                "seq": {"type": "integer", "minimum": 0},
+                "state": state,
+                "run_id": hex,
+                "bundle_digest": hex,
+                "reused": {"type": "boolean"},
+                "code": text,
+                "error": text,
+                "submitted_at": text,
+                "started_at": text,
+                "ended_at": text
+            }
+        },
+        "Bundle": answer_schema("A bundle, verified (CTL-22).", &[
+            ("run_id", hex.clone()),
+            ("bundle_digest", hex.clone()),
+            ("manifest", json!({"type": "object", "description": "The bundle's manifest (SPEC 010)."})),
+            ("files", json!({"type": "array", "items": {
+                "type": "object", "required": ["path", "size", "hash"],
+                "properties": {"path": text, "size": {"type": "integer", "minimum": 0}, "hash": hex}
+            }})),
+        ]),
+        "Endpoints": answer_schema("The registered endpoints (CTL-30).", &[("endpoints", json!({"type": "array", "items": {
+            "type": "object", "required": ["name", "backend", "url"],
+            "properties": {"name": text, "backend": text, "url": text}
+        }}))]),
+        "Empty": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "`{}`; an empty body is taken as `{}`."
+        },
+        "Endpoint": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["backend", "url"],
+            "properties": {
+                "backend": {"enum": BACKENDS},
+                "url": {"type": "string", "description": "A base URL without credentials, or `acn-mock://loopback` for `mockllm` (HAR-26)."}
+            }
+        },
+        "Submit": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "A run request (SPEC 070 §2, CTL-10). A `harness` request names `workload`, `backend` and `model` and no `sheet`; a `generator` request names `sheet` and none of those three. Exactly one of `hypothesis` and `seed`. Paths are relative to the workspace root.",
+            "required": ["kind", "mode", "arm", "replicates"],
+            "properties": {
+                "kind": {"enum": ["harness", "generator"]},
+                "workload": {"type": "string", "description": "harness: the workload file."},
+                "backend": {"enum": BACKENDS, "description": "harness."},
+                "model": {"type": "string", "description": "harness: the model, or the mock profile."},
+                "sheet": {"type": "string", "description": "generator: the sheet (GEN-1)."},
+                "mode": {"enum": ["sim", "live", "netem"]},
+                "arm": {"enum": ["treatment", "control"]},
+                "replicates": {"type": "integer", "minimum": 1},
+                "vary": {"type": "object", "additionalProperties": {"type": "string"}, "description": "`name: value`, once per varied parameter."},
+                "hypothesis": {"type": "string", "description": "The hypothesis file; the seed is derived from it (HYP-9)."},
+                "seed": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,18})$", "description": "Decimal, at most 2^63 − 1."},
+                "retry": {"type": "boolean", "description": "Queue a failed request again (CTL-13)."},
+                "opt": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "description": "Run options, as the CLI's flags; an absent one takes the CLI's default. At most one of `endpoint` and `endpoint_name`.",
+                    "properties": {
+                        "endpoint": {"type": "string", "description": "A base URL (HAR-25)."},
+                        "endpoint_name": {"type": "string", "pattern": "^[a-z0-9-]{1,64}$", "description": "A registered endpoint (CTL-30)."},
                         "max_retries": {"type": "integer", "minimum": 0},
                         "retry_base_ms": {"type": "integer", "minimum": 0},
                         "request_timeout_ms": {"type": "integer", "minimum": 0},
                         "stall_threshold_ms": {"type": "number", "minimum": 0}
-                    }},
-                    "scenario": {"oneOf": [
-                        {"type": "object", "additionalProperties": false, "required": ["path"], "properties": {"path": {"type": "string"}}},
-                        {"type": "object", "additionalProperties": false, "required": ["hash"], "properties": {"hash": {"type": "string"}}}
-                    ]}
-                }
+                    }
+                },
+                "scenario": {"oneOf": [
+                    {"type": "object", "additionalProperties": false, "required": ["path"], "properties": {"path": {"type": "string", "description": "A scenario file in the workspace."}}},
+                    {"type": "object", "additionalProperties": false, "required": ["hash"], "properties": {"hash": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "A stored scenario (CTL-20)."}}}
+                ]}
             }
-        }}
+        }
     })
 }
+
+/// The backends of HAR-20.
+const BACKENDS: [&str; 5] = ["mockllm", "openai", "vllm", "sglang", "anthropic"];
 
 /// The committed form of [`openapi`]: pretty, sorted, one newline.
 #[must_use]

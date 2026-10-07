@@ -36,6 +36,7 @@ dependencies = [
  "acn-mockllm",
  "acn-trace",
  "anyhow",
+ "blake3",
  "clap",
  "reqwest",
  "serde_json",

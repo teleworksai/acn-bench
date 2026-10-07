@@ -11,6 +11,8 @@ description = "Spec-acceptance suites, one file per POC under tests/accept/ (CON
 #   name = "p4"
 #   path = "p4.rs"
 autotests = false
+# SPEC 070's suite, ctl.rs, drives the `acn` binary, so it is acn-cli's test
+# (`cargo test -p acn-cli --test accept_ctl`; ADR-39).
 
 [lints]
 workspace = true

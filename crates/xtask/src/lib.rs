@@ -8,6 +8,7 @@
 
 pub mod attributes;
 pub mod citations;
+pub mod ctl_api;
 pub mod docs_inventory;
 pub mod env_hash;
 pub mod error;

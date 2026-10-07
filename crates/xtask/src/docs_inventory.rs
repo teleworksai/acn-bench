@@ -231,6 +231,13 @@ pub fn generate(root: &Path) -> Result<BTreeMap<String, String>> {
     if let Some(page) = report_coverage_md(root)? {
         files.insert(format!("{GENERATED_DIR}/report-coverage.md"), page);
     }
+    // CTL-24: the control plane's API page, from its committed document.
+    if let Some(page) = crate::ctl_api::load(root)? {
+        files.insert(
+            format!("{GENERATED_DIR}/ctl-api.md"),
+            format!("{HEADER}{page}"),
+        );
+    }
     // HYP-12: the quantity table, in a workspace that has the verdict crate (the
     // small test fixtures do not). The table itself is this binary's acn-hyp.
     if root.join("crates/acn-hyp/Cargo.toml").is_file() {
