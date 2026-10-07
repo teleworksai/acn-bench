@@ -138,3 +138,61 @@ pub(crate) fn fresh_regen_dir(runs: &Path, loop_id: &Digest) -> Result<PathBuf, 
     }
     err(Code::Internal, "no regeneration directory left")
 }
+
+/// A fresh `runs/live/<n>/` for a twin's live bundles, `n` the smallest
+/// positive decimal not yet used (LOOP-12). Returns it and `live/<n>`.
+pub(crate) fn fresh_live_dir(runs: &Path) -> Result<(PathBuf, String), LoopError> {
+    let parent = dir_under(runs, &["live"])?;
+    for n in 1u64.. {
+        let dir = parent.join(n.to_string());
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok((dir, format!("live/{n}"))),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(io_err(&dir, e)),
+        }
+    }
+    err(Code::Internal, "no live directory left")
+}
+
+/// The path of a twin object (LOOP-16).
+pub(crate) fn twin_path(runs: &Path, loop_id: &Digest, verdict_id: &Digest) -> PathBuf {
+    runs.join("loop")
+        .join(loop_id.to_hex())
+        .join("twin")
+        .join(verdict_id.to_hex())
+        .join(crate::loop_twin::TWIN_JSON)
+}
+
+/// Write a twin object as `runs/loop/<loop_id>/twin/<verdict_id>/twin.json`,
+/// all or nothing, never over an existing one (LOOP-16, `twin_exists`).
+pub(crate) fn write_twin(
+    runs: &Path,
+    loop_id: &Digest,
+    verdict_id: &Digest,
+    json: &str,
+) -> Result<PathBuf, LoopError> {
+    let parent = dir_under(runs, &["loop", &loop_id.to_hex(), "twin"])?;
+    let dir = parent.join(verdict_id.to_hex());
+    let exists = || LoopError {
+        code: Code::TwinExists,
+        message: format!(
+            "{} exists; a twin object is never overwritten (LOOP-16)",
+            dir.display()
+        ),
+    };
+    if std::fs::symlink_metadata(&dir).is_ok() {
+        return Err(exists());
+    }
+    let staging = staging_dir(&dir)?;
+    let result =
+        write_file(&staging.join(crate::loop_twin::TWIN_JSON), json.as_bytes()).and_then(|()| {
+            if std::fs::symlink_metadata(&dir).is_ok() {
+                return Err(exists());
+            }
+            std::fs::rename(&staging, &dir).map_err(|e| io_err(&dir, e))
+        });
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    result.map(|()| dir.join(crate::loop_twin::TWIN_JSON))
+}

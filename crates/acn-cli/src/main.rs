@@ -2,7 +2,8 @@
 //! logs on stderr, exit 0 iff `"ok": true`). Subcommands land with their specs:
 //! `version` (T01), `bundle verify` (TRC-23, T02b), `harness run` (HAR-50, T04),
 //! `hyp lint` (HYP-27, T05), `hyp verdict` (HYP-20, T05.2b), `loop run` (LOOP-10,
-//! LOOP-14, T05b.1), `evidence verify` (LOOP-2, T05b.2).
+//! LOOP-14, T05b.1), `evidence verify` (LOOP-2, T05b.2), `loop twin` (LOOP-12,
+//! LOOP-16, T11b.3).
 #![forbid(unsafe_code)]
 
 mod build_info;
@@ -82,6 +83,19 @@ enum LoopCmd {
     /// With --from-report, regenerate a report and compare it byte for byte
     /// (LOOP-14).
     Run(Box<LoopRun>),
+    /// Run L2 for a loop report: its decision cells and its k best and worst
+    /// cells again in live, on a mock the harness serves per replicate
+    /// (HAR-26), and the L2 verdict over both modes (LOOP-12). The report must
+    /// regenerate first (LOOP-4). Writes `runs/live/<n>/` and
+    /// `runs/loop/<loop_id>/twin/<verdict_id>/twin.json` (LOOP-16).
+    Twin {
+        /// The loop_id of a report under `runs/loop/`.
+        #[arg(long = "loop", value_name = "LOOP_ID")]
+        loop_id: String,
+        /// How many best and worst cells to twin besides the decision cells.
+        #[arg(long, default_value_t = 1)]
+        top: u32,
+    },
 }
 
 #[derive(clap::Args)]
@@ -676,6 +690,32 @@ fn loop_run(a: &LoopRun) -> Value {
     }
 }
 
+/// `acn loop twin` (LOOP-12): `ok` iff the twin completed, whatever the
+/// divergence, which the verdict records.
+fn loop_twin(loop_id: &str, top: u32) -> Value {
+    let (bin, mut exec, root) = match loop_setup() {
+        Ok(x) => x,
+        Err(e) => return json!({ "ok": false, "code": "internal", "error": format!("{e:#}") }),
+    };
+    match acn_hyp::loop_twin::twin(&root.join("runs"), loop_id, top, bin, &mut exec) {
+        Ok(t) => twinned_json(&t),
+        Err(e) => loop_failure(&e),
+    }
+}
+
+/// The one JSON object of a completed twin (LOOP-12, CON-8).
+fn twinned_json(t: &acn_hyp::loop_twin::Twinned) -> Value {
+    json!({
+        "ok": true,
+        "loop_id": t.loop_id.to_hex(),
+        "twin": t.twin.display().to_string(),
+        "verdict_id": t.verdict_id.to_hex(),
+        "run_ids": t.run_ids.iter().map(acn_trace::identity::Digest::to_hex).collect::<Vec<_>>(),
+        "twinned": t.twinned,
+        "twin_failed": t.twin_failed,
+    })
+}
+
 /// `acn evidence verify` (LOOP-2): `ok` iff every link of every chain holds.
 fn evidence_verify(id: &str, runs_dir: &std::path::Path) -> Value {
     let (bin, mut exec, root) = match loop_setup() {
@@ -694,6 +734,7 @@ fn evidence_verify(id: &str, runs_dir: &std::path::Path) -> Value {
                 "bundles": c.bundles,
                 "verdicts": c.verdicts,
                 "regenerated": c.regenerated.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                "twins": c.twins.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
                 "findings": c.findings.iter().map(|f| json!({ "code": f.code.as_str(), "message": f.message })).collect::<Vec<_>>(),
             })
         }
@@ -814,6 +855,9 @@ fn run() -> Value {
         Cmd::Loop {
             cmd: LoopCmd::Run(a),
         } => loop_run(&a),
+        Cmd::Loop {
+            cmd: LoopCmd::Twin { loop_id, top },
+        } => loop_twin(&loop_id, top),
         Cmd::Evidence {
             cmd: EvidenceCmd::Verify { id, runs_dir },
         } => evidence_verify(&id, &runs_dir),
@@ -841,6 +885,38 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // CON-19: tests are exempt
     use super::Cli;
     use clap::CommandFactory as _;
+
+    /// Cites: LOOP-12
+    #[test]
+    fn a_completed_twin_prints_ok_and_the_keys_loop_12_names() {
+        use acn_trace::identity::Digest;
+        let t = acn_hyp::loop_twin::Twinned {
+            loop_id: Digest::of(b"l"),
+            twin: "runs/loop/l/twin/v/twin.json".into(),
+            verdict_id: Digest::of(b"v"),
+            run_ids: vec![Digest::of(b"a"), Digest::of(b"b")],
+            twinned: true,
+            twin_failed: true,
+        };
+        let v = super::twinned_json(&t);
+        // A divergence is a result: `ok` stays true (CON-8).
+        assert_eq!(v["ok"], true);
+        let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "loop_id",
+                "ok",
+                "run_ids",
+                "twin",
+                "twin_failed",
+                "twinned",
+                "verdict_id"
+            ]
+        );
+        assert_eq!(v["run_ids"].as_array().unwrap().len(), 2);
+    }
 
     /// Every argument of a subcommand, hidden or not: its id and its long and
     /// short names. (clap's `env` feature is off, so none reads the environment.)
