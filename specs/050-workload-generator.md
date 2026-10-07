@@ -1,6 +1,6 @@
 # SPEC 050 — The workload generator
 
-**Status:** Draft v0.1 (October 2026; written for T13). **Inherits:** SPEC 000, 010, 020, 030, 040. **Prefix:** GEN. **Crates:** `acn-gen`, `acn-harness` (the driver seam), `acn-cli`.
+**Status:** Draft v0.2 (October 2026; v0.2: GEN-11's tool descriptions carry HAR-42's marker, and GEN-13 says how HAR-11's timestamp bounds the shared system prefix, issue #53; v0.1 written for T13). **Inherits:** SPEC 000, 010, 020, 030, 040. **Prefix:** GEN. **Crates:** `acn-gen`, `acn-harness` (the driver seam), `acn-cli`.
 **Purpose:**
 - define the traffic of many agent sessions as data: a *sheet* of the parameters the report's traffic model names (its §3.4 and Appendix C), each a distribution;
 - define how a seeded generator draws sessions, turns and calls from a sheet, and sends them to the mock in `sim` or `live`, over a scenario's network when one is given;
@@ -70,7 +70,7 @@ A plan therefore never depends on when a response arrives, and a `sim` run and i
 - In `sim`, calls that reach the mock at one instant form one batch (HAR-41), whichever session they come from.
 
 **GEN-11** Every call of a session MUST carry the same `tools` and differ only in `tool_choice`. So each call's prompt extends the last (MLM-10), and caching behaves as it does for an agent.
-- **The tools.** There is one tool per class `tool_class` can draw, plus `subagent` when `fanout_width` can be above 0. Each is named `gen_<class>`, with the description `A <class> tool.`, parameters `{"type": "object", "properties": {}}`, listed in TRC-13's class order.
+- **The tools.** There is one tool per class `tool_class` can draw, plus `subagent` when `fanout_width` can be above 0. Each is named `gen_<class>`, with the description `<marker> A <class> tool.`, where `<marker>` is the replicate's isolation marker that HAR-42 puts at the start of every tool definition's description, parameters `{"type": "object", "properties": {}}`, listed in TRC-13's class order.
 - **A turn.** It appends a `user` message of `user_tokens` tokens of text (GEN-13), then makes its tool calls, then its answer call.
 - **A tool call.** It sends `tool_choice: {"type": "allowed_tools", "allowed_tools": {"tools": [{"type": "function", "function": {"name": "gen_<class>"}}]}}`, so the mock calls the drawn class (MLM-40). It then waits that class's drawn `tool_duration_ns`, and appends the assistant message and a `tool` message of `tool_result_tokens` tokens.
 - **The answer call.** It sends `tool_choice: "none"` and `max_tokens = answer_tokens`. The mock draws the answer's length from its profile and caps it there (MLM-40).
@@ -83,7 +83,7 @@ A plan therefore never depends on when a response arrives, and a `sim` run and i
 - the sub-agents run concurrently, and the turn's next call waits for all of them;
 - spans and lineages are recorded as HAR-5 and TRC-14 record fan-out.
 
-**GEN-13** Synthetic text MUST be made of words drawn from its lineage's text stream (GEN-3): four lowercase ASCII letters and no character JSON escapes, separated from the next by nothing. A message of *n* tokens has 4*n* content bytes. MLM-11 tokenizes the whole canonical prompt, so its token count is close to, not exactly, *n*. The system message of every session is the same `system_tokens` words, drawn from `gen.text.system`, so that sessions share a system prefix. The run's isolation marker (HAR-42) prefixes it as it prefixes the harness's.
+**GEN-13** Synthetic text MUST be made of words drawn from its lineage's text stream (GEN-3): four lowercase ASCII letters and no character JSON escapes, separated from the next by nothing. A message of *n* tokens has 4*n* content bytes. MLM-11 tokenizes the whole canonical prompt, so its token count is close to, not exactly, *n*. The system message of every session is the same `system_tokens` words, drawn from `gen.text.system`. The run's isolation marker (HAR-42) prefixes it as it prefixes the harness's, and, with HAR-11's `timestamp_in_system_prompt` on (its default, which GEN-21 keeps), the turn's timestamp line follows the marker. Sessions and turns therefore share a cached prefix up to that line, and the system words after it are shared only by the calls of one turn. Which knobs apply to synthetic traffic, and how, is §6's question 3.
 
 **GEN-14** Compaction MUST be HAR-4's on the main lineage, with the trigger `window_full` of HAR-15 and the sheet's `compact_at_tokens` as the threshold (0: never):
 - the summary call carries the tools and `tool_choice: "none"`;

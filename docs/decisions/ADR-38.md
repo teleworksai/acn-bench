@@ -97,3 +97,8 @@ T13 asks for a session/turn/call generator "from the Appendix C parameter sheet"
   - The acceptance runs use mock profiles with timing a thousand times shorter, because `live` waits on the wall clock. Profiles are not in the run_id (MLM-51).
   - **Where the CLI's acceptance lives.** SPEC 050 §5 places "the CLI prints one object and refuses a knob `vary`" in `tests/accept/gen_sim.rs`. It is in `crates/acn-cli/tests/gen_cli.rs`, because only the CLI's own package can run the `acn` binary (`CARGO_BIN_EXE_acn`). The same file covers a `live` run with no endpoint and the refusal of the served mock in `sim`.
   - **Counts are run totals.** `sessions` and `calls` count every replicate's, and the tests tie them to the bundle's `acn.session` and `chat` spans.
+- **SPEC 050 v0.2 (issue #53).** The spec now says what the code does since PR 52:
+  - GEN-11's descriptions start with HAR-42's marker;
+  - GEN-13's shared system prefix ends at HAR-11's timestamp line when the knob is on.
+  
+  The interim notes above are settled by this change.
