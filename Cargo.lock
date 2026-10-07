@@ -23,6 +23,11 @@ dependencies = [
 [[package]]
 name = "acn-attrib"
 version = "0.1.0"
+dependencies = [
+ "acn-trace",
+ "thiserror",
+ "toml",
+]
 
 [[package]]
 name = "acn-cli"
@@ -137,6 +142,7 @@ dependencies = [
 name = "acn-hyp"
 version = "0.1.0"
 dependencies = [
+ "acn-attrib",
  "acn-harness",
  "acn-mockllm",
  "acn-trace",

@@ -1,6 +1,6 @@
 # SPEC 090 — Attribution
 
-**Status:** Draft v0.1 (October 2026; written for T15). **Inherits:** SPEC 000, 010, 020, 040, 080. **Prefix:** ATR. **Crates:** `acn-attrib` (its frozen core, `src/core/`, CON-7, and its plots), `acn-trace` (the critical path it exposes), `acn-hyp` (the quantities it registers), `acn-cli` (`acn attrib`).
+**Status:** Draft v0.2 (October 2026; v0.2: the frozen boundary and the rules the T15.2 reviews sharpened, ADR-40; v0.1 written for T15). **Inherits:** SPEC 000, 010, 020, 040, 080. **Prefix:** ATR. **Crates:** `acn-attrib` (frozen whole, CON-7), `acn-trace` (the critical path its frozen ingester exposes), `acn-hyp` (the quantities it registers), `acn-cli` (`acn attrib` and the heatmap).
 **Purpose:**
 - say where a turn's time went: how much the emulated network took, on which hop, and how much the model, the tools, retries and everything else took;
 - define the attribution quantities a hypothesis names, above all `network_attributable_share`, once, in frozen code, so that a verdict and a report compute the same number;
@@ -14,7 +14,7 @@ Attribution decides nothing about a hypothesis. The treatment-minus-control effe
 
 - **Turn** — a row of the turn view (TRC-32), with its start and end (ATR-2).
 - **Critical path** and its **leaves** — the chats and tools a turn waited on, found by the walk of ADR-14 (ATR-2). A leaf's time is its end less its start.
-- **Link row** — a row of the link view (TRC-34). Its **interval** runs from `enqueue_ns` (sent) to `dequeue_ns` (received): applied delay, rate-limit and serialization time, and the head-of-line wait for an earlier message, are all inside it. A dropped message has `dropped = true`; its interval is empty. Both times are on the run clock, as span times are.
+- **Link row** — a row of the link view (TRC-34). Its **interval** runs from `enqueue_ns` (sent) to `dequeue_ns` (received): applied delay, rate-limit and serialization time, and the head-of-line wait for an earlier message, are all inside it. A dropped message has `dropped = true` and an empty interval, `dequeue_ns = enqueue_ns` (EMU-36). Both times are on the run clock, as span times are.
 - **Attempt** — one request of a call and the answer it got. Its request is one uplink link row (EMU-32, EMU-36); its answer is the downlink rows it carried before it ended.
 - **Hop** — one link in one direction: a (`link_id`, `direction`) pair, ordered bytewise by `link_id` (UTF-8), then by `direction`.
 - **Cause** — one of `network`, `model`, `tool`, `retry` and `other` (ATR-10).
@@ -32,13 +32,14 @@ Attribution decides nothing about a hypothesis. The treatment-minus-control effe
 - A turn with no leaves is all `other_ns`. A zero-length turn or leaf has zero parts.
 - Time a sub-agent or a fan-out tool spends outside the leaves that replace it on the path (ADR-14) is `other_ns`.
 
-**ATR-11** A chat leaf's parts. Its link rows are those whose `call_id` is the leaf, clipped to the leaf's start and end; the nanoseconds removed by clipping are recorded (ATR-14). With no link rows, the leaf's whole time is `model_ns`. Otherwise:
-- The attempts are the uplink rows in `enqueue_ns` order. A downlink row belongs to the last attempt whose uplink row was sent at or before it was. A downlink row sent before the first uplink row, or before its own attempt's request was received, is an error.
+**ATR-11** A chat leaf's parts. Its link rows are those whose `call_id` is the leaf. A row received before it is sent, or dropped with a non-empty interval, is an error. A zero-length leaf has zero parts. Otherwise, with no link rows, the leaf's whole time is `model_ns`, and with link rows:
+- The attempts, and which attempt each downlink row belongs to, are found on the rows' recorded times, before any clipping. The attempts are the uplink rows in `enqueue_ns` order, ties by row order. A downlink row belongs to the last attempt whose uplink row was sent at or before it was. A downlink row sent before the first uplink row, sent before its own attempt's request was received, or answering a lost request, is an error.
+- The times are then clipped to the leaf's start and end for measuring, and the nanoseconds removed by clipping are recorded (ATR-14).
 - `retry_ns` is the time from the first attempt's send to the last attempt's send: the failed attempts and the backoff between them.
 - The time before the first attempt's send is `other_ns` (client work).
 - The last attempt, from its send to the leaf's end:
   - if its request was dropped, all of it is `network_ns`: the call waited on a lost message;
-  - otherwise the request's interval is `network_ns`. If it got no downlink row, the rest is `model_ns`: the call waited on the server. If it got one, let `r` be its last downlink row, the latest sent, ties by row order. From the request's receipt to `r`'s send is `model_ns`: the server's time, during which a streamed answer's earlier messages travel alongside it. If `r` was dropped, from its send to the leaf's end is `network_ns`. Otherwise `r`'s interval is `network_ns`, and from its receipt to the leaf's end is `other_ns`.
+  - otherwise the request's interval is `network_ns`. If it got no downlink row, the rest is `model_ns`: the call waited on the server. If it got one, let `r` be its last downlink row: the latest sent, and of rows sent together the last in row order. From the request's receipt to `r`'s send is `model_ns`: the server's time, during which a streamed answer's earlier messages travel alongside it. If `r` was dropped, from its send to the leaf's end is `network_ns`. Otherwise `r`'s interval is `network_ns`, and from its receipt to the leaf's end is `other_ns`.
 
 A streamed answer over a link of constant one-way delay `d` therefore gives `2d` of network time, and a request lost on the way is network time, not model time.
 
@@ -61,22 +62,22 @@ And it MUST be checked against the turn view: the tool leaves' summed time MUST 
 **ATR-21** Tail decomposition. For a replicate of `n` turns and a percentile `p`, the **tail turns** MUST be the turns whose `duration_ns` is at or above the nearest-rank `p`-th percentile of the replicate's turn durations, rank `max(1, ceil(n·p/100))` computed in integers as `(n·p).div_ceil(100)`, ties included. `tail_<cause>_share_p99` MUST be the sum of that cause's part over the tail turns divided by the sum of their durations, for each cause. They are undefined as ATR-20 is. With fewer than 100 turns the tail is the longest turn and its ties.
 
 **ATR-22** The quantities of ATR-20 and ATR-21 MUST be implemented in `acn-attrib` and registered in `acn-hyp`'s quantity table (HYP-12) by name, unit and formula. `acn-hyp` calls `acn-attrib`, so a verdict and a report compute one number.
-- `acn-attrib`'s core depends on `acn-trace` alone. Its plots (ATR-41) live outside `src/core/`, behind a `plots` feature that brings in `plotters`; `acn-hyp` depends on `acn-attrib` without it, so nothing outside the frozen core is compiled into the verdict engine. The heatmap reads `verdict.json` as JSON, not through `acn-hyp`'s types.
+- `acn-attrib` is frozen whole (CON-7), its manifest and crate root included, so nothing that compiles into a verdict's attribution sits outside `engine_hash`. Its workspace dependency is `acn-trace` alone. Plots and the CLI live in `acn-cli` (ATR-40, ATR-41), so that drawing never moves `engine_hash`.
 - `acn-hyp` depends on `acn-attrib`; `acn-attrib` never depends on `acn-hyp`.
-- The walk of ATR-2 lives in `acn-trace`, outside the frozen set. What keeps it honest is that a verdict recomputes the views from the bundle's tables and requires them byte-identical (TRC-35), and ATR-14 checks attribution against them.
+- The walk of ATR-2 is in `acn-trace`'s ingester, which is frozen too (CON-7): the leaves attribution reads, like the views, move `engine_hash` when they change.
 
 **ATR-23** A comparison with the control MUST be the verdict's `effect`, `ci_low` and `ci_high` of the quantity (HYP-13), on the paired bootstrap of HYP-15. Attribution MUST NOT compute a second effect or a second confidence interval of its own.
 
 ## 4. Determinism
 
 **ATR-30** Attribution MUST compute in integers until the last step:
-- every time is an `i64` of nanoseconds, every sum an exact integer sum, and an overflow an error;
+- every time is an `i64` of nanoseconds, every sum an exact integer sum, and an overflow an error, in a quantity's sums too: a verdict refuses, as for ATR-15, and never reads it as undefined;
 - a quantity's one division is the last operation, in `f64`;
 - the order of every reduction is fixed (turns in view order, leaves in path order, link rows in view order, hops in hop order), and there is no parallel reduction.
 
 So no number depends on evaluation order or platform.
 
-**ATR-31** A change to `acn-attrib`'s core is a change to the frozen set (CON-7): it moves `engine_hash` (CON-28) and is a Class C change. Code outside the core, the plots included, MUST NOT compute an attribution quantity; it calls the core.
+**ATR-31** A change to `acn-attrib` is a change to the frozen set (CON-7): it moves `engine_hash` (CON-28) and is a Class C change. Code outside it, the plots included, MUST NOT compute an attribution quantity; it calls `acn-attrib`.
 
 ## 5. Outputs
 
@@ -84,11 +85,12 @@ So no number depends on evaluation order or platform.
 - The file has one row per turn, in view order, with columns `run_id`, `role`, `replicate`, `session_id`, `turn_index`, `duration_ns`, the five parts, the counts and diagnostics of ATR-14, and `hop_ns`, a map from `<link_id>/<direction>` to nanoseconds in hop order. The schema is fixed by a test and the same bundle MUST give a byte-identical file. Nothing is written into the bundle, which is immutable (TRC-23).
 - The object carries `ok`, the bundle's `run_id`, its `mode` and `backend`, the file's BLAKE3 and row count, and `replicates`: per (`role`, `replicate`), in that order, the ATR-20 and ATR-21 values, a number written as CON-27(c) says or `null` when undefined. A `mockllm` or `sim` bundle carries the labels of CON-26 and HYP-23, as a verdict would, so that the output never reads as citable.
 
-**ATR-41** `acn attrib heatmap --verdict <verdict.json> --slice <key> --quantity <q> --x <param> --y <param> --out <file.svg>` MUST draw, with `plotters`, one cell per pair of values of two varied parameters in one slice of the verdict, coloured by the verdict's `effect` of `q` in that cell, with the value and the recorded interval written in the cell as CON-27(c) says.
+**ATR-41** `acn attrib heatmap --verdict <verdict.json> --slice <key> --quantity <q> --x <param> --y <param> --out <file.svg>` MUST draw, with `plotters` in `acn-cli`, one cell per pair of values of two varied parameters in one slice of the verdict, coloured by the verdict's `effect` of `q` in that cell, with the value and the recorded interval written in the cell as CON-27(c) says.
 - `q` MUST be one of the verdict's measured quantities, and the slice MUST vary no parameter other than `x` and `y`; otherwise it is an error.
 - A cell without a value is drawn empty and marked.
 - The title MUST carry the verdict's labels (HYP-23), so that an exploratory, mock-gated, unpinned or sim-only result never looks citable.
 - The same verdict and arguments MUST give a byte-identical SVG.
+- It reads `verdict.json` through `acn-hyp`'s types or as JSON; it computes no quantity (ATR-31).
 
 **ATR-42** An evidence page (LOOP-30) that shows an attribution quantity MUST state that its network time is the emulated network's (§ Scope).
 

@@ -898,7 +898,7 @@ fn only_the_ingester_reads_convention_attributes() {
     // The schema names `gen_ai.input`/`gen_ai.output` only to forbid them as view
     // sources (TRC-42); that is a check, not a read.
     let allowed = [
-        "acn-trace/src/ingest.rs",
+        "acn-trace/src/ingest/mod.rs",
         "acn-trace/src/fixture.rs",
         "acn-trace/src/schema/mod.rs",
         // A producer: it writes the GenAI attributes of its `chat` spans (HAR-31).
@@ -1179,4 +1179,88 @@ fn nesting_deeper_than_the_bound_is_an_error_not_a_stack_overflow() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("deeper than"), "{err}");
+}
+
+/// Cites: ATR-2
+#[test]
+fn attribution_reads_the_critical_path_the_turn_view_walked() {
+    let t = golden();
+    let paths = acn_trace::ingest::critical_paths(&t).unwrap();
+    let v = &views()["turn"];
+    assert_eq!(paths.len(), 2, "one path per turn, in turn-view order");
+    let (dur, tool, model) = (
+        ints(v, "duration_ns"),
+        ints(v, "tool_wait_ns"),
+        ints(v, "model_wait_ns"),
+    );
+    // The chat leaves' link wait, from the link view: the delay and rate-limit
+    // time of the rows each carries.
+    let links = &views()["link"];
+    let call = links
+        .column_by_name("call_id")
+        .unwrap()
+        .as_fixed_size_binary();
+    let (delay, rate) = (
+        ints(links, "applied_delay_ns"),
+        ints(links, "rate_limited_ns"),
+    );
+    let chat_wait: Vec<i64> = paths
+        .iter()
+        .map(|p| {
+            let chats: Vec<[u8; 8]> = p
+                .leaves
+                .iter()
+                .filter(|l| l.kind == acn_trace::ingest::LeafKind::Chat)
+                .map(|l| l.span_id)
+                .collect();
+            (0..call.len())
+                .filter(|&i| {
+                    call.is_valid(i) && chats.iter().any(|c| c.as_slice() == call.value(i))
+                })
+                .map(|i| delay[i].unwrap() + rate[i].unwrap())
+                .sum()
+        })
+        .collect();
+    // C0's links and CA0's in turn 0 (TRC-32's comments above); none in turn 1.
+    assert_eq!(chat_wait, [650, 0]);
+    for (k, p) in paths.iter().enumerate() {
+        assert_eq!(p.turn_index, i64::try_from(k).unwrap());
+        assert_eq!(Some(p.end_ns - p.start_ns), dur[k]);
+        let time = |kind| -> i64 {
+            p.leaves
+                .iter()
+                .filter(|l| l.kind == kind)
+                .map(|l| l.end_ns - l.start_ns)
+                .sum()
+        };
+        assert_eq!(Some(time(acn_trace::ingest::LeafKind::Tool)), tool[k]);
+        assert_eq!(
+            Some(time(acn_trace::ingest::LeafKind::Chat) - chat_wait[k]),
+            model[k]
+        );
+        // Path order: the leaves follow one another inside the turn.
+        let mut prev = p.start_ns;
+        for l in &p.leaves {
+            assert!(l.start_ns >= prev && l.end_ns <= p.end_ns);
+            prev = l.end_ns;
+            assert_eq!(
+                l.placement.is_some(),
+                l.kind == acn_trace::ingest::LeafKind::Tool
+            );
+        }
+    }
+    // Turn 0 reaches into the sub-agents (ADR-14): a leaf whose parent is not
+    // the turn.
+    let parent_of = |id: [u8; 8]| {
+        t.spans
+            .iter()
+            .find(|s| s.span_id == id)
+            .and_then(|s| s.parent_span_id)
+    };
+    assert!(
+        paths[0]
+            .leaves
+            .iter()
+            .any(|l| parent_of(l.span_id) != Some(paths[0].turn_id))
+    );
 }

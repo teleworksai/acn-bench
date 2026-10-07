@@ -11,6 +11,8 @@ description = "hypothesis registry, verdicts and the loop runner (SPEC 080, 085;
 workspace = true
 
 [dependencies]
+# The attribution quantities are acn-attrib's (SPEC 090 ATR-22).
+acn-attrib = { path = "../acn-attrib" }
 acn-trace = { workspace = true, features = ["io"] }
 arrow-array.workspace = true
 serde_json.workspace = true

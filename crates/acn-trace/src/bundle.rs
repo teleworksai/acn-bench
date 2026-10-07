@@ -731,12 +731,20 @@ pub fn verify_views(dir: &Path) -> Result<Verified> {
     Ok(verify_views_read(dir)?.0)
 }
 
+/// Each view with its rows, in `views.toml` order.
+pub type ViewBatches = Vec<(schema::View, arrow_array::RecordBatch)>;
+
 /// [`verify_views`], and the five views it recomputed from the tables: each is
 /// byte-identical to its file, so a reader takes them from here rather than
 /// opening the files again.
-pub fn verify_views_read(
-    dir: &Path,
-) -> Result<(Verified, Vec<(schema::View, arrow_array::RecordBatch)>)> {
+pub fn verify_views_read(dir: &Path) -> Result<(Verified, ViewBatches)> {
+    verify_views_read_trace(dir).map(|(v, views, _)| (v, views))
+}
+
+/// [`verify_views_read`], with the trace the views were recomputed from, for
+/// what reads the trace through `acn-trace` besides the views (SPEC 090 ATR-1,
+/// ATR-2).
+pub fn verify_views_read_trace(dir: &Path) -> Result<(Verified, ViewBatches, crate::model::Trace)> {
     let verified = verify(dir)?;
     let inv = schema::inventory()?;
     let trace = parquet_io::read_trace(dir, &inv)?;
@@ -762,5 +770,5 @@ pub fn verify_views_read(
             ));
         }
     }
-    Ok((verified, views))
+    Ok((verified, views, trace))
 }

@@ -80,10 +80,21 @@ fn p17_loads_unedited_with_its_two_selects_and_at_clause() {
     ));
     // The candidate allowances of HYP-7, HYP-8 and HYP-9.
     assert!(matches!(h.control(), Control::Missing));
+    // Its quantities SPEC 090 does not define stay unresolved warnings;
+    // `network_attributable_share` is now in the table (ATR-22).
     assert!(
         h.warnings()
             .iter()
-            .any(|w| w.contains("network_attributable_share"))
+            .any(|w| w.contains("completion_time_p99")),
+        "{:?}",
+        h.warnings()
+    );
+    assert!(
+        !h.warnings()
+            .iter()
+            .any(|w| w.contains("network_attributable_share")),
+        "{:?}",
+        h.warnings()
     );
     assert_eq!(h.design().search, "bisect");
     assert_eq!(h.design().replicates, 10);

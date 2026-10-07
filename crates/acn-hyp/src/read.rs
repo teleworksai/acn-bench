@@ -13,6 +13,8 @@ use arrow_array::cast::AsArray as _;
 use arrow_array::types::Int64Type;
 use arrow_array::{Array as _, ArrayRef, RecordBatch};
 
+use acn_attrib::core::{Decomposition, LinkRow, TurnRow};
+
 use crate::quantities::{Call, Turn};
 
 /// A bundle that cannot be read: the reason names the bundle.
@@ -46,6 +48,9 @@ pub struct BundleData {
     pub calls: Vec<Call>,
     /// The `new_input_tokens_method` values its calls carry (TRC-12).
     pub methods: BTreeSet<String>,
+    /// Each turn's attribution, in turn-view order (SPEC 090), or why the
+    /// bundle has none: a verdict that needs it refuses (ATR-15).
+    pub attrib: Result<Vec<Decomposition>, String>,
 }
 
 fn col<'b>(b: &'b RecordBatch, name: &str) -> Result<&'b ArrayRef, String> {
@@ -71,6 +76,91 @@ fn ints(b: &RecordBatch, name: &str) -> Result<Vec<Option<i64>>, String> {
     Ok((0..a.len())
         .map(|i| a.is_valid(i).then(|| a.value(i)))
         .collect())
+}
+
+fn bools(b: &RecordBatch, name: &str) -> Result<Vec<Option<bool>>, String> {
+    let c = col(b, name)?;
+    let a = c
+        .as_boolean_opt()
+        .ok_or_else(|| format!("`{name}` is not a boolean column"))?;
+    Ok((0..a.len())
+        .map(|i| a.is_valid(i).then(|| a.value(i)))
+        .collect())
+}
+
+fn opt_ids(b: &RecordBatch, name: &str) -> Result<Vec<Option<[u8; 8]>>, String> {
+    let c = col(b, name)?;
+    let a = c
+        .as_fixed_size_binary_opt()
+        .ok_or_else(|| format!("`{name}` is not a fixed-size binary column"))?;
+    (0..a.len())
+        .map(|i| {
+            if a.is_valid(i) {
+                <[u8; 8]>::try_from(a.value(i))
+                    .map(Some)
+                    .map_err(|_| format!("`{name}` is not 8 bytes"))
+            } else {
+                Ok(None)
+            }
+        })
+        .collect()
+}
+
+/// The turn and link view rows attribution reads, and each turn's split
+/// (SPEC 090 ATR-1, ATR-10).
+fn decompose_views(
+    views: &[(schema::View, RecordBatch)],
+    trace: &acn_trace::model::Trace,
+) -> Result<Vec<Decomposition>, String> {
+    let b = view(views, "turn")?;
+    let sid = ids(b, "session_id")?;
+    let n = |c: &str| ints(b, c).and_then(|v| required(v, c));
+    let (index, duration, tool, model) = (
+        n("turn_index")?,
+        n("duration_ns")?,
+        n("tool_wait_ns")?,
+        n("model_wait_ns")?,
+    );
+    let (stalls, retries) = (n("stalls")?, n("retries")?);
+    let queue = ints(b, "queue_wait_ns")?;
+    let turns: Vec<TurnRow> = (0..sid.len())
+        .map(|i| TurnRow {
+            session_id: sid[i],
+            turn_index: index[i],
+            duration_ns: duration[i],
+            tool_wait_ns: tool[i],
+            model_wait_ns: model[i],
+            queue_wait_ns: queue[i],
+            stalls: stalls[i],
+            retries: retries[i],
+        })
+        .collect();
+    let b = view(views, "link")?;
+    let call = opt_ids(b, "call_id")?;
+    let s = |c: &str| strings(b, c).and_then(|v| required(v, c));
+    let n = |c: &str| ints(b, c).and_then(|v| required(v, c));
+    let (link, dir) = (s("link_id")?, s("direction")?);
+    let (enq, deq, delay, rate) = (
+        n("enqueue_ns")?,
+        n("dequeue_ns")?,
+        n("applied_delay_ns")?,
+        n("rate_limited_ns")?,
+    );
+    let dropped = required(bools(b, "dropped")?, "dropped")?;
+    let links: Vec<LinkRow> = (0..call.len())
+        .map(|i| LinkRow {
+            call_id: call[i],
+            link_id: link[i].clone(),
+            direction: dir[i].clone(),
+            enqueue_ns: enq[i],
+            dequeue_ns: deq[i],
+            dropped: dropped[i],
+            applied_delay_ns: delay[i],
+            rate_limited_ns: rate[i],
+        })
+        .collect();
+    let paths = acn_trace::ingest::critical_paths(trace).map_err(|e| e.to_string())?;
+    acn_attrib::core::decompose(&turns, &paths, &links).map_err(|e| e.to_string())
 }
 
 fn ids(b: &RecordBatch, name: &str) -> Result<Vec<[u8; 8]>, String> {
@@ -109,7 +199,9 @@ pub fn read(dir: &Path) -> Result<BundleData, ReadError> {
         dir: dir.to_path_buf(),
         message,
     };
-    let (verified, views) = bundle::verify_views_read(dir).map_err(|e| fail(e.to_string()))?;
+    let (verified, views, trace) =
+        bundle::verify_views_read_trace(dir).map_err(|e| fail(e.to_string()))?;
+    let attrib = decompose_views(&views, &trace);
 
     let mut sessions = Vec::new();
     {
@@ -176,5 +268,6 @@ pub fn read(dir: &Path) -> Result<BundleData, ReadError> {
         turns,
         calls,
         methods,
+        attrib,
     })
 }

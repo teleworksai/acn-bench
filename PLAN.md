@@ -48,7 +48,7 @@ acn-bench/
   scenarios/synthetic/    scenario files (TOML): link models, schedules
   scenarios/measured/     recorded impairment traces (Parquet) + provenance          [frozen]
   crates/
-    acn-trace     §3.5 trace schema, Arrow/Parquet IO, run bundle + manifest      [frozen: schema]
+    acn-trace     §3.5 trace schema, Arrow/Parquet IO, run bundle + manifest      [frozen: schema, ingest]
     acn-emu       link models, scenario loader, sim engine, live proxy, (netem)
     acn-mockllm   deterministic mock inference server: prefill/decode timing, cache accounting
     acn-harness   minimal agent harness with switchable discipline knobs (POC 4), real or mock backend
@@ -56,7 +56,7 @@ acn-bench/
     acn-replay    environment replayer (recorded sensor streams → remote planner stub) + toy loop
     acn-ctl       control & evidence plane: HTTP/JSON API, run registry, bundle collection
     acn-hyp       hypotheses registry + verdict tool                               [frozen]
-    acn-attrib    attribution & analysis: tail decomposition, network share, heatmaps [frozen: core]
+    acn-attrib    attribution: tail decomposition, network share [frozen]; heatmaps are drawn by acn-cli
     acn-cli       the `acn` binary (subcommands over the crates above)
     xtask         trace-check, docs-inventory, env-hash, ci
   tests/accept/   spec-acceptance suites, one per POC, citing requirement IDs
@@ -65,7 +65,7 @@ acn-bench/
   runs/           bundles (gitignored)
 ```
 
-Crate dependency direction (no cycles): `acn-trace` ← everything; `acn-emu` ← `acn-gen`, `acn-harness`, `acn-replay`; `acn-harness` ← `acn-gen`, which plugs into the harness's run path through a driver seam the harness defines (ADR-38; the harness never depends on `acn-gen`); `acn-ctl` ← all runtime crates; `acn-attrib` ← `acn-trace` only; `acn-hyp` ← `acn-trace` and `acn-attrib` without its `plots` feature, so only the frozen core is compiled in (SPEC 090 ATR-22; `acn-attrib` never depends on `acn-hyp`); `acn-cli` ← all.
+Crate dependency direction (no cycles): `acn-trace` ← everything; `acn-emu` ← `acn-gen`, `acn-harness`, `acn-replay`; `acn-harness` ← `acn-gen`, which plugs into the harness's run path through a driver seam the harness defines (ADR-38; the harness never depends on `acn-gen`); `acn-ctl` ← all runtime crates; `acn-attrib` ← `acn-trace` only; `acn-hyp` ← `acn-trace` and `acn-attrib`, both of whose verdict-facing code is frozen (SPEC 090 ATR-22; `acn-attrib` never depends on `acn-hyp`); `acn-cli` ← all.
 
 ## 4. The requirement-ID system
 
@@ -125,7 +125,7 @@ cargo deny check                          # licenses + advisories
 
 - **Class A** — docs, tests, tools, scenarios/synthetic: baseline gates.
 - **Class B** — crates on the run path (`acn-emu`, `acn-gen`, `acn-harness`, `acn-replay`, `acn-ctl`, `acn-cli`, `acn-mockllm`): baseline gates + affected acceptance suites.
-- **Class C** — the frozen set: `hypotheses/`, `scenarios/measured/`, `crates/acn-hyp`, `crates/acn-attrib/src/core`, `crates/acn-trace/src/schema`. Human-merged PR labelled `env-change` with an updated `env-hash`, adversarial review. An auto-research loop MUST NOT have write access to the frozen set (CON-7; HYP-4 for `hypotheses/`).
+- **Class C** — the frozen set: `hypotheses/`, `scenarios/measured/`, `crates/acn-hyp`, `crates/acn-attrib`, `crates/acn-trace/src/schema`, `crates/acn-trace/src/ingest`. Human-merged PR labelled `env-change` with an updated `env-hash`, adversarial review. An auto-research loop MUST NOT have write access to the frozen set (CON-7; HYP-4 for `hypotheses/`).
 
 ## 8a. Sim ↔ live twin rule (CON-25)
 

@@ -34,7 +34,7 @@ cargo fmt --all --check \
 - **Determinism is a feature.** Inject `Clock` and `Rng`; never call `Instant::now()`, `SystemTime::now()`, `rand::thread_rng()` or `fastrand` outside `acn_emu::clock` and `acn_emu::rng` (CON-5; clippy `disallowed_methods`). In `sim` mode the same seed MUST produce a bit-identical bundle.
 - **CLI contract.** Every `acn` subcommand prints exactly one JSON object to stdout, logs to stderr via `tracing`, and exits 0 iff `"ok": true` (CON-8).
 - **Data contract.** Traces are Arrow/Parquet (CON-4). JSON is only for CLI results, manifests and control-plane messages. No ad-hoc CSV on the run path.
-- **Rust only.** No Python, shell beyond `tools/*.sh`, or notebooks in the run or analysis path. Plots come from `acn-attrib` (plotters → SVG). Exceptions require an ADR (CON-2).
+- **Rust only.** No Python, shell beyond `tools/*.sh`, or notebooks in the run or analysis path. Plots come from `acn-cli` over `acn-attrib`'s numbers (plotters → SVG; SPEC 090 ATR-41). Exceptions require an ADR (CON-2).
 - **Independence.** The substrate and every frozen result run without `dora-rs`, `aisle`, Genesis or ROS as required dependencies; optional adapters are fine as feature-gated or lab crates (CON-20). Ideas from elsewhere are welcome and get re-specified here when they graduate.
 - **Ambiguity.** Write `docs/decisions/ADR-<n>.md` (context, decision, consequences, IDs affected) and proceed; do not stall (CON-15).
 - **Commits.** Conventional commits `type(scope): subject` (`feat`, `fix`, `test`, `spec`, `docs`, `refactor`, `chore`, `ci`, `perf`). The repo squash-merges: the PR title becomes the mainline commit subject. Long bodies via `--body-file`, never inline heredocs. Branches `feat/…`, `fix/…`, `docs/…`, `spec/…`.
@@ -44,7 +44,7 @@ cargo fmt --all --check \
 
 - **Class A** — `docs/`, `tests/`, `tools/`, `xtask`, `scenarios/synthetic/`: baseline gates.
 - **Class B** — run-path crates `acn-emu`, `acn-mockllm`, `acn-harness`, `acn-gen`, `acn-replay`, `acn-ctl`, `acn-cli`: baseline gates + affected acceptance suites.
-- **Class C — frozen set** — `hypotheses/`, `scenarios/measured/`, `crates/acn-hyp`, `crates/acn-attrib/src/core/`, `crates/acn-trace/src/schema/`: human-merged PR labelled `env-change`, updated `env-hash`, adversarial review. Post-M0 nothing in the frozen set changes without this.
+- **Class C — frozen set** — `hypotheses/`, `scenarios/measured/`, `crates/acn-hyp`, `crates/acn-attrib/`, `crates/acn-trace/src/schema/`, `crates/acn-trace/src/ingest/`: human-merged PR labelled `env-change`, updated `env-hash`, adversarial review. Post-M0 nothing in the frozen set changes without this.
 
 ## Rust conventions
 

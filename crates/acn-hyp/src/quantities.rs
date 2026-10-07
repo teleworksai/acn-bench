@@ -9,6 +9,8 @@
 //! total never passes for a complete one, and a call is never dropped from a
 //! replicate for lacking a value (HYP-11's survivorship rule, ADR-19).
 
+use acn_attrib::core::{Cause, Parts};
+
 /// One quantity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Quantity {
@@ -59,7 +61,85 @@ pub const QUANTITIES: &[Quantity] = &[
         formula: "count(turn where compaction != none) / count(session), over the replicate; undefined when there is no session",
         source: "SPEC 010 Appendix A `t.compaction_vs_length`",
     },
+    Quantity {
+        name: "network_attributable_share",
+        unit: "ratio",
+        formula: "sum(network_ns) / sum(duration_ns) over the replicate's turns, as acn-attrib splits them (time on the emulated network on each turn's critical path); undefined when there is no turn or no time",
+        source: "SPEC 090 ATR-20",
+    },
+    Quantity {
+        name: "model_share",
+        unit: "ratio",
+        formula: "sum(model_ns) / sum(duration_ns) over the replicate's turns, as acn-attrib splits them; undefined as network_attributable_share",
+        source: "SPEC 090 ATR-20",
+    },
+    Quantity {
+        name: "tool_share",
+        unit: "ratio",
+        formula: "sum(tool_ns) / sum(duration_ns) over the replicate's turns, as acn-attrib splits them; undefined as network_attributable_share",
+        source: "SPEC 090 ATR-20",
+    },
+    Quantity {
+        name: "retry_share",
+        unit: "ratio",
+        formula: "sum(retry_ns) / sum(duration_ns) over the replicate's turns, as acn-attrib splits them; undefined as network_attributable_share",
+        source: "SPEC 090 ATR-20",
+    },
+    Quantity {
+        name: "other_share",
+        unit: "ratio",
+        formula: "sum(other_ns) / sum(duration_ns) over the replicate's turns, as acn-attrib splits them; undefined as network_attributable_share",
+        source: "SPEC 090 ATR-20",
+    },
+    Quantity {
+        name: "tail_network_share_p99",
+        unit: "ratio",
+        formula: "network_attributable_share over the replicate's tail turns: duration_ns at or above its nearest-rank 99th percentile (rank max(1, ceil(0.99 n))), ties included",
+        source: "SPEC 090 ATR-21",
+    },
+    Quantity {
+        name: "tail_model_share_p99",
+        unit: "ratio",
+        formula: "model_share over the replicate's tail turns (as tail_network_share_p99)",
+        source: "SPEC 090 ATR-21",
+    },
+    Quantity {
+        name: "tail_tool_share_p99",
+        unit: "ratio",
+        formula: "tool_share over the replicate's tail turns (as tail_network_share_p99)",
+        source: "SPEC 090 ATR-21",
+    },
+    Quantity {
+        name: "tail_retry_share_p99",
+        unit: "ratio",
+        formula: "retry_share over the replicate's tail turns (as tail_network_share_p99)",
+        source: "SPEC 090 ATR-21",
+    },
+    Quantity {
+        name: "tail_other_share_p99",
+        unit: "ratio",
+        formula: "other_share over the replicate's tail turns (as tail_network_share_p99)",
+        source: "SPEC 090 ATR-21",
+    },
 ];
+
+/// The cause and, for a tail share, the percentile of an attribution quantity
+/// (SPEC 090 ATR-20, ATR-21); `None` for any other name.
+#[must_use]
+pub fn attribution(name: &str) -> Option<(Cause, Option<usize>)> {
+    let cause = |c: &str| Cause::ALL.into_iter().find(|x| x.as_str() == c);
+    if name == "network_attributable_share" {
+        return Some((Cause::Network, None));
+    }
+    if let Some(c) = name
+        .strip_prefix("tail_")
+        .and_then(|n| n.strip_suffix("_share_p99"))
+    {
+        return cause(c).map(|c| (c, Some(99)));
+    }
+    let c = name.strip_suffix("_share").and_then(cause)?;
+    (c != Cause::Network).then_some((c, None))
+}
 
 /// The relative price of each class of token for one provider, in units of one
 /// uncached input token (ADR-19). Only ratios enter a verdict: `provider` is never
@@ -131,12 +211,14 @@ pub struct Call {
 }
 
 /// The view rows of one replicate of one arm: its sessions, and their turns and
-/// calls.
+/// calls, with each turn's attribution (SPEC 090).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Replicate {
     pub sessions: Vec<Session>,
     pub turns: Vec<Turn>,
     pub calls: Vec<Call>,
+    /// Each turn's parts, as `acn-attrib` splits them (ATR-10).
+    pub parts: Vec<Parts>,
     /// The key of its row in [`PRICES`]: `vary.provider`, or the backend.
     pub price_key: String,
 }
@@ -219,8 +301,26 @@ pub fn value(name: &str, r: &Replicate) -> Option<f64> {
             let n = r.turns.iter().filter(|t| t.compaction != "none").count();
             ratio(count(n), count(r.sessions.len()))
         }
-        _ => None,
+        // SPEC 090: computed by acn-attrib, never here (ATR-22, ATR-31). A
+        // verdict reads it through `attribution_value`, which refuses an
+        // overflow (ATR-30); here it is only undefined.
+        other => attribution_value(other, r).ok().flatten(),
     }
+}
+
+/// The value of attribution quantity `name` for one replicate, from
+/// `acn-attrib` (SPEC 090 ATR-22): `Ok(None)` when it is undefined or `name`
+/// is not one, and an error when a sum overflows, which a verdict refuses
+/// (ATR-30).
+pub fn attribution_value(name: &str, r: &Replicate) -> Result<Option<f64>, String> {
+    let Some((c, p)) = attribution(name) else {
+        return Ok(None);
+    };
+    match p {
+        None => acn_attrib::core::share(&r.parts, c),
+        Some(p) => acn_attrib::core::tail_share(&r.parts, c, p),
+    }
+    .map_err(|e| e.to_string())
 }
 
 /// The quantity named `name`.

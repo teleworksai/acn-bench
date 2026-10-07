@@ -726,12 +726,15 @@ mod tests {
             "Hypotheses/P4.toml",
             "Crates/ACN-Hyp/src/lib.rs",
             "crates/acn-attrib/src/core/mod.rs",
+            "crates/acn-attrib/src/lib.rs",
+            "crates/acn-trace/src/ingest/mod.rs",
             "\u{17f}cenarios/measured/x.parquet", // long s folds to s
         ] {
             assert!(is_frozen(p), "{p} must be frozen");
         }
         for p in [
-            "crates/acn-attrib/src/lib.rs",
+            "crates/acn-trace/src/lib.rs",
+            "crates/acn-attrib-old/src/lib.rs",
             "hypotheses-old/x.toml",
             "hypotheses2/y.toml",
             "lab/hypotheses/p17.toml",

@@ -12,6 +12,16 @@ The quantities a hypothesis file may read (SPEC 080, HYP-12). A quantity's value
 | `cost_per_success` | cost | sum over the replicate's calls of in·(call.input_tokens − call.cache_read_tokens − call.cache_write_tokens) + read·call.cache_read_tokens + write·call.cache_write_tokens + out·call.output_tokens, with the weights of the provider's row in PRICES, divided by count(turn where outcome = success); undefined when any call lacks a count, the provider has no row, or no turn succeeded | SPEC 100 (POC 4); the price table is PRICES in this crate (HYP-12, ADR-19) |
 | `input_tokens_per_turn` | tokens | sum(call.input_tokens) / count(turn), over the replicate; undefined when any call lacks input_tokens or there is no turn | SPEC 010 Appendix A `c.input_length_by_call_index` |
 | `compactions_per_session` | count | count(turn where compaction != none) / count(session), over the replicate; undefined when there is no session | SPEC 010 Appendix A `t.compaction_vs_length` |
+| `network_attributable_share` | ratio | sum(network_ns) / sum(duration_ns) over the replicate's turns, as acn-attrib splits them (time on the emulated network on each turn's critical path); undefined when there is no turn or no time | SPEC 090 ATR-20 |
+| `model_share` | ratio | sum(model_ns) / sum(duration_ns) over the replicate's turns, as acn-attrib splits them; undefined as network_attributable_share | SPEC 090 ATR-20 |
+| `tool_share` | ratio | sum(tool_ns) / sum(duration_ns) over the replicate's turns, as acn-attrib splits them; undefined as network_attributable_share | SPEC 090 ATR-20 |
+| `retry_share` | ratio | sum(retry_ns) / sum(duration_ns) over the replicate's turns, as acn-attrib splits them; undefined as network_attributable_share | SPEC 090 ATR-20 |
+| `other_share` | ratio | sum(other_ns) / sum(duration_ns) over the replicate's turns, as acn-attrib splits them; undefined as network_attributable_share | SPEC 090 ATR-20 |
+| `tail_network_share_p99` | ratio | network_attributable_share over the replicate's tail turns: duration_ns at or above its nearest-rank 99th percentile (rank max(1, ceil(0.99 n))), ties included | SPEC 090 ATR-21 |
+| `tail_model_share_p99` | ratio | model_share over the replicate's tail turns (as tail_network_share_p99) | SPEC 090 ATR-21 |
+| `tail_tool_share_p99` | ratio | tool_share over the replicate's tail turns (as tail_network_share_p99) | SPEC 090 ATR-21 |
+| `tail_retry_share_p99` | ratio | retry_share over the replicate's tail turns (as tail_network_share_p99) | SPEC 090 ATR-21 |
+| `tail_other_share_p99` | ratio | other_share over the replicate's tail turns (as tail_network_share_p99) | SPEC 090 ATR-21 |
 
 ## Prices
 

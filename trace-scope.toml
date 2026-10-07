@@ -120,3 +120,12 @@ ids = [
   "CTL-1", "CTL-2", "CTL-3", "CTL-10", "CTL-11", "CTL-12", "CTL-13", "CTL-20",
   "CTL-21", "CTL-22", "CTL-23", "CTL-24", "CTL-30",
 ]
+
+[[implemented]]
+spec = "090"
+ids = [
+  "ATR-1", "ATR-2", "ATR-10", "ATR-11", "ATR-12", "ATR-13", "ATR-14", "ATR-15",
+  "ATR-20", "ATR-21", "ATR-22", "ATR-23", "ATR-30", "ATR-31",
+]
+# ATR-40 and ATR-41 (acn attrib) with T15.3; ATR-42 (evidence pages) with T16's
+# evidence pages (LOOP-30).
