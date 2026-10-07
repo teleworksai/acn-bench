@@ -75,6 +75,15 @@ dependencies = [
 [[package]]
 name = "acn-gen"
 version = "0.1.0"
+dependencies = [
+ "acn-harness",
+ "acn-mockllm",
+ "acn-trace",
+ "rand_chacha 0.10.0",
+ "serde",
+ "thiserror",
+ "toml",
+]
 
 [[package]]
 name = "acn-harness"

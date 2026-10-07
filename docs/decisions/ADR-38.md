@@ -42,3 +42,12 @@ T13 asks for a session/turn/call generator "from the Appendix C parameter sheet"
   All three are Class B: nothing in the frozen set changes.
 - T13b (the plain-RPC control) follows, after a SPEC 010 addition that the maintainer merges as an `env-change`.
 - POCs that need fleet-shaped traffic (POC 1a, 1b, 13) can run generator bundles beside harness bundles: both carry the same spans and views. Like every mock bundle, a generator bundle is never cited (CON-26).
+
+## T13.2 notes
+- **The ranged-integer sampler** is the harness's `acn_harness::agent::below`: exact rejection on 64 bits, the one the harness already draws with. CON-5(a) pins the output of a sampler by golden vector rather than naming an algorithm; `crates/acn-gen/tests/sheet.rs` pins the generator's first draws.
+- **Validation.** A uniform range over all 64 bits is refused, so `max − min + 1` never overflows. `tool_class` lists class names, and the sheet holds a choice over their positions in TRC-13's order.
+- **`mock-agentic`** is `mock-auto`'s constants with `tool_calls_per_turn = 64` and answers of 16 to 4096 tokens: placeholders, as every profile is. It changes the embedded profiles' BLAKE3, which only `GET /v1/models` reports (MLM-50), so no existing bundle changes. The mock's test of the model list now counts the embedded profiles rather than three.
+- **After review (PR 50).**
+  - **Size limits.** A sheet is refused at load when a count (sessions, turns, sub-agents) can exceed 1 000 000, or a text (any `*_tokens`) can exceed 2^24 tokens. A plan and a text are held in memory, and a value near `i64::MAX` would otherwise abort the run.
+  - **The range of a sheet's values.** TOML integers are signed, so a sheet can state only values from 0 to `i64::MAX`. The guard against a uniform range over all 64 bits is defensive.
+  - **Plans fail closed.** A class or parameter missing from a loaded sheet is an internal error, never a default value.
