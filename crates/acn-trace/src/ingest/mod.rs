@@ -295,6 +295,72 @@ fn opt_str(s: &SpanRow, key: &str) -> Result<Option<String>> {
     }
 }
 
+/// A call's regime (TRC-12), from the server's view: with `uncached` =
+/// input − cache-read tokens, `decode_only` when nothing is uncached, `midfill`
+/// when some is read from the cache and some is not, `prefill` when nothing
+/// is read. `None` when a count is missing, negative, or the read exceeds the
+/// input: nothing is derived from counts that cannot be.
+#[must_use]
+pub fn derive_regime(
+    input_tokens: Option<i64>,
+    cache_read_tokens: Option<i64>,
+) -> Option<&'static str> {
+    let (input, read) = (input_tokens?, cache_read_tokens?);
+    if input < 0 || read < 0 || read > input {
+        return None;
+    }
+    Some(if input == read {
+        "decode_only"
+    } else if read > 0 {
+        "midfill"
+    } else {
+        "prefill"
+    })
+}
+
+/// The `regime` cell: what the call's counts derive (TRC-12: derived, never
+/// reported). A recorded `acn.call.regime` is checked against it and refused
+/// when it differs, or when the counts derive none; a trace that records no
+/// regime (an earlier harness, an imported trace) gets the derived one.
+fn regime(s: &SpanRow) -> Result<Option<String>> {
+    let recorded = opt_str(s, "acn.call.regime")?;
+    let derived = derive_regime(
+        opt_int(s, "acn.call.input_tokens")?,
+        opt_int(s, "acn.cache.read_tokens")?,
+    );
+    if recorded.is_some() && recorded.as_deref() != derived {
+        return invalid(format!(
+            "`chat` {} records regime {:?}, its counts derive {:?} (TRC-12)",
+            sid(s),
+            recorded,
+            derived
+        ));
+    }
+    Ok(derived.map(str::to_owned))
+}
+
+/// The `cache_read_bytes` cell (TRC-12): never negative, absent without a
+/// cache-read count, and zero when nothing was read.
+fn read_bytes(s: &SpanRow) -> Result<Option<i64>> {
+    let bytes = opt_int(s, "acn.cache.read_bytes")?;
+    let read = opt_int(s, "acn.cache.read_tokens")?;
+    match (bytes, read) {
+        (None, _) => Ok(None),
+        (Some(b), _) if b < 0 => {
+            invalid(format!("`chat` {} reads negative bytes (TRC-12)", sid(s)))
+        }
+        (Some(_), None) => invalid(format!(
+            "`chat` {} records read bytes without a cache-read count (TRC-12)",
+            sid(s)
+        )),
+        (Some(b), Some(0)) if b != 0 => invalid(format!(
+            "`chat` {} records read bytes for no tokens read (TRC-12)",
+            sid(s)
+        )),
+        (b, _) => Ok(b),
+    }
+}
+
 fn opt_int(s: &SpanRow, key: &str) -> Result<Option<i64>> {
     match get(s, key) {
         None => Ok(None),
@@ -906,6 +972,8 @@ fn call_rows(ix: &Index<'_>) -> Result<Vec<Row>> {
                 "model",
                 Cell::Utf8(Some(req_str(s, "gen_ai.request.model")?)),
             ),
+            ("regime", Cell::Utf8(regime(s)?)),
+            ("cache_read_bytes", Cell::Int(read_bytes(s)?)),
             ("input_tokens", Cell::Int(input)),
             (
                 "new_input_tokens",

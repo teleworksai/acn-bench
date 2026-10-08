@@ -520,22 +520,29 @@ impl<E: Env> Replicate<'_, E> {
             attrs.extend(raw_usage(s.backend.dialect(), &r.raw));
         }
         if let Some(n) = &norm {
-            if let Some(v) = n.input_tokens {
-                attrs.push(KeyValue::new("acn.call.input_tokens", int(v)));
+            let new_input = n.input_tokens.map(|v| {
                 let shared = st
                     .prev
                     .as_deref()
                     .map_or(0, |p| self.shared_tokens(p, &compared, (v, compared.len())));
-                attrs.push(KeyValue::new(
-                    "acn.call.new_input_tokens",
-                    int(v.saturating_sub(shared.min(v))),
-                ));
+                v.saturating_sub(shared.min(v))
+            });
+            if let (Some(v), Some(new)) = (n.input_tokens, new_input) {
+                attrs.push(KeyValue::new("acn.call.input_tokens", int(v)));
+                attrs.push(KeyValue::new("acn.call.new_input_tokens", int(new)));
             }
             if let Some(v) = n.output_tokens {
                 attrs.push(KeyValue::new("acn.call.output_tokens", int(v)));
             }
             if let Some(v) = n.cache_read_tokens {
                 attrs.push(KeyValue::new("acn.cache.read_tokens", int(v)));
+            }
+            // TRC-12: the regime is derived from the counts, never reported.
+            if let Some(r) = acn_trace::ingest::derive_regime(
+                n.input_tokens.map(int),
+                n.cache_read_tokens.map(int),
+            ) {
+                attrs.push(KeyValue::new("acn.call.regime", r));
             }
             if let Some(v) = n.cache_write_tokens {
                 attrs.push(KeyValue::new("acn.cache.write_tokens", int(v)));

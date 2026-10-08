@@ -45,3 +45,4 @@
 | [ADR-39](../decisions/ADR-39.md) | T14: a local control plane that starts runs and decides nothing | accepted (T14.1; `spec-change`, SPEC 070 Draft v0.1) | CTL-1 to CTL-30; CON-5, CON-8, CON-27, CON-28, CON-29; TRC-23, TRC-42; HAR-22, HAR-23, HAR-25, HAR-26, HAR-50; GEN-22; LOOP-12, LOOP-20; EMU-10, EMU-20, EMU-49 |
 | [ADR-40](../decisions/ADR-40.md) | T15: attribution, its network time and where its quantities live | accepted (T15.1, spec-change; T15.2, env-change and spec-change) | ATR-1 to ATR-42, HYP-12, TRC-32, CON-7, CON-28 |
 | [ADR-41](../decisions/ADR-41.md) | T16: POC 16 as regeneration records, and where evidence pages come from | accepted (T16.1, spec-change) | P16-1 to P16-30, LOOP-30, CON-31 |
+| [ADR-43](../decisions/ADR-43.md) | The call regime and the KV-read bytes in the frozen schema | accepted (PR 69: spec-change and env-change) | TRC-12, TRC-33, MLM-30a |

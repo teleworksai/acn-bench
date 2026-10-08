@@ -362,6 +362,20 @@ nullable = false
 source = "gen_ai.request.model"
 
 [[view.column]]
+name = "regime"
+type = "utf8"
+unit = ""
+nullable = true
+source = "acn.call.regime; null when the call reported no usage to derive it from"
+
+[[view.column]]
+name = "cache_read_bytes"
+type = "int64"
+unit = "bytes"
+nullable = true
+source = "acn.cache.read_bytes"
+
+[[view.column]]
 name = "input_tokens"
 type = "int64"
 unit = "tokens"

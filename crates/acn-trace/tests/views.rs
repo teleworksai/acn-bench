@@ -1264,3 +1264,123 @@ fn attribution_reads_the_critical_path_the_turn_view_walked() {
             .any(|l| parent_of(l.span_id) != Some(paths[0].turn_id))
     );
 }
+
+fn call_view(t: &Trace) -> Result<RecordBatch, String> {
+    let inv = schema::inventory().unwrap();
+    ingest::views(&inv, &schema::views().unwrap(), t)
+        .map_err(|e| e.to_string())
+        .map(|vs| vs.into_iter().find(|(v, _)| v.name == "call").unwrap().1)
+}
+
+/// Cites: TRC-12, TRC-33
+#[test]
+fn a_calls_regime_is_derived_from_its_counts_and_checked() {
+    use acn_trace::ingest::derive_regime;
+    // The server's view: uncached = input − read.
+    assert_eq!(derive_regime(Some(1000), Some(1000)), Some("decode_only"));
+    assert_eq!(derive_regime(Some(0), Some(0)), Some("decode_only"));
+    assert_eq!(derive_regime(Some(1000), Some(800)), Some("midfill"));
+    assert_eq!(derive_regime(Some(1000), Some(0)), Some("prefill"));
+    // Nothing is derived from counts that cannot be.
+    assert_eq!(derive_regime(None, Some(800)), None);
+    assert_eq!(derive_regime(Some(1000), None), None);
+    assert_eq!(derive_regime(Some(100), Some(800)), None);
+    assert_eq!(derive_regime(Some(-1), Some(0)), None);
+    // Recorded and derived agree: the column holds it, with the read bytes.
+    let t = mini(vec![
+        chat(
+            10,
+            2,
+            (100, 200),
+            0,
+            false,
+            Some((1000, 800)),
+            (10, 10),
+            0,
+            &[
+                ("acn.call.regime", s("midfill")),
+                ("acn.cache.read_bytes", i(800 * 25_000)),
+            ],
+        ),
+        chat(
+            11,
+            2,
+            (300, 400),
+            1,
+            false,
+            Some((1000, 0)),
+            (10, 10),
+            0,
+            &[("acn.call.regime", s("prefill"))],
+        ),
+        chat(12, 2, (500, 600), 2, false, None, (10, 10), 0, &[]),
+    ]);
+    let v = call_view(&t).unwrap();
+    assert_eq!(
+        strs(&v, "regime"),
+        [Some("midfill".into()), Some("prefill".into()), None]
+    );
+    assert_eq!(ints(&v, "cache_read_bytes"), [Some(20_000_000), None, None]);
+    let refused = |extra: &[(&str, AttrValue)], usage: Option<(i64, i64)>, needle: &str| {
+        let t = mini(vec![chat(
+            10,
+            2,
+            (100, 200),
+            0,
+            false,
+            usage,
+            (10, 10),
+            0,
+            extra,
+        )]);
+        let e = call_view(&t).unwrap_err();
+        assert!(e.contains(needle), "{needle}: {e}");
+    };
+    // A recorded regime the counts do not derive, and one recorded without
+    // the counts, are refused.
+    refused(
+        &[("acn.call.regime", s("prefill"))],
+        Some((1000, 800)),
+        "TRC-12",
+    );
+    refused(&[("acn.call.regime", s("prefill"))], None, "TRC-12");
+    // A call that records none (an earlier harness, an imported trace) gets
+    // the regime its counts derive.
+    let t = mini(vec![chat(
+        10,
+        2,
+        (100, 200),
+        0,
+        false,
+        Some((1000, 1000)),
+        (10, 10),
+        0,
+        &[],
+    )]);
+    assert_eq!(
+        strs(&call_view(&t).unwrap(), "regime"),
+        [Some("decode_only".into())]
+    );
+    // Read bytes: never negative, never without a read count, zero for none read.
+    refused(
+        &[
+            ("acn.call.regime", s("midfill")),
+            ("acn.cache.read_bytes", i(-1)),
+        ],
+        Some((1000, 800)),
+        "negative bytes",
+    );
+    refused(
+        &[("acn.cache.read_bytes", i(5))],
+        None,
+        "without a cache-read count",
+    );
+    refused(
+        &[
+            ("acn.call.regime", s("prefill")),
+            ("acn.cache.read_bytes", i(5)),
+        ],
+        Some((1000, 0)),
+        "no tokens read",
+    );
+}

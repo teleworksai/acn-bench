@@ -459,6 +459,31 @@ requirement = "TRC-12"
 doc = "tokens written to the provider's cache; 0 when the provider has no such concept (TRC-21)"
 
 [[attribute]]
+name = "acn.call.regime"
+on = ["chat"]
+type = "string"
+unit = ""
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "the call reported its input and cache-read counts, the read not more than the input: derived, never reported by a provider"
+promoted = true
+values = ["prefill", "midfill", "decode_only"]
+requirement = "TRC-12"
+doc = "with uncached = input − cache-read tokens: decode_only when uncached is 0, midfill when some is read and some uncached, prefill when nothing is read (report v1.5 §4.1)"
+
+[[attribute]]
+name = "acn.cache.read_bytes"
+on = ["chat"]
+type = "int"
+unit = "bytes"
+producers = ["acn-harness", "acn-gen"]
+required = false
+when = "the backend reports a KV size per token, or the mock profile states one (SPEC 030 MLM-30a); not emitted by any producer until MLM-30a is implemented"
+promoted = true
+requirement = "TRC-12"
+doc = "acn.cache.read_tokens × the KV size per token: the bandwidth term of a midfill"
+
+[[attribute]]
 name = "acn.call.ttft_ms"
 on = ["chat"]
 type = "float"
