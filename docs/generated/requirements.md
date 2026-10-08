@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 13 · IDs: 284 · MUSTs: 259 · implemented: 243 · cited: 261
+Specs: 13 · IDs: 292 · MUSTs: 259 · implemented: 243 · cited: 261
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -266,6 +266,14 @@ Specs: 13 · IDs: 284 · MUSTs: 259 · implemented: 243 · cited: 261
 | GATE-14 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
 | GATE-15 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
 | GATE-16 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
+| GATE-20 | `095-gates.md` | 3 | — | no | — |
+| GATE-21 | `095-gates.md` | 3 | — | no | — |
+| GATE-22 | `095-gates.md` | 3 | — | no | — |
+| GATE-23 | `095-gates.md` | 3 | — | no | — |
+| GATE-24 | `095-gates.md` | 3 | — | no | — |
+| GATE-25 | `095-gates.md` | 3 | — | no | — |
+| GATE-26 | `095-gates.md` | 3 | — | no | — |
+| GATE-27 | `095-gates.md` | 3 | — | no | — |
 | P4-1 | `100-p4-harness-discipline.md` | 2 | MUST | yes | `crates/acn-hyp/tests/existing_files.rs` `p4_names_the_spec_100_providers_and_workloads_and_pins_them_when_pinned`<br>`tests/accept/p4.rs` `the_p4_workloads_meet_the_spec`<br>`tests/accept/p4.rs` `the_run_of_record_is_accepted_at_its_budget_and_refused_below_it` |
 | P4-2 | `100-p4-harness-discipline.md` | 2 | MUST | yes | `tests/accept/p4.rs` `the_p4_workloads_meet_the_spec` |
 | P4-3 | `100-p4-harness-discipline.md` | 2 | MUST | yes | `tests/accept/p4.rs` `the_p4_workloads_meet_the_spec`<br>`tests/accept/p4.rs` `every_knob_changes_the_requests_of_some_p4_workload` |
