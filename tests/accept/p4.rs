@@ -431,6 +431,7 @@ fn the_run_of_record_is_accepted_at_its_budget_and_refused_below_it() {
         models: [
             "anthropic=mock-explicit",
             "openai=mock-auto",
+            "tensormesh=mock-auto",
             "vllm=mock-blocks",
             "sglang=mock-blocks",
         ]
@@ -443,9 +444,9 @@ fn the_run_of_record_is_accepted_at_its_budget_and_refused_below_it() {
     // file and its workloads must lie in the directory `runs/` lies in
     // (ADR-23), so a scratch `runs/` cannot stand in. The test only reads it.
     let runs = r.join("runs");
-    let e = loop_run::run(&h, &args(1547), &runs, bin, &mut x).unwrap_err();
+    let e = loop_run::run(&h, &args(1934), &runs, bin, &mut x).unwrap_err();
     assert_eq!(e.code, Code::BudgetTooSmall, "{e}");
-    assert!(e.message.contains("1548 bundles"), "{e}");
-    let e = loop_run::run(&h, &args(1548), &runs, bin, &mut x).unwrap_err();
+    assert!(e.message.contains("1935 bundles"), "{e}");
+    let e = loop_run::run(&h, &args(1935), &runs, bin, &mut x).unwrap_err();
     assert_eq!(e.code, Code::ExecutorFailed, "every check passed: {e}");
 }
