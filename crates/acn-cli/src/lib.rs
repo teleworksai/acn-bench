@@ -5,3 +5,4 @@
 
 pub mod attrib;
 pub mod loop_exec;
+pub mod regen;

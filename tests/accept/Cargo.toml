@@ -77,3 +77,7 @@ path = "emu_sim.rs"
 [[test]]
 name = "attrib"
 path = "attrib.rs"
+
+[[test]]
+name = "kit"
+path = "kit.rs"

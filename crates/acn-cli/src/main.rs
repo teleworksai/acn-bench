@@ -69,6 +69,22 @@ enum Cmd {
         #[command(subcommand)]
         cmd: EvidenceCmd,
     },
+    /// Regenerate a `sim` bundle from its run_id, its inputs found by hash,
+    /// into `runs/regen/<run_id>/<n>/`, and compare it with the original
+    /// (SPEC 140 P16-2 to P16-6).
+    Run {
+        /// The run_id of a bundle under the runs directory, or of a reference
+        /// manifest under `kit/manifests/`.
+        #[arg(long = "from-run-id", value_name = "RUN_ID")]
+        from_run_id: String,
+        /// The runs directory, resolved against the workspace root (CON-28).
+        #[arg(long, default_value = "runs")]
+        runs_dir: PathBuf,
+        /// On another build, regenerate anyway and compare without what records
+        /// the build; identity is not claimed (CON-31).
+        #[arg(long)]
+        across_builds: bool,
+    },
     /// Attribution (SPEC 090).
     Attrib {
         #[command(subcommand)]
@@ -1037,6 +1053,20 @@ fn run() -> Value {
         Cmd::Harness {
             cmd: HarnessCmd::Run(a),
         } => harness_run(&a),
+        Cmd::Run {
+            from_run_id,
+            runs_dir,
+            across_builds,
+        } => respond("run", || {
+            Ok(acn_cli::regen::regenerate(&acn_cli::regen::Regen {
+                run_id: &from_run_id,
+                runs_dir: &runs_dir,
+                across_builds,
+                start_dir: &std::env::current_dir()?,
+                engine_hash: build_info::engine_hash()?,
+                build: build_info::build_info()?,
+            }))
+        }),
         Cmd::Attrib {
             cmd: AttribCmd::Turns { bundle, out },
         } => acn_cli::attrib::turns(&bundle, &out),
