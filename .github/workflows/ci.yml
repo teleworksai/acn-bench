@@ -37,6 +37,60 @@ jobs:
           fallback: none
       - run: tools/ci.sh
 
+  p16-target:
+    # SPEC 140 P16-12: regenerate the reference run on each target, and keep its
+    # build-neutral form for the comparison across targets. A job of its own,
+    # so the required gates stay exactly what they are.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # build scripts and tests never see the token
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: tools/p16-target.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: p16-record-${{ matrix.os }}
+          path: target/p16/neutral.json
+          if-no-files-found: error
+          overwrite: true
+
+  p16-compare:
+    # SPEC 140 P16-12: compare the targets' records whatever the matrix's outcome.
+    # A difference is published, never a failure (CON-31).
+    needs: p16-target
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # build scripts and tests never see the token
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: p16-record-*
+          path: target/p16-records
+      # One artifact is unpacked into the path itself, several into one
+      # directory each: the records are found wherever they landed.
+      - name: compare the targets
+        run: |
+          set -euo pipefail
+          mkdir -p target/p16-records
+          find target/p16-records -name neutral.json | sort > target/p16-list
+          cargo xtask p16-compare --expect 3 $(cat target/p16-list) | tee target/p16-comparison.json
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: p16-comparison
+          path: target/p16-comparison.json
+          overwrite: true
+
   lab:
     # CON-23: the only gates for lab crates are fmt and clippy on the crate itself.
     runs-on: ubuntu-latest

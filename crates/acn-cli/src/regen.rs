@@ -142,9 +142,8 @@ fn neutral_manifest(m: &Manifest) -> R<Value> {
     let mut v = serde_json::to_value(m).map_err(|e| refuse("io", e.to_string()))?;
     if let Some(o) = v.as_object_mut() {
         o.remove("build");
-        if let Some(f) = o.get_mut("files").and_then(Value::as_object_mut) {
-            f.remove(RESOURCES);
-        }
+        // The file hashes are compared on their own (P16-6).
+        o.remove("files");
     }
     Ok(v)
 }
@@ -478,6 +477,39 @@ fn inner(r: &Regen<'_>) -> R<Value> {
         "identical": identical,
         "differ": differ,
     }))
+}
+
+/// `acn bundle neutral <dir>` (P16-12): a verified bundle in build-neutral
+/// form, for comparing targets. Its `files` are the listed hashes but
+/// `resources.parquet`'s, its `resources` the decoded rows without
+/// `acn.build_hash` (each written as its debug text, which is the same on
+/// every target), and its `manifest` the manifest without `build`.
+#[must_use]
+pub fn neutral(dir: &Path) -> Value {
+    let inner = || -> R<Value> {
+        let v = bundle::verify(dir)
+            .map_err(|e| refuse("bundle_invalid", format!("{}: {e}", dir.display())))?;
+        let mut files: BTreeMap<&str, &str> = BTreeMap::new();
+        for (p, h) in &v.manifest.files {
+            if p != RESOURCES {
+                files.insert(p, h);
+            }
+        }
+        let resources: Vec<String> = neutral_resources(dir)?
+            .iter()
+            .map(|r| format!("{r:?}"))
+            .collect();
+        Ok(json!({
+            "ok": true,
+            "run_id": v.manifest.run_id,
+            "target": v.manifest.build.target,
+            "build_hash": v.manifest.build.build_hash,
+            "files": files,
+            "resources": resources,
+            "manifest": neutral_manifest(&v.manifest)?,
+        }))
+    };
+    inner().unwrap_or_else(|e| json!({"ok": false, "code": e.code, "error": e.error}))
 }
 
 #[cfg(test)]

@@ -6,7 +6,9 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
-use xtask::{docs_inventory, env_hash, import_5g_iana, logging, pr_check, trace_check, workspace};
+use xtask::{
+    docs_inventory, env_hash, import_5g_iana, logging, p16, pr_check, trace_check, workspace,
+};
 
 #[derive(Parser)]
 #[command(
@@ -55,6 +57,16 @@ enum Cmd {
         /// cannot pose as two labels. This is what CI passes.
         #[arg(long)]
         labels_json: Option<String>,
+    },
+    /// SPEC 140 P16-12: compare one run's `acn bundle neutral` records from
+    /// several targets; a difference is reported, never a failure (CON-31).
+    #[command(name = "p16-compare")]
+    P16Compare {
+        /// How many targets should have left a record.
+        #[arg(long, default_value_t = 3)]
+        expect: usize,
+        /// The records, one per target.
+        records: Vec<PathBuf>,
     },
     /// EMU-65: convert the 5G-IANA PING.kml into a measured trace's trace.toml;
     /// --check refuses unless the committed trace.toml is exactly the output.
@@ -133,6 +145,7 @@ fn run() -> Value {
             };
             to_json(pr_check::run(&root, changes, &labels))
         }
+        Cmd::P16Compare { expect, records } => to_json(p16::run(&records, expect)),
         Cmd::Import5gIana { ping, dir, check } => {
             let dir = dir.unwrap_or_else(|| root.join("scenarios/measured/5g-iana-2023-01-29"));
             to_json(import_5g_iana::run(&root, &ping, &dir, check))
