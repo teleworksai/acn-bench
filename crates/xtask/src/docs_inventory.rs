@@ -238,6 +238,10 @@ pub fn generate(root: &Path) -> Result<BTreeMap<String, String>> {
             format!("{HEADER}{page}"),
         );
     }
+    // LOOP-30, P16-21: the evidence pages, from the committed reports.
+    for (path, page) in crate::evidence::pages(root)? {
+        files.insert(path, format!("{HEADER}{page}"));
+    }
     // HYP-12: the quantity table, in a workspace that has the verdict crate (the
     // small test fixtures do not). The table itself is this binary's acn-hyp.
     if root.join("crates/acn-hyp/Cargo.toml").is_file() {
@@ -252,12 +256,17 @@ pub fn generate(root: &Path) -> Result<BTreeMap<String, String>> {
 /// Entries of the generated directory that this task did not produce. Only a
 /// `.gitkeep` placeholder is tolerated: a hidden file is still stale content.
 fn stale_files(root: &Path, generated: &BTreeMap<String, String>) -> Result<Vec<String>> {
-    let dir = root.join(GENERATED_DIR);
-    Ok(names_in(&dir, |n| n != ".gitkeep")?
-        .into_iter()
-        .map(|n| format!("{GENERATED_DIR}/{n}"))
-        .filter(|key| !generated.contains_key(key))
-        .collect())
+    let mut out = Vec::new();
+    for owned in [GENERATED_DIR, crate::evidence::EVIDENCE_DIR] {
+        let dir = root.join(owned);
+        out.extend(
+            names_in(&dir, |n| n != ".gitkeep")?
+                .into_iter()
+                .map(|n| format!("{owned}/{n}"))
+                .filter(|key| !generated.contains_key(key)),
+        );
+    }
+    Ok(out)
 }
 
 /// An output path must be a regular file or absent. Following a symlink would
@@ -277,6 +286,7 @@ fn refuse_symlink(path: &Path) -> Result<()> {
 pub fn run(root: &Path, check: bool) -> Result<Report> {
     let generated = generate(root)?;
     refuse_symlink(&root.join(GENERATED_DIR))?;
+    refuse_symlink(&root.join(crate::evidence::EVIDENCE_DIR))?;
     let stale = stale_files(root, &generated)?;
     let mut written = Vec::new();
     let mut changed = Vec::new();
