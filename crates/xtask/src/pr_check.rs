@@ -10,7 +10,8 @@
 //!   path, under GitHub's last-match-wins rule.
 //! - HYP-26: a file added or changed under `hypotheses/` must be a `<id>.toml`
 //!   hypothesis that loads as frozen, lints clean, and carries `[design].pins`
-//!   if it runs on `real-api`; in `--base` mode, as the head commit has it.
+//!   if it runs on `real-api`, unless it amends a file frozen unpinned at the
+//!   merge base; in `--base` mode, as the head commit has it.
 //!
 //! Everything here fails closed: an unresolvable or ambiguous base, a root that
 //! is not the repository top level, a path that escapes the root, and any
@@ -469,11 +470,19 @@ const HYPOTHESES_DIR: &str = "hypotheses";
 /// already enforces its named POC spec and a consistent `[poc].status` (HYP-2,
 /// HYP-3); loads as frozen, which it is only once this PR's `env-hash.json`
 /// records it (HYP-3); lints clean (HYP-27); and, when `real-api` is among its
-/// backends, carries `[design].pins`. In `--base` mode the files and the record
+/// backends, carries `[design].pins`, unless it amends a file that was frozen
+/// (recorded) without pins at the merge base: an amendment keeps
+/// `unpinned-inputs`. No PR may remove pins, and without a merge base nothing
+/// is an amendment. In `--base` mode the files and the record
 /// are judged as the PR's head commit has them: a working tree that differs is
 /// itself a finding. A removed file is a frozen-set change, which CON-7 covers.
 /// No label satisfies these findings.
-fn freeze_findings(root: &Path, changed: &[String], head: Option<&str>) -> Result<Vec<Finding>> {
+fn freeze_findings(
+    root: &Path,
+    changed: &[String],
+    head: Option<&str>,
+    merge_base: Option<&str>,
+) -> Result<Vec<Finding>> {
     let mut out = Vec::new();
     let finding = |p: &str, problems: Vec<String>| Finding {
         rule: "HYP-26",
@@ -538,11 +547,20 @@ fn freeze_findings(root: &Path, changed: &[String], head: Option<&str>) -> Resul
                             .collect::<String>()
                     ));
                 }
-                if h.design().backends.iter().any(|b| b == "real-api") && h.design().pins.is_none()
+                let base = at_base(root, merge_base, p)?;
+                let amends_unpinned = base.is_some_and(|b| b.recorded && b.real_api && !b.pinned);
+                if h.design().backends.iter().any(|b| b == "real-api")
+                    && h.design().pins.is_none()
+                    && !amends_unpinned
                 {
                     problems.push(
-                        "a real-api hypothesis is frozen with its [design].pins (HYP-26, HYP-23)"
+                        "a real-api hypothesis is frozen with its [design].pins, unless the PR amends a file frozen unpinned at the merge base (HYP-26, HYP-23)"
                             .to_owned(),
+                    );
+                }
+                if base.is_some_and(|b| b.pinned) && h.design().pins.is_none() {
+                    problems.push(
+                        "[design].pins may not be removed from a frozen file (HYP-26)".to_owned(),
                     );
                 }
                 let r = acn_hyp::lint::lint_in(&abs, root);
@@ -554,6 +572,52 @@ fn freeze_findings(root: &Path, changed: &[String], head: Option<&str>) -> Resul
         }
     }
     Ok(out)
+}
+
+/// What a changed hypothesis file was at the merge base (HYP-26).
+#[derive(Clone, Copy)]
+struct AtBase {
+    /// The base's `env-hash.json` records the file with these exact bytes:
+    /// it was frozen there (HYP-3).
+    recorded: bool,
+    real_api: bool,
+    /// `[design]` has a `pins` key, valid or not.
+    pinned: bool,
+}
+
+/// The file `p` as the merge base has it, or `None` when there is no merge
+/// base, no such file, or no TOML table there: then nothing is an amendment.
+fn at_base(root: &Path, merge_base: Option<&str>, p: &str) -> Result<Option<AtBase>> {
+    let Some(sha) = merge_base else {
+        return Ok(None);
+    };
+    let Some(text) = show_at(root, sha, p)? else {
+        return Ok(None);
+    };
+    let Ok(v) = toml::from_str::<toml::Table>(&text) else {
+        return Ok(None);
+    };
+    let design = v.get("design").and_then(toml::Value::as_table);
+    let real_api = design
+        .and_then(|d| d.get("backends"))
+        .and_then(toml::Value::as_array)
+        .is_some_and(|b| b.iter().any(|x| x.as_str() == Some("real-api")));
+    let pinned = design.is_some_and(|d| d.contains_key("pins"));
+    let hash = blake3::hash(text.as_bytes()).to_hex().to_string();
+    let recorded = show_at(root, sha, RECORD_FILE)?
+        .and_then(|r| serde_json::from_str::<serde_json::Value>(&r).ok())
+        .and_then(|r| r.get("files").and_then(|f| f.as_array()).cloned())
+        .is_some_and(|files| {
+            files.iter().any(|e| {
+                e.get("path").and_then(|x| x.as_str()) == Some(p)
+                    && e.get("blake3").and_then(|x| x.as_str()) == Some(hash.as_str())
+            })
+        });
+    Ok(Some(AtBase {
+        recorded,
+        real_api,
+        pinned,
+    }))
 }
 
 // ----------------------------------------------------------------------- run
@@ -674,7 +738,13 @@ pub fn run(root: &Path, changes: Changes, labels: &[String]) -> Result<Report> {
     }
 
     let head = commits.as_ref().map(|(_, c)| c.head_sha.clone());
-    violations.extend(freeze_findings(root, &changed, head.as_deref())?);
+    let merge_base = commits.as_ref().map(|(_, c)| c.merge_base.clone());
+    violations.extend(freeze_findings(
+        root,
+        &changed,
+        head.as_deref(),
+        merge_base.as_deref(),
+    )?);
 
     let missing = codeowners_missing(root)?;
     for v in &violations {

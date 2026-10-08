@@ -47,3 +47,4 @@
 | [ADR-41](../decisions/ADR-41.md) | T16: POC 16 as regeneration records, and where evidence pages come from | accepted (T16.1, spec-change) | P16-1 to P16-30, LOOP-30, CON-31 |
 | [ADR-42](../decisions/ADR-42.md) | M1 closes on the substrate; GATE-14 deferred to M2 | accepted (T17.1, spec-change) | GATE-14, GATE-20 to GATE-27 |
 | [ADR-44](../decisions/ADR-44.md) | `tensormesh` joins POC 4 | accepted (issue #70: spec-change and env-change) | P4-5, P4-7 (and SPEC 100 §8's test list) |
+| [ADR-45](../decisions/ADR-45.md) | An amendment may keep a frozen file unpinned (HYP-26) | accepted (issue #70, PR 72: spec-change and env-change) | HYP-26, HYP-23 |
