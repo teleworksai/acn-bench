@@ -1,0 +1,46 @@
+# CANDIDATE (editable; not frozen; verdicts are exploratory) — CON-17
+# Source: ACN report v1.6, Appendix E "Lab candidate added in v1.6"; docs/lab/2026-10-08-engine-survey.md
+[poc]
+id = "p20"
+status = "candidate"
+title = "The three KV retention-hint vocabularies are semantically equivalent for agent traffic"
+report_refs = ["§4.6", "§5.5", "§12.4 I-1", "G4", "Appendix E (new, from lab)"]
+
+[hypothesis]
+statement = "Driving the same agentic trace through SGLang's engine-native hints (KvHintEnvelope: Pin / Retain with a TTL) and through NVIDIA Dynamo on vLLM with API-level retention fields (OpenAI prompt_cache_retention, Anthropic cache_control, translated by Dynamo) yields the same cached-token ratio and the same restored bytes at matched TTL and pause length. If so, G4 is a naming gap closable by a mapping; if not, it is a real interoperability gap and interface I-1 needs semantics, not a dictionary."
+
+[varies]
+provider     = { kind = "enum", values = ["sglang_envelope", "dynamo_on_vllm", "api_retention_passthrough"] }   # the hint vocabulary IS the provider axis here; reported per value, never pooled (CON-26)
+ttl_s        = { kind = "range", min = 60, max = 3600, levels = [60, 300, 3600] }          # the two API tiers plus one short bound
+pause_s      = { kind = "range", min = 1, max = 86400, levels = [1, 10, 100, 1000, 10000, 86400] }   # Appendix C pause distribution, log-spaced
+prefix_tokens = { kind = "range", min = 2000, max = 100000, levels = [2000, 10000, 100000] }
+workload     = { kind = "enum", values = ["coding", "retrieval", "fanout"] }
+hints_on     = { kind = "bool" }                                   # false = the vocabulary is installed but no hint is sent
+
+[measures]
+primary   = ["cached_token_ratio", "restore_bytes", "ttft_p50_ms"]
+secondary = ["recomputed_tokens", "hint_rejections"]
+
+[control]
+description = "The same trace with no hints on the same engine, same seed schedule; the engine's default eviction decides."
+config = { hints_on = false }
+
+[design]
+twin_required = false        # provider-behaviour hypothesis, not a network one; the twin rule does not apply (LOOP-4)
+search = "grid"
+replicates = 10
+backends = ["real-api"]      # mockllm cannot model two engines' eviction; a mock run here is a smoke test only (CON-26)
+min_providers_for_verdict = 2
+
+[falsifier]
+# Evaluated per provider slice (CON-26, HYP-24). True ⇒ the hints had no effect on that
+# provider, so the equivalence question is moot there. Equivalence itself is a comparison
+# ACROSS slices, which the predicate language does not express (HYP-12: a selector cannot fix
+# a non-pooled parameter); it is read off the per-provider effect sizes at L4, and a
+# cross-slice comparator is a HYP spec-change to propose if this candidate graduates.
+predicate = "max_over_knobs(abs(effect(cached_token_ratio))) < noise_floor(cached_token_ratio, control, ci = 0.95)"
+inconclusive_if = "replicates < 10 or providers_reported < 2"
+
+[expected]
+outcome = "pass"
+note = "Exploratory. Per slice, hints are expected to show an effect (pass). Across slices the effects are expected to diverge at long pauses: Pin maps to an L3 lease on SGLang while API-level retention is an eviction bias on Dynamo-managed tiers, so restored bytes should diverge once the pause exceeds the host tier's residency. A pass would make G4 a dictionary item. Graduates as POC 17 if the first run shows any measurable effect of hints at all."

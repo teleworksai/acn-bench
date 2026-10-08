@@ -5,3 +5,4 @@
 | Note | Title |
 |---|---|
 | [2026-09-21-turn-transport](../lab/2026-09-21-turn-transport.md) | Lab note — turn-transport (2026-09-21) |
+| [2026-10-08-engine-survey](../lab/2026-10-08-engine-survey.md) | Lab note — engine survey, vLLM v0.30 and SGLang v0.5.21 (2026-10-08) |

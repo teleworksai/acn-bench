@@ -169,6 +169,7 @@ Lab, starting day one: (1) `lab/turn-transport` — a QUIC (quinn) prototype in 
 | Multiple inference workers behind a router | POC 2a | not planned; POC 2a deferred until available |
 | Linux box with root | M4 `netem` validation | to confirm |
 | Robotics / radio partner | POC 3a, 15 | conversation starts in Q1 |
+| A router with a KV-retention hint API in front of the GPU node (sgl-router with SGLang's `KvHintEnvelope`, or NVIDIA Dynamo in front of vLLM) | lab candidate p20 (hint-vocabulary equivalence; `docs/lab/2026-10-08-engine-survey.md`); a shipped instance of interface I-1 | open — needs the GPU node first; either engine serves (vLLM v0.30 / SGLang v0.5.21 both export OTLP spans for TRC-18) |
 
 ## 12. Working-group cadence
 
