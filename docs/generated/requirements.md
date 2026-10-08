@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 13 · IDs: 284 · MUSTs: 259 · implemented: 239 · cited: 256
+Specs: 13 · IDs: 284 · MUSTs: 259 · implemented: 243 · cited: 261
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -252,7 +252,7 @@ Specs: 13 · IDs: 284 · MUSTs: 259 · implemented: 239 · cited: 256
 | ATR-31 | `090-attribution.md` | 4 | MUST | yes | `crates/xtask/tests/env_hash.rs` `engine_hash_ignores_hypotheses_and_measured_scenarios_and_follows_the_frozen_crates` |
 | ATR-40 | `090-attribution.md` | 5 | MUST | yes | `crates/acn-cli/tests/attrib_cli.rs` `turns_writes_one_row_per_turn_the_same_bytes_every_time` |
 | ATR-41 | `090-attribution.md` | 5 | MUST | yes | `crates/acn-cli/tests/attrib_cli.rs` `heatmap_draws_each_cell_with_its_interval_and_the_verdicts_labels`<br>`crates/acn-cli/tests/attrib_cli.rs` `heatmap_refuses_what_it_cannot_draw_faithfully` |
-| ATR-42 | `090-attribution.md` | 5 | MUST | no | — |
+| ATR-42 | `090-attribution.md` | 5 | MUST | yes | `crates/xtask/tests/evidence.rs` `a_page_showing_an_attribution_quantity_says_its_network_is_emulated` |
 | GATE-1 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found_alone` |
 | GATE-2 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found_alone` |
 | GATE-3 | `095-gates.md` | 1 | MUST | yes | `tests/accept/gates.rs` `every_gate_record_meets_spec_095`<br>`tests/accept/gates.rs` `each_breach_of_section_1_is_found_alone` |
@@ -284,9 +284,9 @@ Specs: 13 · IDs: 284 · MUSTs: 259 · implemented: 239 · cited: 256
 | P16-4 | `140-p16-kit.md` | 2 | MUST | yes | `tests/accept/kit.rs` `harness_and_generator_bundles_regenerate_byte_for_byte_from_their_run_ids`<br>`tests/accept/kit.rs` `every_refusal_names_its_reason`<br>`tests/accept/kit.rs` `a_manifest_of_an_unknown_producer_is_refused` |
 | P16-5 | `140-p16-kit.md` | 2 | MUST | yes | `tests/accept/kit.rs` `another_build_is_refused_unless_compared_without_its_build`<br>`tests/accept/kit.rs` `identities_and_directories_are_checked` |
 | P16-6 | `140-p16-kit.md` | 2 | MUST | yes | `crates/acn-cli/tests/run_cli.rs` `a_run_regenerates_from_its_id_and_an_unknown_id_exits_one`<br>`tests/accept/kit.rs` `harness_and_generator_bundles_regenerate_byte_for_byte_from_their_run_ids`<br>`tests/accept/kit.rs` `a_reference_manifest_alone_regenerates`<br>`tests/accept/kit.rs` `another_build_is_refused_unless_compared_without_its_build`<br>`tests/accept/kit.rs` `a_bundle_that_differs_is_never_reported_identical`<br>`tests/accept/kit.rs` `identities_and_directories_are_checked`<br>`tests/accept/kit.rs` `one_run_made_by_two_builds_has_one_build_neutral_form` |
-| P16-10 | `140-p16-kit.md` | 3 | MUST | no | — |
+| P16-10 | `140-p16-kit.md` | 3 | MUST | no | `crates/acn-cli/tests/quickstart.rs` `the_readme_quickstart_runs_as_written`<br>`crates/acn-cli/tests/quickstart.rs` `the_kits_byte_compared_files_keep_their_bytes` |
 | P16-11 | `140-p16-kit.md` | 3 | MUST | no | — |
 | P16-12 | `140-p16-kit.md` | 3 | MUST | yes | `crates/xtask/tests/p16.rs` `records_that_agree_are_identical_and_differences_are_reported_not_failed`<br>`crates/xtask/tests/p16.rs` `records_of_another_run_or_of_no_bundle_are_refused`<br>`crates/xtask/tests/p16.rs` `ci_regenerates_on_every_target_and_compares_them`<br>`tests/accept/kit.rs` `one_run_made_by_two_builds_has_one_build_neutral_form` |
-| P16-20 | `140-p16-kit.md` | 4 | MUST | no | — |
-| P16-21 | `140-p16-kit.md` | 4 | MUST | no | — |
-| P16-30 | `140-p16-kit.md` | 5 | MUST | no | — |
+| P16-20 | `140-p16-kit.md` | 4 | MUST | yes | `crates/xtask/tests/evidence.rs` `a_committed_loop_renders_a_page_with_every_layer_and_its_chain`<br>`crates/xtask/tests/evidence.rs` `committed_files_are_checked_against_what_they_name`<br>`crates/xtask/tests/evidence.rs` `a_stale_page_or_a_missing_committed_verdict_fails` |
+| P16-21 | `140-p16-kit.md` | 4 | MUST | yes | `crates/xtask/tests/evidence.rs` `a_committed_loop_renders_a_page_with_every_layer_and_its_chain`<br>`crates/xtask/tests/evidence.rs` `divergence_figures_are_written_as_committed`<br>`crates/xtask/tests/evidence.rs` `committed_text_cannot_write_the_page`<br>`crates/xtask/tests/evidence.rs` `a_page_showing_an_attribution_quantity_says_its_network_is_emulated`<br>`crates/xtask/tests/evidence.rs` `a_stale_page_or_a_missing_committed_verdict_fails` |
+| P16-30 | `140-p16-kit.md` | 5 | MUST | yes | `crates/acn-cli/tests/quickstart.rs` `the_readme_quickstart_runs_as_written` |

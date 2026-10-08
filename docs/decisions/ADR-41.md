@@ -101,3 +101,45 @@ One read-only review found 10 findings, 3 blocking. SPEC 140 was revised before 
   - **Stricter records.** Records must carry a non-empty `target` and `run_id`, and two records of one target are refused.
   - **More tests.** One test pins the workflow wiring (the step on every target, the comparison job, its `--expect`). The neutral form's test now checks that only `acn.build_hash` leaves each resource row.
   - **The reviewed workflow copy.** `crates/xtask/tests/workspace.rs` holds the reviewed copy of `ci.yml`, and now includes `p16-target` and `p16-compare`. The required jobs (`gates`, `lab`, `pr-check`) are unchanged.
+
+## T16.4 notes
+- **The pages.** `xtask`'s `evidence` module renders one `docs/evidence/<hypothesis-id>.md` per hypothesis with a committed loop, inside `docs-inventory`, from the JSON alone.
+  - Each page lists the loop's identity, the verdict at each layer with its labels and whether it is citable, and the control effects with their intervals. It also lists the twins' divergence figures, the provider table, and the chain of verdicts and bundle `run_id`s.
+  - The L3 row says "none yet" until the L3 layer (T30) exists.
+  - `docs-inventory` owns `docs/evidence/` as it owns `docs/generated/`: a page with no committed loop is stale, and a write removes it.
+- **Numbers as committed.** Effects, intervals and divergence figures are read as raw JSON text (`serde_json`'s `raw_value`) and written as committed. A parse and re-format could change a last digit (ADR-40, T15.3).
+- **Citable is conservative.** A verdict carrying `exploratory`, `mock-gated` or `unpinned-inputs` is not citable (HYP-23). Nor is one carrying `sim-only` or `partially-twinned`: those disqualify only when the twin is required, which the committed verdict does not record, so a page never shows as citable what might not be.
+- **What is checked.**
+  - Every committed file must sit under its own id.
+  - A report's final verdict, and each twin's L1 and L2 verdicts, must be committed. A missing one fails in both modes.
+- **The fixtures.** `crates/xtask/tests/fixtures/evidence/` holds a real loop of the two-cell test hypothesis on the mock: its L1 report, its twin and both verdicts.
+- **No real page yet.** There is no committed loop in the repository. The run of record for POC 4 (`docs/runs/2026-10-05-p4-l1-mock.md`) predates two engine changes, and its bundles are not kept. The M1 gate (T17) commits the loops it cites, and their pages appear then.
+- **The quickstart** is the README's one `sh quickstart` block. `crates/acn-cli/tests/quickstart.rs` runs it:
+  - the first line must be the kit's build command;
+  - every other line is split into words and run with the test's own `acn`, with no shell;
+  - `$RUN_ID` takes the latest printed `run_id`;
+  - the last line must print `identical: true`.
+
+  Its scratch directory is `target/quickstart/`, removed before and after.
+- **`.gitattributes`** marks `kit/**`, `lab/**/*.toml` and `docs/runs/**/*.json` `-text` (P16-10), and a test checks the lines.
+- **The README's status** now says M1, not M0.
+- **The first cross-target result** is recorded in `docs/runs/2026-10-07-regeneration-across-ci-targets.md`. On CI run 37722939344, the reference run's bundles on macOS arm64, Linux aarch64 and Linux x86_64 were identical in build-neutral form.
+- **After review (T16.4).** One read-only review made 8 findings, none blocking. What was done:
+  - **Committed text cannot write the page** (near-blocking for a citation target). The fields that could, checked or escaped:
+    - Ids, hashes and run_ids must be 64 lowercase hex.
+    - The seed must be decimal, `verdict` one of pass, fail or inconclusive, and `stop` and `status` plain words.
+    - Free text (slices, cell keys, quantities, labels, providers, reasons) is escaped: `\`, `|`, `` ` ``, `*`, `_`, `[`, `]`, `<`, `>` and `#` are backslashed, line breaks are flattened, and control characters are dropped.
+
+    Ids are written in code spans only after they are checked. A hypothesis id names a page only in lowercase, so two ids cannot differ by case alone.
+  - **The whole chain.** Each twin's live bundles are listed beside the L1 bundles they twin (`derived_from`), with the twin's reasons and label.
+  - **Divergence figures** are written compact, with every digit as committed (`1.10` stays `1.10`), and a test covers it.
+  - **Committed files are checked against what they name.**
+    - A verdict's id must recompute from its hypothesis hash and bundles (`acn_hyp::verdict::verdict_id`).
+    - Every verdict a loop names must be the loop's hypothesis's.
+    - A twin must twin its loop's final verdict.
+    - A verdict that no committed report or twin names is refused.
+  - **The tests now name the check they exercise.** The own-id test copies a directory rather than renaming it, and asserts the message.
+  - **Which loop is current.** The page lists every loop and twin in id order and marks none as current. LOOP-30's reading of gate documents arrives with the first gate that cites a page (T17).
+  - **The quickstart test** takes a lock file, `target/quickstart.lock`, so two test processes never share its fixed run, and normalises CRLF. Its no-shell check now refuses quotes, `$`, `~`, `\`, `?`, `[`, `(`, `{` and `#` too. The README says to remove `target/quickstart/` before a second run (CON-29).
+  - **The trace scope.** P16-10 stays out of `trace-scope.toml` until the kit's `kit/manifests/` exist (T17); its `.gitattributes` part is in place and tested. ATR-42 joins SPEC 090's implemented list.
+  - **The CI record's name.** It is `docs/runs/2026-10-07-regeneration-across-ci-targets.md`, so it is not mistaken for a P16-11 second-machine record.

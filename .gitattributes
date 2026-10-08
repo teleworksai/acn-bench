@@ -9,3 +9,9 @@ workloads/** -text
 crates/xtask/src/import_5g_iana.rs -text
 # The committed OpenAPI document is compared byte for byte with the route table (CTL-24).
 crates/acn-ctl/openapi.json -text
+# SPEC 140 P16-10: the kit's reference manifests and inputs, the lab's hashed
+# inputs, and the committed copies of loop reports, twins and verdicts (P16-20),
+# all byte-compared.
+kit/** -text
+lab/**/*.toml -text
+docs/runs/**/*.json -text

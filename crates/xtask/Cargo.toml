@@ -17,7 +17,8 @@ acn-trace.workspace = true
 blake3.workspace = true
 clap.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+# raw_value: evidence pages write the committed numbers as written (P16-21).
+serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true

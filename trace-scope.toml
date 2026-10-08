@@ -126,12 +126,15 @@ spec = "090"
 ids = [
   "ATR-1", "ATR-2", "ATR-10", "ATR-11", "ATR-12", "ATR-13", "ATR-14", "ATR-15",
   "ATR-20", "ATR-21", "ATR-22", "ATR-23", "ATR-30", "ATR-31", "ATR-40", "ATR-41",
+  "ATR-42",
 ]
-# ATR-42 (evidence pages) with T16's evidence pages (LOOP-30).
 
 [[implemented]]
 spec = "140"
-ids = ["P16-1", "P16-2", "P16-3", "P16-4", "P16-5", "P16-6", "P16-12"]
-# P16-10 (the kit), P16-20, P16-21 and P16-30 (evidence pages and the
-# quickstart) with T16.4; P16-11 (the second-machine record) is checked by the
-# M1 gate (T17).
+ids = [
+  "P16-1", "P16-2", "P16-3", "P16-4", "P16-5", "P16-6", "P16-12", "P16-20", "P16-21",
+  "P16-30",
+]
+# P16-10 (the kit: kit/manifests/, kit/inputs/ at a release tag) and P16-11 (the
+# second-machine record) land with the M1 gate (T17); the .gitattributes part of
+# P16-10 is already in place and tested.

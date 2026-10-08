@@ -6,7 +6,7 @@ A Rust workspace that builds the experimental substrate for **Agentic Communicat
 
 The question it exists to answer: *when the endpoint is an agent loop rather than a person, where does the network actually matter, and by how much?* Every experiment is stated so that "it does not" is a publishable result.
 
-**Status:** bootstrap (milestone M0 in progress). The workspace, gates and tooling exist; the trace schema (T02) is next. No experiment has run and nothing here is citable yet. See [`TASKS.md`](TASKS.md).
+**Status:** milestone M1 in progress: the substrate runs on the mock, in `sim` and `live`, with attribution and regeneration from a `run_id`. Nothing here is citable yet: mock results never are (CON-26), and citable numbers wait for live providers. See [`TASKS.md`](TASKS.md).
 
 ## How it is organised
 
@@ -40,6 +40,18 @@ tools/ci.sh   # fmt, clippy -D warnings, tests, trace-check, docs-inventory, env
 ```
 
 `cargo xtask trace-check` fails when a requirement listed in `trace-scope.toml` has no citing test, when a test cites an ID that does not exist, or when a document under `docs/`, `specs/`, `.github/` or the root names an ID its spec does not define (`docs/lab/` and `docs/generated/` are exempt; ADR-3). The state of every requirement, including the many that nothing checks yet, is in [`docs/generated/requirements.md`](docs/generated/requirements.md).
+
+## Quickstart: a bundle, regenerated from its run_id
+
+From the workspace root, with `target/debug` on your `PATH`, these lines build `acn`, run one `sim` bundle on the mock and regenerate it from its `run_id` alone, byte for byte (SPEC 140). Write the `run_id` the second line prints in place of `$RUN_ID`. A test runs exactly these lines (P16-30).
+
+```sh quickstart
+cargo build -p acn-cli --locked
+acn harness run --workload workloads/harness-smoke.toml --backend mockllm --model mock-auto --seed 1 --runs-dir target/quickstart/runs
+acn run --from-run-id $RUN_ID --runs-dir target/quickstart/runs
+```
+
+The last line prints `"identical":true`: the regenerated bundle is the same bytes as the first. On another machine of the same target, at the same tag, the same holds (P16-11). A run is never written twice (CON-29), so remove `target/quickstart/` before running the lines again.
 
 ## Rules worth knowing before you read the code
 

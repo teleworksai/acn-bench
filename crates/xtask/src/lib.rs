@@ -12,6 +12,7 @@ pub mod ctl_api;
 pub mod docs_inventory;
 pub mod env_hash;
 pub mod error;
+pub mod evidence;
 pub mod import_5g_iana;
 pub mod logging;
 pub mod model;
