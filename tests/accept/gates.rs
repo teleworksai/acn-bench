@@ -645,21 +645,20 @@ fn each_breach_of_section_1_is_found_alone() {
     );
 
     // GATE-5: a deferral to M1 is carried into M1's record, once M1 has a
-    // section and a record; a second deferral needs another ADR.
+    // section (SPEC 095 §3) and a record; a second deferral needs another ADR.
     let dir = fixture(&g);
-    let spec = dir.path().join(SPEC);
-    let text = std::fs::read_to_string(&spec).unwrap();
-    std::fs::write(
-        &spec,
-        format!("{text}\n## 3. Gate M1 — test\n\n**GATE-20** A criterion.\n"),
-    )
-    .unwrap();
+    let spec = std::fs::read_to_string(dir.path().join(SPEC)).unwrap();
+    let m1_ids = criteria(&spec, &mut Vec::new())
+        .remove(&1)
+        .expect("SPEC 095 writes gate M1");
     let m1 = |rows: &str| {
+        let met: String = m1_ids
+            .iter()
+            .map(|id| format!("| {id} | met | `docs/runs/r.md` |\n"))
+            .collect();
         std::fs::write(
             dir.path().join("docs/gates/M1.md"),
-            format!(
-                "**Commit:** `abcdef1`\n\n## Exit criteria\n\n| GATE-20 | met | `docs/runs/r.md` |\n{rows}"
-            ),
+            format!("**Commit:** `abcdef1`\n\n## Exit criteria\n\n{met}{rows}"),
         )
         .unwrap();
     };
@@ -682,7 +681,7 @@ fn each_breach_of_section_1_is_found_alone() {
     let text = std::fs::read_to_string(&spec).unwrap();
     std::fs::write(
         &spec,
-        format!("{text}\n## 3. Gate M2 — empty\n\nNothing yet.\n"),
+        format!("{text}\n## 4. Gate M2 — empty\n\nNothing yet.\n"),
     )
     .unwrap();
     std::fs::write(

@@ -165,8 +165,15 @@ T16 kit + regen      → SPEC 140 (P16): `acn run --from-run-id` regenerates a s
                        POC 16 is records, not a verdict: no hypotheses/p16.toml (ADR-41).
                        In PRs (ADR-41): T16.1 SPEC 140; T16.2 regeneration and its
                        suite; T16.3 CI targets; T16.4 evidence pages and quickstart.
-T17 M1 gate          → SPEC 095 §M1; docs/gates/M1.md. WG package: kit + per-provider
-                       POC 4 table + one exploratory turn-transport number.
+T17 M1 gate          → SPEC 095 §M1; docs/gates/M1.md. WG package: kit + the POC 4 table
+                       on the mock, mock-gated (the per-provider table waits for GATE-14,
+                       M2) + one exploratory turn-transport number.
+                       In PRs (ADR-42): T17.1 SPEC 095 §3 (GATE-20 to GATE-27; GATE-14
+                       deferred to M2); T17.2 a loop of lab/hypotheses/p4-twin.toml (POC 4's
+                       design with a tolerance on every quantity its predicate reads),
+                       twinned and committed with its evidence page; T17.3
+                       the kit tag with kit/manifests/ and the second-machine record;
+                       T17.4 docs/gates/M1.md, merged by the maintainer (GATE-4).
 L-M1 exploration     → graduation review of turn-transport and p17-a2a lab notes; if
                        turn-transport graduates, it becomes SPEC 125 and POC 12/14 are
                        re-cut as its evaluation rather than separate experiments.
