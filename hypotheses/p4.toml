@@ -18,7 +18,7 @@ backfill_mode              = { kind = "enum", values = ["tail_restate", "mid_pre
 fanout_prompting           = { kind = "enum", values = ["fork_from_prefix", "per_child"] }
 compaction_trigger         = { kind = "enum", values = ["window_full", "read_cost_threshold"] }
 cache_breakpoint_placement = { kind = "enum", values = ["none", "system_only", "system_and_tools", "rolling_tail"] }  # explicit-breakpoint providers only
-provider                   = { kind = "enum", values = ["anthropic", "openai", "vllm", "sglang"] }  # reported per value, never pooled
+provider                   = { kind = "enum", values = ["anthropic", "openai", "tensormesh", "vllm", "sglang"] }  # reported per value, never pooled; tensormesh = OpenAI-compatible, cached input tokens billed at $0
 workload                   = { kind = "enum", values = ["coding", "retrieval", "fanout"] }
 
 [measures]

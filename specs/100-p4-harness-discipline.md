@@ -1,6 +1,6 @@
 # SPEC 100 — POC 4: harness cache discipline as a controlled variable
 
-**Status:** Draft v0.2 (October 2026; v0.2, with T06b: the P4-8(c) fixture's name follows HYP-2, backfilled results stay in context, `retrieval` gets a cacheable tool block, and P4-12 holds the run of record until the mock's compaction and fan-out replies are not degenerate). **Inherits:** SPEC 000, 010, 030, 040, 080, 085. **Prefix:** P4. **Hypothesis:** `hypotheses/p4.toml` (frozen). **Crates:** none of its own; it is run by `acn-harness` (SPEC 040), `acn-hyp` (SPEC 080, 085) and `acn-cli`, with its suite in `tests/accept/p4.rs`.
+**Status:** Draft v0.3 (October 2026; v0.3: `tensormesh` joins the providers, issue #70, ADR-44; v0.2, with T06b: the P4-8(c) fixture's name follows HYP-2, backfilled results stay in context, `retrieval` gets a cacheable tool block, and P4-12 holds the run of record until the mock's compaction and fan-out replies are not degenerate). **Inherits:** SPEC 000, 010, 030, 040, 080, 085. **Prefix:** P4. **Hypothesis:** `hypotheses/p4.toml` (frozen). **Crates:** none of its own; it is run by `acn-harness` (SPEC 040), `acn-hyp` (SPEC 080, 085) and `acn-cli`, with its suite in `tests/accept/p4.rs`.
 **Purpose:** define the protocol that turns `hypotheses/p4.toml` into a verdict per provider:
 - the three workloads it varies over;
 - the providers, and what each runs on the mock;
@@ -11,7 +11,7 @@
 
 The report's claim (§3.6, Appendix E POC 4) is that the harness, not the model or the serving layer, decides cacheability, and that its discipline moves cost per successful task by more than the run-to-run noise floor. `hypotheses/p4.toml` states this as a falsifier: the hypothesis fails when no knob configuration moves `cost_per_success` by more than the control's 95% noise floor.
 
-**Per provider.** Real providers differ in mechanics: explicit breakpoints (Anthropic `cache_control`), automatic prefix matching (OpenAI), and block-granular prefix caching (vLLM, SGLang). The hypothesis is therefore instantiated per provider (CON-26).
+**Per provider.** Real providers differ in mechanics: explicit breakpoints (Anthropic `cache_control`), automatic prefix matching (OpenAI, and by assumption `tensormesh`, ADR-44), and block-granular prefix caching (vLLM, SGLang). The hypothesis is therefore instantiated per provider (CON-26).
 
 **What the mock can show.** The mock reproduces whatever cache rules it is given. A mock verdict therefore tests the harness against our own model of caching. It gates the suite and is never cited (PLAN §M0).
 
@@ -54,19 +54,19 @@ Taken together, the three workloads MUST give every value of every knob of HAR-1
 
 ## 3. Providers and layers
 
-**P4-5** The providers are the `provider` values of `hypotheses/p4.toml`. A verdict is conclusive only when at least two providers are reported (the file's guard and `min_providers_for_verdict`, HYP-24): `anthropic` and `openai` at M0, `vllm` and `sglang` once a node exists (M3).
-- **On the mock (L1, LOOP-10)** each provider MUST run on the profile that models its mechanics (MLM-50): `anthropic=mock-explicit`, `openai=mock-auto`, `vllm=mock-blocks`, `sglang=mock-blocks`.
-- **Prices.** `cost_per_success` has a price row for `anthropic` and `openai` only (`PRICES` in `crates/acn-hyp/src/quantities.rs`, ADR-19). The `vllm` and `sglang` slices are therefore inconclusive until a Class C change adds rows for them.
+**P4-5** The providers are the `provider` values of `hypotheses/p4.toml`. A verdict is conclusive only when at least two providers are reported (the file's guard and `min_providers_for_verdict`, HYP-24): `anthropic` and `openai` at M0, `vllm` and `sglang` once a node exists (M3). `tensormesh` runs live on the `openai` wire against its OpenAI-compatible endpoint, at the earliest with GATE-14 (M2, ADR-42); the harness has no backend of its own for it.
+- **On the mock (L1, LOOP-10)** each provider MUST run on the profile that models its mechanics (MLM-50): `anthropic=mock-explicit`, `openai=mock-auto`, `tensormesh=mock-auto` (OpenAI-compatible automatic prefix caching, ADR-44), `vllm=mock-blocks`, `sglang=mock-blocks`.
+- **Prices.** `cost_per_success` has a price row for `anthropic` and `openai` only (`PRICES` in `crates/acn-hyp/src/quantities.rs`, ADR-19). The `tensormesh`, `vllm` and `sglang` slices are therefore inconclusive until a Class C change adds rows for them.
 
 **P4-6** *(informative)* `hypotheses/p4.toml` declares `twin_required = false`. POC 4 is network-free: the harness calls its endpoint directly (ADR-17), and there is no link to twin. The L2 layer is therefore skipped, and the L3 gate (LOOP-4) is waived. The waiver is reviewed, not machine-checked (ADR-24).
 
 **P4-7** The L1 run of record MUST be `acn loop run --hypothesis hypotheses/p4.toml` over the whole grid. It uses:
 - the workload map of P4-1 and the model map of P4-5;
-- a budget equal to the grid's bundle count: 4 providers × 387 = 1 548 (LOOP-10(e));
+- a budget equal to the grid's bundle count: 5 providers × 387 = 1 935 (LOOP-10(e));
 - a binary built with `--release`.
 
 It is made only once P4-12 holds. Its loop report, its final verdict and the `acn evidence verify` result make up the M0 mock deliverable: a *model-of-caching* table, labelled `mock-gated` (HYP-23), never cited.
-- **The file-level verdict is inconclusive by construction**, because the `vllm` and `sglang` slices are unpriced (P4-5, HYP-24).
+- **The file-level verdict is inconclusive by construction**, because the `tensormesh`, `vllm` and `sglang` slices are unpriced (P4-5, HYP-24).
 - **The deliverable is therefore the per-slice `anthropic` and `openai` verdicts, with each cell's effect (CON-18).**
 
 **P4-12** The run of record (P4-7) MUST NOT be made, and no live run (P4-9) proposed, until the mock's replies are not degenerate for POC 4. Three conditions must hold:
@@ -77,7 +77,7 @@ It is made only once P4-12 holds. Its loop report, its final verdict and the `ac
 The SPEC 040 and SPEC 030 changes that settle these conditions are T06b2's (issues #24, #25 and #26). Two differences between the mock and the providers remain, and the run of record and any live comparison MUST state them with the knob effects they touch:
 - **`compaction_trigger`.** On `anthropic`, a compaction call's change of tool choice may invalidate cached message blocks the mock still reads (HAR-4).
 - **`cache_breakpoint_placement`.** The mock reads only prefixes the current request marks, while Anthropic also looks back to earlier block boundaries, so `rolling_tail` is weaker on `mock-explicit` than on `anthropic` (issue #32).
-- **`fanout_prompting`.** Forked children are restricted by `allowed_tools` on `openai` and the mock, but only by their instruction on `anthropic`, `vllm` and `sglang` (HAR-14). The fork arm's children also carry an instruction line the per-child arm's do not, and a refused child call on those backends spends one of the child's calls, which a live run counts.
+- **`fanout_prompting`.** Forked children are restricted by `allowed_tools` on `openai` and the mock (on `tensormesh`, which shares the `openai` wire, only if its endpoint enforces it, unverified), but only by their instruction on `anthropic`, `vllm` and `sglang` (HAR-14). The fork arm's children also carry an instruction line the per-child arm's do not, and a refused child call on those backends spends one of the child's calls, which a live run counts.
 
 ## 4. The acceptance suite
 
@@ -120,7 +120,7 @@ A provider whose responses do not report cache reads makes its `cost_per_success
 
 - `tests/accept/p4.rs` — P4-1, P4-2, P4-3, P4-5, P4-8:
   - P4-8 as listed;
-  - P4-7's arguments accepted at budget 1 548 and refused at 1 547.
+  - P4-7's arguments accepted at budget 1 935 and refused at 1 934.
 - `crates/acn-hyp/tests/existing_files.rs` — P4-4, P4-5: `hypotheses/p4.toml` loads with the provider and workload values P4-1 and P4-5 name, and a `pins.workload`, once present, equals the three workloads' hashes.
 - P4-9 to P4-11 are the live tier's (T06d). Their tests are `#[ignore]` tests, run with `--features real-api`.
 
@@ -129,6 +129,6 @@ A provider whose responses do not report cache reads makes its `cost_per_success
 1. **Live runs.** LOOP-12's `acn loop promote` is scheduled with T30, which is M3 and hardware-gated. Hosted providers need no hardware, and T06 needs live runs at M0. Recommendation: a SPEC 085 change that lands `loop promote` for hosted providers as T06c, ahead of T30's node adapters.
 2. **Live cost and the design.** Settled by ADR-29: the full grid stays. Live runs are deferred (mocks first), and the spend estimate of P4-10 is made when they are proposed.
 3. **Pins and the mock.** HYP-20 checks `pins.models` on every bundle, mock bundles included. A pinned `p4.toml` therefore refuses its own mock runs: a provider's model cannot be both the mock profile and the real model. Recommendation: apply `pins.models` to real-provider bundles only in SPEC 080, since mock bundles are never cited (CON-26). Filed with issue #18; until then `p4.toml` stays unpinned, and its verdicts carry `unpinned-inputs` (HYP-23).
-4. **Trajectory cost.** LOOP-10(c) computes a verdict after every batch, so the L1 run of record spends most of its time on intermediate verdicts: 1 536 batches over up to 1 548 bundles. Recommendation: a SPEC 085 change that computes the trajectory at most every ⌈n/50⌉ batches, n being the grid's batch count, and at the last batch.
+4. **Trajectory cost.** LOOP-10(c) computes a verdict after every batch, so the L1 run of record spends most of its time on intermediate verdicts: 1 920 batches over up to 1 935 bundles. Recommendation: a SPEC 085 change that computes the trajectory at most every ⌈n/50⌉ batches, n being the grid's batch count, and at the last batch.
 5. **Live order and provider drift.** The loop runs cells in grid order, and a slice's control runs with its first batch. Over a campaign of hours or days, provider drift is confounded with the knob effects. Recommendation: at L3, run cells in a seeded shuffle and repeat the control bundle at intervals, through a SPEC 085 change with T06c.
 6. **OpenAI routing.** Without a `prompt_cache_key`, OpenAI cache hits depend on routing, which raises the noise floor (SPEC 040 §10 question 2). Recommendation: settle with T06c, before the openai pin.

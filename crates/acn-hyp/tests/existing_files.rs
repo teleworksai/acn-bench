@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use acn_hyp::Status;
 use acn_hyp::file::{Control, Domain};
 
-const P4_BLAKE3: &str = "03cb953a764a83909bc31df27968341f89ab9fee00f88bf1a14f192c461d73ae";
+const P4_BLAKE3: &str = "3520dcca1cfb69e207aac4c42a25b13e3736cd8298cc18c6332c166498965066";
 const P17_BLAKE3: &str = "fbfa0e1e9594842226c06b4b529dd621554781741903867efeeafa7138bd2832";
 
 fn fixture(name: &str, pinned: &str) -> PathBuf {
@@ -112,7 +112,7 @@ fn p4_names_the_spec_100_providers_and_workloads_and_pins_them_when_pinned() {
     };
     assert_eq!(
         values("provider"),
-        ["anthropic", "openai", "vllm", "sglang"]
+        ["anthropic", "openai", "tensormesh", "vllm", "sglang"]
     );
     assert_eq!(values("workload"), ["coding", "retrieval", "fanout"]);
     // P4-1: each value has its workload file. Once the file is pinned, P4-4
