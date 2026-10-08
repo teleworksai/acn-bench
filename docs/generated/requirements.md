@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 12 · IDs: 272 · MUSTs: 247 · implemented: 232 · cited: 249
+Specs: 13 · IDs: 284 · MUSTs: 259 · implemented: 232 · cited: 249
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -278,3 +278,15 @@ Specs: 12 · IDs: 272 · MUSTs: 247 · implemented: 232 · cited: 249
 | P4-9 | `100-p4-harness-discipline.md` | 5 | MUST | no | — |
 | P4-10 | `100-p4-harness-discipline.md` | 5 | MUST | no | — |
 | P4-11 | `100-p4-harness-discipline.md` | 5 | MUST | no | — |
+| P16-1 | `140-p16-kit.md` | 2 | MUST | no | — |
+| P16-2 | `140-p16-kit.md` | 2 | MUST | no | — |
+| P16-3 | `140-p16-kit.md` | 2 | MUST | no | — |
+| P16-4 | `140-p16-kit.md` | 2 | MUST | no | — |
+| P16-5 | `140-p16-kit.md` | 2 | MUST | no | — |
+| P16-6 | `140-p16-kit.md` | 2 | MUST | no | — |
+| P16-10 | `140-p16-kit.md` | 3 | MUST | no | — |
+| P16-11 | `140-p16-kit.md` | 3 | MUST | no | — |
+| P16-12 | `140-p16-kit.md` | 3 | MUST | no | — |
+| P16-20 | `140-p16-kit.md` | 4 | MUST | no | — |
+| P16-21 | `140-p16-kit.md` | 4 | MUST | no | — |
+| P16-30 | `140-p16-kit.md` | 5 | MUST | no | — |

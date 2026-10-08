@@ -22,6 +22,7 @@
 | 122 | 122-p13-fanout-burst.md | P13 | to write (T23) |
 | 123 | 123-p14-protocol-chattiness.md | P14 | to write (T43) |
 | 130 | 130-p7-affinity-cost-curve.md | P7 | to write (T31) |
-| 140+ | one per remaining POC (2a, 3a, 5, 6, 8, 9, 10, 15, 16) | P… | later |
+| 140 | 140-p16-kit.md | P16 | draft v0.1 (POC 16: `acn run --from-run-id`, the kit, evidence pages from committed reports, the README quickstart; for T16) |
+| 141+ | one per remaining POC (2a, 3a, 5, 6, 8, 9, 10, 15) | P… | later |
 
 Specs are read-only for agents (CON-14). Every MUST carries an ID `<PREFIX>-<n>`; IDs are never reused.
