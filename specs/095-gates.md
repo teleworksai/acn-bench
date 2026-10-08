@@ -1,10 +1,11 @@
 # SPEC 095 — Milestone gates
 
-**Status:** Draft v0.1 (October 2026). Partial: §1, the rules for every gate, and §2, gate M0, are written, for T07. The sections for M1 to M4 are written by the task that closes each gate (T17 for M1), with criteria numbered in each gate's band (GATE-1). **Inherits:** SPEC 000 (CON-16, CON-18, CON-22, CON-26). **Prefix:** GATE.
+**Status:** Draft v0.2 (October 2026; v0.2: §3, gate M1, for T17; v0.1: §1 and §2, gate M0, for T07). The sections for M2 to M4 are written by the task that closes each gate, with criteria numbered in each gate's band (GATE-1). **Inherits:** SPEC 000 (CON-16, CON-18, CON-22, CON-26). **Prefix:** GATE.
 **Purpose:**
 - make a gate's exit evidence a list that a machine can check against its record;
 - say how a criterion that the maintainer chose not to meet yet is carried, rather than dropped;
-- define gate M0 as amended by ADR-29: mock deliverables now, live provider runs deferred.
+- define gate M0 as amended by ADR-29: mock deliverables now, live provider runs deferred;
+- define gate M1: the substrate on mocks, a sim result reproduced byte for byte by a second machine, a live twin within its declared tolerance, and the kit.
 
 ## 1. Every gate
 
@@ -38,6 +39,28 @@ M0 delivers the workspace and its gates, the trace schema, the mock inference se
 
 **GATE-16** **Sign-off.** The maintainer merges the PR that adds `docs/gates/M0.md` (GATE-4).
 
+## 3. Gate M1 — the substrate on mocks
+
+M1 delivers the emulator in `sim` and through the live proxy, the workload generator, the control plane, attribution, regeneration from a `run_id`, and the kit (PLAN.md, M1). It is still built on mocks (ADR-29). The maintainer decided on 2026-10-08 to defer GATE-14 again, to M2 (ADR-42): M1 closes on the substrate.
+
+**GATE-20** **Workspace and gates.** The workspace builds, and `tools/ci.sh` (the CON-9 gates) and the required status checks of `main`'s branch protection pass on the head commit of the PR that adds the record.
+
+**GATE-21** **Substrate crates.** `acn-emu` in `sim` and live (SPEC 020), `acn-gen` (SPEC 050), `acn-ctl` (SPEC 070), `acn-attrib` (SPEC 090) and regeneration from a `run_id` (SPEC 140) are implemented: their IDs are listed in `trace-scope.toml` and cited by tests (CON-12).
+
+**GATE-22** **Sim is bit-identical.** A scenario run twice in `sim` gives byte-identical bundles (CON-5(c)), and a `sim` bundle regenerates byte for byte from its `run_id` on the same build (P16-6). The record cites the acceptance suites that show it: `tests/accept/trace_determinism.rs`, `tests/accept/emu_sim.rs`, `tests/accept/harness_sim.rs`, `tests/accept/gen_sim.rs` and `tests/accept/kit.rs`.
+
+**GATE-23** **The live twin within tolerance.** A loop on the mock, whose report is committed as P16-20 says, is twinned in `live` (LOOP-12), with its twin and verdicts committed too. Its hypothesis declares `sim_live_tolerance` for every quantity its predicate reads, and may be a candidate under `lab/hypotheses/` (LOOP-10). On its evidence page, every twinned quantity is within its tolerance (CON-25). A quantity outside it is not met: the criterion is then deferred under an ADR of its own (GATE-3). The verdicts are `mock-gated` and are not results (CON-26).
+
+**GATE-24** **A second machine regenerates the bundle.** A second machine of the target, and with the `build_hash`, that the kit's reference manifests record, built from a clean checkout of the kit's tag (P16-10), regenerates every reference manifest `identical`, recorded under `docs/runs/` as P16-11 says.
+
+**GATE-25** **The kit.** The kit's release tag carries `kit/manifests/`, with the manifests of the `sim` bundles of GATE-23's loop and of CI's reference run, all made on one build from a clean checkout of the tag, and the README quickstart (P16-10, P16-30). CI's cross-target comparison at the tagged commit, run by `workflow_dispatch` or on `main`, is recorded under `docs/runs/` (P16-12).
+
+**GATE-26** **The working-group package.** The kit, the POC 4 table on the mock with its `mock-gated` label (shown, not cited: CON-26), and one exploratory turn-transport number from a lab note under `docs/lab/` (CON-23) are presented to the working group. A short account of the presentation, where and when and what was shown, is committed under `docs/wg/`, and the record cites it.
+
+**GATE-27** **Sign-off.** The maintainer merges the PR that adds `docs/gates/M1.md` (GATE-4).
+
+GATE-14, carried from M0 (GATE-5), appears in the M1 record as deferred under ADR-42, due at M2.
+
 ## 9. Acceptance tests
 
 - `tests/accept/gates.rs`:
@@ -47,9 +70,15 @@ M0 delivers the workspace and its gates, the trace schema, the mock inference se
     - GATE-12: the POC 4 suite cites CON-18.
     - GATE-13: the cited run record holds the cited IDs and says `mock-gated`.
     - GATE-15: every cited trace under `scenarios/measured/` loads under EMU-64.
-  - GATE-10 is the CI run itself. GATE-16 and the process rules of GATE-4 are the maintainer's.
+  - **The substance of M1's criteria** where a test can see it:
+    - GATE-21: `trace-scope.toml` lists the implemented IDs of SPEC 020, 050, 070, 090 and 140, and `cargo xtask trace-check` finds each cited.
+    - GATE-22: the cited suites exist and cite CON-5 and P16-6.
+    - GATE-23: the cited loop's report, twin and verdicts are committed, its evidence page is current, and no twinned quantity is outside its tolerance.
+    - GATE-24 and GATE-25 (P16-10, P16-11): the cited run records name the tag, the target, the `build_hash` and `identical`, and every reference manifest is in canonical form, of `sim`, and of that `build_hash`.
+    - GATE-26: the cited account exists under `docs/wg/`.
+  - GATE-10 and GATE-20 are the CI run itself. GATE-16, GATE-27, the substance of GATE-26 and the process rules of GATE-4 are the maintainer's.
 
 ## 10. Open questions
 
-1. GATE-14 is due at M1 (ADR-31). Whether the M1 record meets it or defers it again depends on when live runs are scheduled. That is the maintainer's decision; a second deferral needs its own ADR (GATE-5).
+1. GATE-14 was due at M1 (ADR-31) and is deferred again, to M2 (ADR-42). Live runs wait for the maintainer to approve models and spend.
 2. Whether a gate record should also carry a machine-readable form (TOML) beside its table. The table is enough while the records are few.
