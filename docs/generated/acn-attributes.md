@@ -2,7 +2,7 @@
 
 # `acn.*` attribute inventory (TRC-20)
 
-Source: `crates/acn-trace/src/schema/acn_attributes.toml` (frozen set, CON-7). Semantic conventions pinned at **1.41.0** (TRC-2). 8 spans, 5 events, 75 attributes (67 promoted to typed columns, TRC-25), 6 run options, 5 provider mappings.
+Source: `crates/acn-trace/src/schema/acn_attributes.toml` (frozen set, CON-7). Semantic conventions pinned at **1.41.0** (TRC-2). 8 spans, 5 events, 77 attributes (69 promoted to typed columns, TRC-25), 6 run options, 5 provider mappings.
 
 An optional attribute is present when its condition holds and absent, never zero or empty, otherwise.
 
@@ -64,6 +64,8 @@ An optional attribute is present when its condition holds and absent, never zero
 | `acn.call.stop_reason_raw` | string | — | `chat` | when the provider reported one | yes | — | acn-harness, acn-gen | TRC-12 | the provider's own stop value |
 | `acn.cache.read_tokens` | int | tokens | `chat` | when the provider reported a cache-read count, or returned usage and its mapping says an absent count means zero | yes | — | acn-harness, acn-gen | TRC-12 | tokens served from the provider's cache (TRC-21) |
 | `acn.cache.write_tokens` | int | tokens | `chat` | when the provider returned usage | yes | — | acn-harness, acn-gen | TRC-12 | tokens written to the provider's cache; 0 when the provider has no such concept (TRC-21) |
+| `acn.call.regime` | string | — | `chat` | when the call reported its input and cache-read counts, the read not more than the input: derived, never reported by a provider | yes | `prefill`, `midfill`, `decode_only` | acn-harness, acn-gen | TRC-12 | with uncached = input − cache-read tokens: decode_only when uncached is 0, midfill when some is read and some uncached, prefill when nothing is read (report v1.5 §4.1) |
+| `acn.cache.read_bytes` | int | bytes | `chat` | when the backend reports a KV size per token, or the mock profile states one (SPEC 030 MLM-30a); not emitted by any producer until MLM-30a is implemented | yes | — | acn-harness, acn-gen | TRC-12 | acn.cache.read_tokens × the KV size per token: the bandwidth term of a midfill |
 | `acn.call.ttft_ms` | float | ms | `chat` | when at least one token arrived | yes | — | acn-harness, acn-gen | TRC-12 | time to first token; total time for a non-streamed call |
 | `acn.call.itl_p50_ms` | float | ms | `chat` | when streamed, at least two tokens | yes | — | acn-harness, acn-gen | TRC-12 | median inter-token latency |
 | `acn.call.itl_p99_ms` | float | ms | `chat` | when streamed, at least two tokens | yes | — | acn-harness, acn-gen | TRC-12 | 99th percentile inter-token latency |

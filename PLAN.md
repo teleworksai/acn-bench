@@ -163,9 +163,9 @@ Lab, starting day one: (1) `lab/turn-transport` — a QUIC (quinn) prototype in 
 
 | Need | Decides | Status |
 |---|---|---|
-| API keys with cache metrics for ≥ 2 providers | M0 exit (per-provider POC 4) | to confirm |
+| API keys with cache metrics for ≥ 2 providers (Anthropic, OpenAI; Tensormesh as a third, OpenAI-compatible, $0 cached tokens) | M0 exit (per-provider POC 4) | to confirm |
 | One phone + 5G plan + a reachable server | first measured trace (M0) | to confirm |
-| One GPU node running vLLM or SGLang, reachable by the control plane | M3 (POC 7 regeneration rate); everything in the KV thread leans on this number | **open — decides whether M3 is a quarter or a year away** |
+| Two GPU nodes running vLLM or SGLang with Mooncake Store between them, reachable by the control plane | M3 (POC 7 in midfill: regeneration rate, fetch vs rebuild; POC 8 prefetch) — comparable to the published vLLM × Mooncake results | **open — decides whether M3 is a quarter or a year away** |
 | Multiple inference workers behind a router | POC 2a | not planned; POC 2a deferred until available |
 | Linux box with root | M4 `netem` validation | to confirm |
 | Robotics / radio partner | POC 3a, 15 | conversation starts in Q1 |

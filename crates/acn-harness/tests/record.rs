@@ -400,3 +400,32 @@ fn a_frozen_file_may_not_choose_its_seed() {
         "{err}"
     );
 }
+
+/// Cites: HAR-30, TRC-12
+#[test]
+fn every_call_with_usage_records_the_regime_its_counts_derive() {
+    let f = run_fixture(&common::smoke(), "auto");
+    let w = acn_harness::run::run(&f.cfg).unwrap();
+    let trace = common::read(&w.dir);
+    let chats = spans(&trace, "chat");
+    assert!(!chats.is_empty());
+    let mut seen = std::collections::BTreeSet::new();
+    for c in chats {
+        let want = acn_trace::ingest::derive_regime(
+            int(c, "acn.call.input_tokens"),
+            int(c, "acn.cache.read_tokens"),
+        );
+        assert_eq!(text(c, "acn.call.regime"), want, "{:?}", c.attrs);
+        if let Some(r) = want {
+            seen.insert(r);
+        }
+    }
+    // The smoke workload repeats its prefix on the mock: some calls prefill,
+    // and some read from the cache.
+    assert!(
+        seen.contains("prefill") && seen.contains("midfill"),
+        "{seen:?}"
+    );
+    // The bundle's views carry it, so it verifies with its views (TRC-35).
+    acn_trace::bundle::verify_views(&w.dir).unwrap();
+}

@@ -308,6 +308,8 @@ fn exactly_these_attributes_are_optional_and_key_placements_hold() {
         "acn.call.stop_reason_raw",
         "acn.cache.read_tokens",
         "acn.cache.write_tokens",
+        "acn.call.regime",
+        "acn.cache.read_bytes",
         "acn.call.ttft_ms",
         "acn.call.itl_p50_ms",
         "acn.call.itl_p99_ms",
@@ -331,7 +333,7 @@ fn exactly_these_attributes_are_optional_and_key_placements_hold() {
     for (span, n) in [
         ("acn.session", 17), // TRC-10, with the four harness options of HAR-24/25
         ("acn.turn", 5),
-        ("chat", 20),
+        ("chat", 22),
         ("execute_tool", 4),
         ("invoke_agent", 6),
         ("acn.link", 10),

@@ -1,0 +1,37 @@
+# CANDIDATE (editable; not frozen; verdicts are exploratory) — CON-17
+[poc]
+id = "p19"
+status = "candidate"
+title = "Blob lifecycle under agent pause distributions: retain, evict-and-fetch, or evict-and-rebuild"
+report_refs = ["§4.6", "§10.2", "SemiAnalysis, Computation and Data Movement for Inference (Sep 2026)"]
+
+[hypothesis]
+statement = "Given the pause distribution between agent turns (seconds to days), KV bytes per token, tier capacities and link bandwidth, the cost-minimising policy per blob is a threshold on expected time-to-resume: retain in a fast tier below t1, evict to the pool and fetch between t1 and t2, evict and rebuild from text (midfill) above t2; t1 and t2 are predictable from the governing numbers within a factor of two, and compaction-abandoned blobs are never worth retaining."
+
+[varies]
+pause_model      = { kind = "enum", values = ["bimodal_s_min", "heavy_tail_hours", "days"] }
+kv_bytes_per_tok = { kind = "enum", values = [320000, 70000, 25000] }
+context_tokens   = { kind = "range", min = 8000, max = 1000000 }
+pool_gbps        = { kind = "range", min = 10, max = 400 }
+tier_capacity_gb = { kind = "enum", values = [80, 512, 2048] }
+compaction_rate  = { kind = "range", min = 0.0, max = 0.2 }      # compactions per turn
+policy           = { kind = "enum", values = ["retain_lru", "retain_lineage", "evict_fetch", "evict_rebuild", "threshold_t1_t2"] }
+
+[design]
+twin_required = false         # pool and tier behaviour are modelled in sim; promote to live when the two-node Mooncake target exists
+search = "bisect"
+replicates = 5
+sim_live_tolerance = { cost_per_resumed_turn = 0.25 }
+
+[measures]
+primary = ["cost_per_resumed_turn", "ttft_p50_ms_on_resume", "tier_occupancy_live", "tier_occupancy_dead", "rebuild_fraction"]
+
+[control]
+description = "Always recompute on resume (no retention, no pool), same pause model and scenario."
+
+[falsifier]
+predicate = "best_policy != threshold_t1_t2 on any pause_model, or predicted(t1, t2) differs from measured by more than 2x, or retain_lineage keeps compaction-abandoned blobs with positive value"
+
+[expected]
+outcome = "pass"
+note = "Exploratory. If it passes, eviction for agent fleets is a two-threshold rule rather than LRU and the thresholds are derivable from the report's governing numbers; graduate as a POC 8 companion."

@@ -53,6 +53,8 @@ The mock exists so that tests and the L1 loop (SPEC 085) can exercise the harnes
 
 ## 6. Timing
 
+**MLM-30a** `prefill_ns_per_cached_token` models the midfill KV read (report v1.5 §4.1): a profile MUST state it as the product of `kv_bytes_per_token` and `hbm_read_ns_per_byte`, both explicit in `profiles.toml`, so that a calibration (SPEC 085, L3) can replace either without touching the other, and so that `acn.cache.read_bytes` (TRC-12) is `cached_tokens × kv_bytes_per_token` for a bundle on the mock. Placeholder values are labelled as such (MLM-50).
+
 **MLM-30** A request MUST wait in a FIFO queue when `slots` (default unlimited) requests are already in service; `queue_ns` is the time it waits. Its time to first token MUST be `queue_ns + prefill_base_ns + prefill_ns_per_new_token × (prompt_tokens − cached_tokens) + prefill_ns_per_cached_token × cached_tokens`, and output token *k* (from 1) MUST be emitted at first-token time plus `(k − 1) × itl_ns` plus a jitter drawn per token, uniform over the integers in [−`itl_jitter_ns`, `itl_jitter_ns`], with no token emitted before the previous one. A streamed and a non-streamed response to the same request have the same times; the non-streamed body is sent at the last token's time.
 
 **MLM-31** The mock MUST return its timing in an `x-acn-mock-timing` header (`queue_ns`, `prefill_ns`, `decode_ns`, as `key=value` pairs) on every response, so that a test can check MLM-30 against what a client measured, and so that a harness on the mock can be audited; a harness MUST NOT copy it into `acn.server.*`, which TRC-18 reserves for external nodes' own spans.
