@@ -366,6 +366,12 @@ struct HarnessRun {
 
 #[derive(Subcommand)]
 enum BundleCmd {
+    /// Print a bundle in build-neutral form, for comparing the bundles of one
+    /// run made on different targets (SPEC 140 P16-12).
+    Neutral {
+        /// The bundle directory, `runs/<run_id>/`.
+        dir: PathBuf,
+    },
     /// Recompute a bundle's run_id and the hash of every listed file, and print its
     /// bundle_digest (TRC-23).
     Verify {
@@ -1026,6 +1032,9 @@ fn run() -> Value {
         Cmd::Bundle {
             cmd: BundleCmd::Verify { dir, views },
         } => bundle_verify(&dir, views),
+        Cmd::Bundle {
+            cmd: BundleCmd::Neutral { dir },
+        } => acn_cli::regen::neutral(&dir),
         Cmd::Bundle {
             cmd:
                 BundleCmd::Export {

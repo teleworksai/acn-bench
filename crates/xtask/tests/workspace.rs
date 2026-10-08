@@ -784,6 +784,51 @@ jobs:
           tool: cargo-deny@0.20.2
           fallback: none
       - run: tools/ci.sh
+  p16-target:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@PINNED
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@PINNED
+      - run: tools/p16-target.sh
+      - uses: actions/upload-artifact@PINNED
+        with:
+          name: p16-record-${{ matrix.os }}
+          path: target/p16/neutral.json
+          if-no-files-found: error
+          overwrite: true
+  p16-compare:
+    needs: p16-target
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@PINNED
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@PINNED
+      - uses: actions/download-artifact@PINNED
+        with:
+          pattern: p16-record-*
+          path: target/p16-records
+      - name: compare the targets
+        run: |
+          set -euo pipefail
+          mkdir -p target/p16-records
+          find target/p16-records -name neutral.json | sort > target/p16-list
+          cargo xtask p16-compare --expect 3 $(cat target/p16-list) | tee target/p16-comparison.json
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@PINNED
+        with:
+          name: p16-comparison
+          path: target/p16-comparison.json
+          overwrite: true
   lab:
     runs-on: ubuntu-latest
     steps:

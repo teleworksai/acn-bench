@@ -534,3 +534,38 @@ fn identities_and_directories_are_checked() {
     let v = regen_with(dir, &id, "other", b"other engine", true);
     assert_eq!(v["code"], "run_id_differs", "{v}");
 }
+
+/// Cites: P16-6, P16-12
+#[test]
+fn one_run_made_by_two_builds_has_one_build_neutral_form() {
+    let d = base();
+    let dir = d.path();
+    let id = harness(dir, Some("cellular-handover.toml"), 12);
+    let v = regen_with(dir, &id, "other", b"engine", true);
+    assert_eq!(
+        (&v["ok"], &v["identical"]),
+        (&true.into(), &true.into()),
+        "{v}"
+    );
+    let a = acn_cli::regen::neutral(&dir.join("runs").join(&id));
+    let b = acn_cli::regen::neutral(Path::new(v["dir"].as_str().unwrap()));
+    assert_eq!(
+        (&a["ok"], &b["ok"]),
+        (&true.into(), &true.into()),
+        "{a} {b}"
+    );
+    assert_ne!(a["build_hash"], b["build_hash"]);
+    for k in ["run_id", "files", "resources", "manifest"] {
+        assert_eq!(a[k], b[k], "{k}");
+    }
+    // Nothing that records the build is left in the neutral form.
+    let text = format!("{}{}", a["resources"], a["manifest"]);
+    assert!(!text.contains(a["build_hash"].as_str().unwrap()), "{text}");
+    assert!(!text.contains("acn.build_hash"), "{text}");
+    // Only the build is taken out: the rest of each resource row stays.
+    let res = a["resources"].to_string();
+    assert!(
+        res.contains("acn.engine_hash") && res.contains("service.name"),
+        "{res}"
+    );
+}

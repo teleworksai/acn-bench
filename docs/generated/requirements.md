@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 13 · IDs: 284 · MUSTs: 259 · implemented: 238 · cited: 255
+Specs: 13 · IDs: 284 · MUSTs: 259 · implemented: 239 · cited: 256
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -283,10 +283,10 @@ Specs: 13 · IDs: 284 · MUSTs: 259 · implemented: 238 · cited: 255
 | P16-3 | `140-p16-kit.md` | 2 | MUST | yes | `crates/acn-cli/src/regen.rs` `candidates_are_in_bytewise_path_order_and_only_toml`<br>`tests/accept/kit.rs` `harness_and_generator_bundles_regenerate_byte_for_byte_from_their_run_ids`<br>`tests/accept/kit.rs` `every_refusal_names_its_reason`<br>`tests/accept/kit.rs` `a_hypothesis_is_found_only_with_the_status_the_run_recorded` |
 | P16-4 | `140-p16-kit.md` | 2 | MUST | yes | `tests/accept/kit.rs` `harness_and_generator_bundles_regenerate_byte_for_byte_from_their_run_ids`<br>`tests/accept/kit.rs` `every_refusal_names_its_reason`<br>`tests/accept/kit.rs` `a_manifest_of_an_unknown_producer_is_refused` |
 | P16-5 | `140-p16-kit.md` | 2 | MUST | yes | `tests/accept/kit.rs` `another_build_is_refused_unless_compared_without_its_build`<br>`tests/accept/kit.rs` `identities_and_directories_are_checked` |
-| P16-6 | `140-p16-kit.md` | 2 | MUST | yes | `crates/acn-cli/tests/run_cli.rs` `a_run_regenerates_from_its_id_and_an_unknown_id_exits_one`<br>`tests/accept/kit.rs` `harness_and_generator_bundles_regenerate_byte_for_byte_from_their_run_ids`<br>`tests/accept/kit.rs` `a_reference_manifest_alone_regenerates`<br>`tests/accept/kit.rs` `another_build_is_refused_unless_compared_without_its_build`<br>`tests/accept/kit.rs` `a_bundle_that_differs_is_never_reported_identical`<br>`tests/accept/kit.rs` `identities_and_directories_are_checked` |
+| P16-6 | `140-p16-kit.md` | 2 | MUST | yes | `crates/acn-cli/tests/run_cli.rs` `a_run_regenerates_from_its_id_and_an_unknown_id_exits_one`<br>`tests/accept/kit.rs` `harness_and_generator_bundles_regenerate_byte_for_byte_from_their_run_ids`<br>`tests/accept/kit.rs` `a_reference_manifest_alone_regenerates`<br>`tests/accept/kit.rs` `another_build_is_refused_unless_compared_without_its_build`<br>`tests/accept/kit.rs` `a_bundle_that_differs_is_never_reported_identical`<br>`tests/accept/kit.rs` `identities_and_directories_are_checked`<br>`tests/accept/kit.rs` `one_run_made_by_two_builds_has_one_build_neutral_form` |
 | P16-10 | `140-p16-kit.md` | 3 | MUST | no | — |
 | P16-11 | `140-p16-kit.md` | 3 | MUST | no | — |
-| P16-12 | `140-p16-kit.md` | 3 | MUST | no | — |
+| P16-12 | `140-p16-kit.md` | 3 | MUST | yes | `crates/xtask/tests/p16.rs` `records_that_agree_are_identical_and_differences_are_reported_not_failed`<br>`crates/xtask/tests/p16.rs` `records_of_another_run_or_of_no_bundle_are_refused`<br>`crates/xtask/tests/p16.rs` `ci_regenerates_on_every_target_and_compares_them`<br>`tests/accept/kit.rs` `one_run_made_by_two_builds_has_one_build_neutral_form` |
 | P16-20 | `140-p16-kit.md` | 4 | MUST | no | — |
 | P16-21 | `140-p16-kit.md` | 4 | MUST | no | — |
 | P16-30 | `140-p16-kit.md` | 5 | MUST | no | — |

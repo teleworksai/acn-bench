@@ -73,3 +73,31 @@ One read-only review found 10 findings, 3 blocking. SPEC 140 was revised before 
   - **The scenario span.** P16-3's check that the span's text is the file found needs no code. The file found has `scenario_hash`, and so does the original's span text (EMU-37). On the same build the spans are compared byte for byte, so a difference shows in `differ`, not as a refusal.
   - **First by path is followed literally.** A copy of a trace-driven scenario without its trace, placed earlier in path order (under `lab/`, say), is used, and the run fails. The kit keeps a scenario and its trace together under `scenarios/` (ADR-33).
   - **Left as is.** `Opts::default()` repeats the defaults that `acn_attributes.toml` declares; a drift would show as `run_id_differs`. No test resolves `--runs-dir` against a workspace root from a subdirectory, because a root needs the engine its binary embeds; the CLI test runs with no root.
+
+## T16.3 notes
+- **On every push and PR, a `p16-target` job runs on each of the three CI targets** (a job of its own, so the required `gates` job stays exactly as `xtask`'s workflow test pins it). It runs `tools/p16-target.sh`, which:
+  - builds `acn` with `--locked`;
+  - runs the reference workload: the smoke workload over `cellular-handover.toml`, seed 1;
+  - regenerates it from its `run_id` on the same build, and the step fails unless the result is identical;
+  - writes the bundle's build-neutral form to `target/p16/neutral.json`, which the job uploads as `p16-<os>`.
+
+  The shell is confined to `tools/` (CON-2). The JSON is read by `acn` and `xtask`, not by the script, except for the one `run_id` it passes on.
+- **`acn bundle neutral <dir>`** prints the build-neutral form:
+  - the listed file hashes, without `resources.parquet`'s;
+  - the decoded resource rows without `acn.build_hash`, each as its debug text (Rust's debug format of these values is the same on every target);
+  - the manifest without `build`;
+  - beside these, for identification only, the bundle's `target` and `build_hash`.
+- **The comparison job.** `p16-compare` runs after the matrix whatever its outcome (`if: always()`). It downloads the three records and runs `cargo xtask p16-compare`, which lists, per target that differs from the first, the files, `resources` or manifest keys that differ. It publishes the result as the `p16-comparison` artifact. A difference is `ok: true` with `identical: false`, never a failure (CON-31). Records of two different runs, or of no verified bundle, are refused.
+- **Pinned actions.** The artifact actions are pinned by commit like the others: `actions/upload-artifact` v7.0.2 and `actions/download-artifact` v8.0.2.
+- **What it shows on one machine.** Locally, one run made by two builds (differing `source_hash`) has the same build-neutral form (`tests/accept/kit.rs`). The CI artifact answers the same question across targets.
+- **After review (T16.3).** One read-only review checked the workflow, the script and the comparison. It verified both action SHAs. Its findings, and what was done:
+  - **How the records are found (blocking).** `download-artifact` unpacks a single artifact into the path itself and several into one directory each, so a glob on `*/neutral.json` missed the lone record left when two targets failed. The compare step now collects every `neutral.json` with `find`, wherever it landed.
+  - **When the comparison runs.** It runs and publishes on `!cancelled()` rather than `always()`, so a superseded PR run does not spend a job on it. Its upload also runs when the comparison itself fails.
+  - **Each target's record is left whatever its gates said.** The regeneration is a job of its own, `p16-target`, independent of `gates`. The first draft put it in `gates`, where the workflow test forbids anything but the toolchain and `tools/ci.sh`.
+  - **Missing targets are visible.** `p16-compare --expect 3` reports how many records arrived. Fewer than expected is `identical: false`, not a refusal.
+  - **Artifact names.** Records are named `p16-record-<os>` and found by that pattern, so the `p16-comparison` artifact is never read as a record. Both uploads `overwrite` on a re-run.
+  - **The script shows why it failed.** An `EXIT` trap prints the JSON objects written so far whenever a step fails.
+  - **One place for file hashes.** The neutral manifest drops `files`, which the top-level `files` already compares, so a differing table is reported once.
+  - **Stricter records.** Records must carry a non-empty `target` and `run_id`, and two records of one target are refused.
+  - **More tests.** One test pins the workflow wiring (the step on every target, the comparison job, its `--expect`). The neutral form's test now checks that only `acn.build_hash` leaves each resource row.
+  - **The reviewed workflow copy.** `crates/xtask/tests/workspace.rs` holds the reviewed copy of `ci.yml`, and now includes `p16-target` and `p16-compare`. The required jobs (`gates`, `lab`, `pr-check`) are unchanged.
