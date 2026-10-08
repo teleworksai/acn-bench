@@ -2,7 +2,8 @@
 //! file a PR adds or changes under `hypotheses/` must be a `<id>.toml`
 //! hypothesis that loads (its POC spec named, its status consistent), loads as
 //! frozen (this PR records it), lints clean and, for `real-api`, carries its
-//! pins; in `--base` mode, as the head commit has it. No label satisfies these.
+//! pins unless it amends a file frozen unpinned at the merge base; in `--base`
+//! mode, as the head commit has it. No label satisfies these.
 //! (`crates/acn-hyp/tests/freeze.rs` checks the record half: `env-hash --check`.)
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // CON-19: tests are exempt
@@ -299,6 +300,144 @@ fn in_base_mode_the_head_commit_is_judged() {
     assert!(
         f.iter()
             .any(|(p, m)| p == "hypotheses/t9.toml" && m.contains("does not load")),
+        "{f:?}"
+    );
+}
+
+/// Cites: HYP-26, HYP-23
+#[test]
+fn an_amendment_may_keep_a_frozen_file_unpinned_but_never_unpin_one() {
+    let real = HYP.replace(
+        "twin_required = false",
+        "twin_required = false\nbackends = [\"real-api\"]",
+    );
+    let pinned = real.replace(
+        "backends = [\"real-api\"]",
+        &format!(
+            "backends = [\"real-api\"]\npins = {{ scenario = [\"{s}\"], workload = [\"{s}\"], models = {{}} }}",
+            s = acn_trace::identity::Digest::of(b"x").to_hex()
+        ),
+    );
+    let commit = |r: &Path, files: &[(&str, &str)], msg: &str| {
+        for (rel, text) in files {
+            write(r, rel, text);
+        }
+        record(r);
+        git(r, &["add", "-A"]);
+        git(r, &["commit", "-q", "-m", msg]);
+    };
+    let check = |r: &Path| {
+        hyp26(&xtask_at(
+            r,
+            &["pr-check", "--base", "main", "--labels", "env-change"],
+        ))
+    };
+    let dir = root(&[
+        (FILE, &real),
+        (
+            "hypotheses/t3.toml",
+            &pinned.replace("id = \"t1\"", "id = \"t3\""),
+        ),
+    ]);
+    let r = dir.path();
+    git(r, &["init", "-q", "-b", "main"]);
+    git(r, &["add", "-A"]);
+    git(r, &["commit", "-q", "-m", "base"]);
+    git(r, &["switch", "-q", "-c", "work"]);
+    // An amendment to a file frozen unpinned at the merge base: no finding.
+    let amended = real.replace("statement = \"s\"", "statement = \"s, amended\"");
+    commit(r, &[(FILE, &amended)], "amend t1");
+    assert_eq!(check(r), Vec::new());
+    // Without a merge base the same change is judged as a freeze.
+    let f = findings(r, &[FILE]);
+    assert!(f.iter().any(|(_, m)| m.contains("[design].pins")), "{f:?}");
+    // A new real-api file still needs its pins.
+    commit(
+        r,
+        &[(
+            "hypotheses/t2.toml",
+            &real.replace("id = \"t1\"", "id = \"t2\""),
+        )],
+        "freeze t2",
+    );
+    let f = check(r);
+    assert!(
+        f.iter()
+            .any(|(p, m)| p == "hypotheses/t2.toml" && m.contains("[design].pins")),
+        "{f:?}"
+    );
+    assert!(!f.iter().any(|(p, _)| p == FILE), "{f:?}");
+    // A pinned frozen file cannot be unpinned.
+    commit(
+        r,
+        &[(
+            "hypotheses/t3.toml",
+            &real.replace("id = \"t1\"", "id = \"t3\""),
+        )],
+        "unpin t3",
+    );
+    let f = check(r);
+    assert!(
+        f.iter()
+            .any(|(p, m)| p == "hypotheses/t3.toml" && m.contains("may not be removed")),
+        "{f:?}"
+    );
+
+    // Each base below is one commit on `main`, judged from a fresh `work`.
+    let fresh = |base: &[(&str, &str)], record_base: bool| {
+        let dir = root(&[]);
+        let r = dir.path();
+        for (rel, text) in base {
+            write(r, rel, text);
+        }
+        if record_base {
+            record(r);
+        }
+        git(r, &["init", "-q", "-b", "main"]);
+        git(r, &["add", "-A"]);
+        git(r, &["commit", "-q", "-m", "base"]);
+        git(r, &["switch", "-q", "-c", "work"]);
+        dir
+    };
+    // Frozen mock-only at the base, real-api added unpinned: a freeze for real-api.
+    let mock = HYP.replace(
+        "twin_required = false",
+        "twin_required = false\nbackends = [\"mockllm\"]",
+    );
+    let dir = fresh(&[(FILE, &mock)], true);
+    commit(dir.path(), &[(FILE, &real)], "add real-api");
+    let f = check(dir.path());
+    assert!(
+        f.iter()
+            .any(|(p, m)| p == FILE && m.contains("[design].pins")),
+        "{f:?}"
+    );
+    // Present but never recorded at the base: not frozen there, so no amendment.
+    let dir = fresh(&[(FILE, &real)], false);
+    commit(dir.path(), &[(FILE, &amended)], "amend unrecorded");
+    let f = check(dir.path());
+    assert!(
+        f.iter()
+            .any(|(p, m)| p == FILE && m.contains("[design].pins")),
+        "{f:?}"
+    );
+    // Dropping real-api does not make removing pins allowed.
+    let dir = fresh(&[(FILE, &pinned)], true);
+    let unpinned_mock = pinned
+        .lines()
+        .filter(|l| !l.starts_with("pins = "))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("backends = [\"real-api\"]", "backends = [\"mockllm\"]");
+    commit(
+        dir.path(),
+        &[(FILE, &unpinned_mock)],
+        "drop real-api and pins",
+    );
+    let f = check(dir.path());
+    assert!(
+        f.iter()
+            .any(|(p, m)| p == FILE && m.contains("may not be removed")),
         "{f:?}"
     );
 }
