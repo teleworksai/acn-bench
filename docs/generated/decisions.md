@@ -49,3 +49,4 @@
 | [ADR-43](../decisions/ADR-43.md) | The call regime and the KV-read bytes in the frozen schema | accepted (PR 69: spec-change and env-change) | TRC-12, TRC-33, MLM-30a |
 | [ADR-44](../decisions/ADR-44.md) | `tensormesh` joins POC 4 | accepted (issue #70: spec-change and env-change) | P4-5, P4-7 (and SPEC 100 §8's test list) |
 | [ADR-45](../decisions/ADR-45.md) | An amendment may keep a frozen file unpinned (HYP-26) | accepted (issue #70, PR 72: spec-change and env-change) | HYP-26, HYP-23 |
+| [ADR-46](../decisions/ADR-46.md) | GATE-23's loop of record, and `twin_failed` on untwinned cells | accepted (T17.2, issue #81) | GATE-23, HYP-22, LOOP-12, P16-20, P16-21, CON-25, CON-26 |
