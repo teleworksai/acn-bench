@@ -697,3 +697,123 @@ fn verify_views_catches_a_promoted_column_that_disagrees_with_attrs() {
     let err = bundle::verify_views(&w.dir).unwrap_err().to_string();
     assert!(err.contains("spans.parquet"), "{err}");
 }
+
+fn create(runs: &Path, seed: u64) -> Bundle {
+    Bundle::create(runs, &preflight(RunHypothesis::None), &build(), spec(seed)).unwrap()
+}
+
+/// The entries of `runs`, by name, sorted.
+fn entries(runs: &Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(runs)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    v.sort();
+    v
+}
+
+/// Cites: CON-29, TRC-22, TRC-23
+#[test]
+fn a_run_that_dies_mid_write_leaves_only_staging_and_blocks_nothing() {
+    let runs = tempfile::tempdir().unwrap();
+    // A writer that never finishes: killed, or out of power.
+    let dead = create(runs.path(), 20);
+    let id = dead.run_id().to_owned();
+    std::fs::write(dead.logs_dir().join("stderr.log"), "half a run").unwrap();
+    let staging = format!(".{id}.partial.0");
+    assert_eq!(dead.dir(), runs.path().join(&staging));
+    drop(dead);
+    // Nothing is at runs/<run_id>/, so nothing claims the run_id.
+    assert_eq!(entries(runs.path()), std::slice::from_ref(&staging));
+    // The same run again: a staging directory of its own, and its bundle.
+    let again = create(runs.path(), 20);
+    assert_eq!(again.dir(), runs.path().join(format!(".{id}.partial.1")));
+    std::fs::write(again.logs_dir().join("stderr.log"), "noise").unwrap();
+    let w = again.finish(&session(&id, 20)).unwrap();
+    assert_eq!(w.dir, runs.path().join(&id));
+    assert_eq!(
+        bundle::verify(&w.dir).unwrap().bundle_digest,
+        w.bundle_digest
+    );
+    // Its logs came with it; the dead writer's directory is left as it was.
+    assert_eq!(
+        std::fs::read_to_string(w.dir.join("logs/stderr.log")).unwrap(),
+        "noise"
+    );
+    assert_eq!(entries(runs.path()), [staging.clone(), id.clone()]);
+    assert_eq!(
+        std::fs::read_to_string(runs.path().join(&staging).join("logs/stderr.log")).unwrap(),
+        "half a run"
+    );
+    // The bundle is the one an undisturbed run writes, byte for byte.
+    let clean = tempfile::tempdir().unwrap();
+    let c = write(clean.path(), 20);
+    assert_eq!(c.bundle_digest, w.bundle_digest);
+}
+
+/// Cites: CON-29
+#[test]
+fn of_two_writers_of_one_run_the_second_to_finish_is_refused() {
+    let runs = tempfile::tempdir().unwrap();
+    let (a, b) = (create(runs.path(), 21), create(runs.path(), 21));
+    assert_ne!(
+        a.dir(),
+        b.dir(),
+        "each writer has its own staging directory"
+    );
+    let id = a.run_id().to_owned();
+    let t = session(&id, 21);
+    let first = a.finish(&t).unwrap();
+    let late = b.dir().to_path_buf();
+    let err = b.finish(&t).unwrap_err();
+    assert!(matches!(err, BundleError::Refused(_)), "{err}");
+    assert!(err.to_string().contains("CON-29"), "{err}");
+    // The first bundle is untouched, and the refused writer left nothing.
+    assert_eq!(
+        bundle::verify(&first.dir).unwrap().bundle_digest,
+        first.bundle_digest
+    );
+    assert!(!late.exists(), "{}", late.display());
+    assert_eq!(entries(runs.path()), [id]);
+}
+
+/// Cites: CON-29, TRC-22
+#[test]
+fn a_directory_at_the_run_id_refuses_the_run_even_when_empty() {
+    let runs = tempfile::tempdir().unwrap();
+    let probe = create(runs.path(), 22);
+    let id = probe.run_id().to_owned();
+    let staging = probe.dir().to_path_buf();
+    // Something appears at runs/<run_id>/ while the run is under way.
+    std::fs::create_dir(runs.path().join(&id)).unwrap();
+    let err = probe.finish(&session(&id, 22)).unwrap_err();
+    assert!(matches!(err, BundleError::Refused(_)), "{err}");
+    assert!(!staging.exists());
+    assert_eq!(entries(&runs.path().join(&id)), [""; 0], "left as found");
+    // And before a run starts.
+    let err = Bundle::create(
+        runs.path(),
+        &preflight(RunHypothesis::None),
+        &build(),
+        spec(22),
+    )
+    .unwrap_err();
+    assert!(matches!(err, BundleError::Refused(_)), "{err}");
+    assert_eq!(entries(runs.path()), [id], "a refused run stages nothing");
+}
+
+/// Cites: TRC-22, TRC-23
+#[test]
+fn a_staging_directory_never_verifies_as_a_bundle() {
+    let runs = tempfile::tempdir().unwrap();
+    // Unfinished: no manifest.
+    let b = create(runs.path(), 23);
+    assert!(bundle::verify(b.dir()).is_err());
+    let id = b.run_id().to_owned();
+    let w = b.finish(&session(&id, 23)).unwrap();
+    // Finished in every byte but its name: a writer that died before the rename.
+    let staged = runs.path().join(format!(".{id}.partial.7"));
+    std::fs::rename(&w.dir, &staged).unwrap();
+    let err = bundle::verify(&staged).unwrap_err();
+    assert!(err.to_string().contains("not its run_id"), "{err}");
+}
