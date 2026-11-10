@@ -51,3 +51,4 @@
 | [ADR-45](../decisions/ADR-45.md) | An amendment may keep a frozen file unpinned (HYP-26) | accepted (issue #70, PR 72: spec-change and env-change) | HYP-26, HYP-23 |
 | [ADR-46](../decisions/ADR-46.md) | GATE-23's loop of record, and `twin_failed` on untwinned cells | accepted (T17.2, issue #81) | GATE-23, HYP-22, HYP-24, LOOP-12, LOOP-30, P16-20, P16-21, CON-25, CON-26 |
 | [ADR-47](../decisions/ADR-47.md) | What `docs-inventory` recomputes from a committed twin, and a candidate's bytes | accepted (issue #84, checks 1 and 2; Class A, `crates/xtask`) | P16-20, P16-21, LOOP-12, HYP-5, HYP-22, GATE-23 |
+| [ADR-48](../decisions/ADR-48.md) | A bundle is built in a staging directory and moved into place | accepted (issue #20; Class B, `crates/acn-trace/src/bundle.rs`) | CON-29, TRC-22, TRC-23, HAR-23, CTL-13 |

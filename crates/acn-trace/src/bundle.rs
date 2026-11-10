@@ -431,7 +431,12 @@ pub struct RunSpec {
 /// A bundle being written.
 #[derive(Debug)]
 pub struct Bundle {
+    /// The staging directory the bundle is built in.
     dir: PathBuf,
+    /// `runs_dir/<run_id>/`, where [`Bundle::finish`] puts it.
+    target: PathBuf,
+    /// Whether `finish` moved the staging directory to `target`.
+    finished: bool,
     manifest: Manifest,
     inv: schema::Inventory,
 }
@@ -461,35 +466,75 @@ impl Plan {
         &self.manifest.run_id
     }
 
-    /// Create `runs_dir/<run_id>/` with its `logs/`, refusing an existing
-    /// directory (CON-29).
+    /// Start the bundle of `runs_dir/<run_id>/` in a staging directory beside
+    /// it, `runs_dir/.<run_id>.partial.<k>/`, with its `logs/`. An existing
+    /// `runs_dir/<run_id>/` refuses the run (CON-29). Nothing is at
+    /// `runs_dir/<run_id>/` until [`Bundle::finish`] puts the whole bundle
+    /// there, so a writer that is killed leaves a staging directory, which claims
+    /// no `run_id`; `k` is the first index free, so it does not stop the next
+    /// writer either.
     pub fn create(self, runs_dir: &Path) -> Result<Bundle> {
         let Self { manifest, inv } = self;
         std::fs::create_dir_all(runs_dir).map_err(io(runs_dir))?;
-        let dir = runs_dir.join(&manifest.run_id);
-        if let Err(e) = std::fs::create_dir(&dir) {
-            return Err(if e.kind() == std::io::ErrorKind::AlreadyExists {
-                BundleError::Refused(format!(
-                    "{} exists; a bundle is never replaced (CON-29)",
-                    dir.display()
-                ))
-            } else {
-                BundleError::Io {
-                    path: dir,
-                    source: e,
-                }
-            });
-        }
+        let target = runs_dir.join(&manifest.run_id);
+        refuse_existing(&target)?;
+        let dir = staging_dir(runs_dir, &manifest.run_id)?;
         let logs = dir.join(LOGS);
-        std::fs::create_dir(&logs).map_err(io(&logs))?;
-        Ok(Bundle { dir, manifest, inv })
+        if let Err(e) = std::fs::create_dir(&logs) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(io(&logs)(e));
+        }
+        Ok(Bundle {
+            dir,
+            target,
+            finished: false,
+            manifest,
+            inv,
+        })
     }
 }
 
+/// How many staging directories one `run_id` may have before a writer gives
+/// up: each is a writer that died, or is still writing.
+const STAGING_LIMIT: u32 = 1024;
+
+/// CON-29: anything at a bundle's path, a link or an empty directory
+/// included, refuses the run.
+fn refuse_existing(target: &Path) -> Result<()> {
+    if std::fs::symlink_metadata(target).is_ok() {
+        return Err(BundleError::Refused(format!(
+            "{} exists; a bundle is never replaced (CON-29)",
+            target.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Create the first free `runs_dir/.<run_id>.partial.<k>/`.
+fn staging_dir(runs_dir: &Path, run_id: &str) -> Result<PathBuf> {
+    for k in 0..STAGING_LIMIT {
+        let dir = runs_dir.join(format!(".{run_id}.partial.{k}"));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => {
+                return Err(BundleError::Io {
+                    path: dir,
+                    source: e,
+                });
+            }
+        }
+    }
+    Err(BundleError::Refused(format!(
+        "{} holds {STAGING_LIMIT} staging directories `.{run_id}.partial.<k>`, left by runs that did not finish; remove those no run is still writing",
+        runs_dir.display()
+    )))
+}
+
 impl Bundle {
-    /// Derive the `run_id` of `spec` and create `runs_dir/<run_id>/` with its `logs/`.
-    /// Refuses an existing directory (CON-29) and a spec whose hypothesis is not the
-    /// one the preflight checked (CON-28).
+    /// Derive the `run_id` of `spec` and start its bundle as [`Plan::create`]
+    /// does. Refuses an existing `runs_dir/<run_id>/` (CON-29) and a spec whose
+    /// hypothesis is not the one the preflight checked (CON-28).
     pub fn create(
         runs_dir: &Path,
         preflight: &Preflight,
@@ -557,7 +602,8 @@ impl Bundle {
         Ok(Plan { manifest, inv })
     }
 
-    /// The bundle directory.
+    /// The directory the bundle is being written in: its staging directory,
+    /// until [`Bundle::finish`] moves it to `runs_dir/<run_id>/`.
     #[must_use]
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -575,7 +621,8 @@ impl Bundle {
         self.dir.join(LOGS)
     }
 
-    /// Write the tables, then the manifest, last (TRC-23). Every resource must carry
+    /// Write the tables, then the manifest, last (TRC-23), then move the staging
+    /// directory to `runs_dir/<run_id>/` (TRC-22). Every resource must carry
     /// the attributes of TRC-19, with the run's `engine_hash` and `build_hash`.
     pub fn finish(mut self, trace: &Trace) -> Result<Written> {
         let producers = producers_of(
@@ -594,11 +641,35 @@ impl Bundle {
         let bytes = self.manifest.to_bytes()?;
         let path = self.dir.join(MANIFEST);
         write_new(&path, &bytes)?;
+        let run_id = Digest::from_hex(&self.manifest.run_id)?;
+        // The whole bundle goes to its place at once. A bundle another writer
+        // put there first is never replaced (CON-29); this writer's copy goes
+        // with it, when it is dropped.
+        refuse_existing(&self.target)?;
+        if let Err(e) = std::fs::rename(&self.dir, &self.target) {
+            // Something landed there between the check and the move. The
+            // system refuses a move onto a directory that is not empty, with
+            // a code that differs by platform: what is there now decides.
+            refuse_existing(&self.target)?;
+            return Err(io(&self.target)(e));
+        }
+        self.finished = true;
         Ok(Written {
-            run_id: Digest::from_hex(&self.manifest.run_id)?,
+            run_id,
             bundle_digest: Digest::of(&bytes),
-            dir: self.dir,
+            dir: self.target.clone(),
         })
+    }
+}
+
+/// A writer that gives up takes its staging directory with it: an error, a
+/// panic that unwinds, or a run whose future is dropped (HAR-23). Only a
+/// writer that is killed leaves one.
+impl Drop for Bundle {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
     }
 }
 
