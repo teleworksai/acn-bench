@@ -81,8 +81,7 @@ headers back, it is an estimate and says so.
    "QUIC arms send ~31 KB against the baseline's 78 KB" was framing against
    packetisation, as it suspected, and with headers counted `raw-tcp` and `turn` are
    in the same range. **One token per packet is the cost, on either transport.**
-5. **Coalescing halves the QUIC downlink and takes a third of its uplink packets'
-   bytes.** `turn-coalesce` sends 15.3 KB down against 30.9 KB, in 136 datagrams
+5. **Coalescing halves the QUIC downlink and cuts its uplink by 13%.** `turn-coalesce` sends 15.3 KB down against 30.9 KB, in 136 datagrams
    against 631. Its uplink falls from 47.9 to 41.6 KB, and from 343 datagrams to 142,
    because there are fewer packets to acknowledge: the first note's "the next uplink
    win is ACK frequency" is the same effect. Per turn after the first, `turn-coalesce`
