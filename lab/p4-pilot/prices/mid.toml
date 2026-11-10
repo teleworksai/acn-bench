@@ -1,0 +1,21 @@
+# USD per million tokens, standard tier, read from each provider's pricing page on
+# 2026-11-10. A price sheet for an estimate, not a quote: check the pages again
+# before any spend is approved.
+
+[provider.anthropic]
+model = "claude-sonnet-5-5"
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+as_of = "2026-11-10"
+input = 2.00
+cache_read = 0.10
+cache_write = 2.50   # 5-minute cache writes
+output = 10.00
+
+[provider.openai]
+model = "gpt-6.1-sol"
+source = "https://developers.openai.com/api/docs/pricing"
+as_of = "2026-11-10"
+input = 2.00
+cache_read = 0.10
+cache_write = 2.50
+output = 10.00
