@@ -171,7 +171,8 @@ T17 M1 gate          → SPEC 095 §M1; docs/gates/M1.md. WG package: kit + the 
                        In PRs (ADR-42): T17.1 SPEC 095 §3 (GATE-20 to GATE-27; GATE-14
                        deferred to M2); T17.2 a loop of lab/hypotheses/p4-twin.toml (POC 4's
                        design with a tolerance on every quantity its predicate reads),
-                       twinned and committed with its evidence page; T17.3
+                       twinned and committed with its evidence page (loop 90f7fda2,
+                       docs/evidence/p4.md, ADR-46); T17.3
                        the kit tag with kit/manifests/ and the second-machine record;
                        T17.4 docs/gates/M1.md, merged by the maintainer (GATE-4).
 L-M1 exploration     → graduation review of turn-transport and p17-a2a lab notes; if
