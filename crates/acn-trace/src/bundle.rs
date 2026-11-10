@@ -435,6 +435,8 @@ pub struct Bundle {
     dir: PathBuf,
     /// `runs_dir/<run_id>/`, where [`Bundle::finish`] puts it.
     target: PathBuf,
+    /// Whether `finish` moved the staging directory to `target`.
+    finished: bool,
     manifest: Manifest,
     inv: schema::Inventory,
 }
@@ -468,7 +470,7 @@ impl Plan {
     /// it, `runs_dir/.<run_id>.partial.<k>/`, with its `logs/`. An existing
     /// `runs_dir/<run_id>/` refuses the run (CON-29). Nothing is at
     /// `runs_dir/<run_id>/` until [`Bundle::finish`] puts the whole bundle
-    /// there, so a writer that dies leaves a staging directory, which claims
+    /// there, so a writer that is killed leaves a staging directory, which claims
     /// no `run_id`; `k` is the first index free, so it does not stop the next
     /// writer either.
     pub fn create(self, runs_dir: &Path) -> Result<Bundle> {
@@ -485,6 +487,7 @@ impl Plan {
         Ok(Bundle {
             dir,
             target,
+            finished: false,
             manifest,
             inv,
         })
@@ -523,7 +526,7 @@ fn staging_dir(runs_dir: &Path, run_id: &str) -> Result<PathBuf> {
         }
     }
     Err(BundleError::Refused(format!(
-        "{} holds {STAGING_LIMIT} staging directories `.{run_id}.partial.<k>`, left by runs that did not finish; remove them",
+        "{} holds {STAGING_LIMIT} staging directories `.{run_id}.partial.<k>`, left by runs that did not finish; remove those no run is still writing",
         runs_dir.display()
     )))
 }
@@ -640,17 +643,33 @@ impl Bundle {
         write_new(&path, &bytes)?;
         let run_id = Digest::from_hex(&self.manifest.run_id)?;
         // The whole bundle goes to its place at once. A bundle another writer
-        // put there first is never replaced (CON-29); this writer's copy goes.
-        if let Err(e) = refuse_existing(&self.target) {
-            let _ = std::fs::remove_dir_all(&self.dir);
-            return Err(e);
+        // put there first is never replaced (CON-29); this writer's copy goes
+        // with it, when it is dropped.
+        refuse_existing(&self.target)?;
+        if let Err(e) = std::fs::rename(&self.dir, &self.target) {
+            // Something landed there between the check and the move. The
+            // system refuses a move onto a directory that is not empty, with
+            // a code that differs by platform: what is there now decides.
+            refuse_existing(&self.target)?;
+            return Err(io(&self.target)(e));
         }
-        std::fs::rename(&self.dir, &self.target).map_err(io(&self.target))?;
+        self.finished = true;
         Ok(Written {
             run_id,
             bundle_digest: Digest::of(&bytes),
-            dir: self.target,
+            dir: self.target.clone(),
         })
+    }
+}
+
+/// A writer that gives up takes its staging directory with it: an error, a
+/// panic that unwinds, or a run whose future is dropped (HAR-23). Only a
+/// writer that is killed leaves one.
+impl Drop for Bundle {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
     }
 }
 
