@@ -830,3 +830,48 @@ fn a_forked_child_says_which_tools_it_may_call_on_every_backend() {
         assert!(b.get("tool_choice").is_none());
     }
 }
+
+/// Cites: HAR-21, HAR-60
+#[test]
+fn a_run_of_a_workload_with_no_temperature_sends_none_on_any_call() {
+    let stated = common::smoke();
+    let unstated = stated.replace("temperature = 0.0\n", "");
+    assert_ne!(unstated, stated);
+    // Both tasks of the smoke workload: the plain chain, and the fan-out with
+    // its sub-agents' calls.
+    for task in 0..2 {
+        let with = session(Spec {
+            workload: stated.clone(),
+            task,
+            ..Spec::default()
+        });
+        let without = session(Spec {
+            workload: unstated.clone(),
+            task,
+            ..Spec::default()
+        });
+        assert!(with.result.is_ok() && without.result.is_ok(), "task {task}");
+        assert!(!without.bodies.is_empty(), "task {task}");
+        for (_, body) in &with.bodies {
+            assert_eq!(body["temperature"], json!(0.0), "task {task}: {body}");
+        }
+        for (_, body) in &without.bodies {
+            assert!(body.get("temperature").is_none(), "task {task}: {body}");
+        }
+        // The run is otherwise the same run: the same calls, each the same
+        // request but for that key.
+        assert_eq!(with.bodies.len(), without.bodies.len(), "task {task}");
+        for ((_, a), (_, b)) in with.bodies.iter().zip(&without.bodies) {
+            let mut a = a.clone();
+            a.as_object_mut().unwrap().remove("temperature");
+            assert_eq!(&a, b, "task {task}");
+        }
+    }
+    // Every kind of call was seen across the two tasks.
+    let fanout = session(Spec {
+        workload: unstated,
+        task: 1,
+        ..Spec::default()
+    });
+    assert!(!spans(&fanout.trace, "invoke_agent").is_empty());
+}
