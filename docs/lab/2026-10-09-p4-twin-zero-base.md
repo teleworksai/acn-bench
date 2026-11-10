@@ -15,25 +15,32 @@ candidate's sim/live tolerances?
 1. **The L1 loop.** Loop `f32216f4…` of `p4-twin.toml`, as first written, with
    `sim_live_tolerance = { cached_token_ratio = 0.05, ttft_p50_ms = 0.15, cost_per_success = 0.05 }`,
    all relative. Budget 1 548 sim bundles; it stopped `exhausted` with L1 verdict
-   `c14eb1e4…` `inconclusive`. The verdict had to be inconclusive: the guard needs two
-   reported providers, and the mock reports none.
-2. **The twin.** `acn loop twin --top 1` ran 16 live bundles on the served mock between
-   16:13 and 01:22 (about 9 hours). L2 verdict `782e3a64…`, `twin_failed: true`.
+   `c14eb1e4…` `inconclusive`. Anthropic and openai pass; sglang and vllm are
+   inconclusive (unpriced on the mock), and the file-level verdict needs every slice
+   conclusive (`slice_inconclusive`).
+2. **The first twin.** `acn loop twin --top 1` ran 16 live bundles on the served mock
+   between 16:13 and 01:22 (about 9 hours). L2 verdict `782e3a64…` `inconclusive`, with
+   `twin_failed` on 256 anthropic and 247 openai cells. Both providers drop from pass to
+   inconclusive, which leaves 0 of 2 reported and trips the guard.
 3. **The re-run (2026-10-09 to 2026-10-10).** After the decision below, loop `90f7fda2…`
    of the edited candidate (`57dbedc2…`, seed 2145617300181220395) ran the same 1 548 sim
-   bundles, L1 verdict `bf17daba…` `inconclusive`, same reason as the first loop. Its
-   `--top 1` twin, under `caffeinate -i`, ran 16 live bundles, the last finishing
-   2026-10-10 17:17. L2 verdict `8401912d…` `inconclusive`. This is the loop of record for
-   GATE-23 (T17.2, ADR-46), committed under `docs/runs/`.
+   bundles. L1 verdict `bf17daba…` is `inconclusive` for the same reason as the first
+   loop's: anthropic and openai pass, sglang and vllm do not. Its `--top 1` twin, under
+   `caffeinate -i`, ran 16 live bundles, the last finishing 2026-10-10 17:17. L2 verdict
+   `8401912d…` is `inconclusive` (see "The re-run" below). This is the loop of record for
+   GATE-23 (T17.2, ADR-46), committed under `docs/runs/`. Its evidence chain was verified
+   on 2026-11-09 (ADR-46).
 
 ## What was learned
 
-**The twin failed on the form of a tolerance, not on a sim/live disagreement.**
-- **What passed:** every measured divergence was within its tolerance: 33 of the 36
-  checks (12 cells × 3 quantities). For ttft, the largest arm divergence was 0.065 of a relative 0.15. For cost, it
-  was 0.0003 of a relative 0.05.
-- **What failed:** `cached_token_ratio` in the three anthropic treatment cells with
-  `cache_breakpoint_placement = none`.
+**The first twin (`782e3a64…`) failed on the form of a tolerance, not on a sim/live
+disagreement.**
+- **What passed:** in the first twin, every measured divergence was within its tolerance:
+  33 of the 36 checks (12 cells × 3 quantities). For ttft, the largest arm divergence was
+  0.065 of a relative 0.15. For cost, it was 0.0003 of a relative 0.05.
+- **What failed:** `cached_token_ratio` in the three twinned anthropic treatment cells
+  with `cache_breakpoint_placement = none`. (The other 253 anthropic and 247 openai
+  `twin_failed` cells are the untwinned ones described under "The re-run".)
 - **Why:** on `mock-explicit`, no breakpoint means nothing is cached, so the sim mean is
   exactly 0.0. HYP-22 divides a relative divergence by `|mean_sim|` and makes a zero
   `mean_sim` undefined, and an undefined divergence fails the twin rule when
@@ -85,21 +92,29 @@ quantities, 10 of them decision cells, all twinned, so no `partially-twinned` la
 | `ttft_p50_ms` | relative 0.15 | 0.056 |
 | `cost_per_success` | relative 0.05 | 0.00024 |
 
-**The L2 verdict still lists `twin_failed`, on cells that were never twinned.**
+**The L2 verdict still lists `twin_failed`, on cells that were never twinned, and that
+changes the verdict.**
 - In the anthropic and openai slices, 253 and 247 cells carry it.
-- Each is an untwinned, non-decision cell. Its control arm is the slice's control, which
-  the twin ran live; its treatment arm has no live bundle.
+- Each is an untwinned, non-decision cell. Controls are per workload. The twin ran two
+  workload controls live in each slice: coding and retrieval for anthropic, coding and
+  fanout for openai. Every cell of those workloads therefore has a live control arm, while
+  its treatment arm has none. That accounts for all but the twinned cells: 256 − 3 = 253
+  and 256 − 9 = 247.
 - Its divergence is therefore undefined. HYP-22 fails "a cell that has live bundles and
-  whose divergence … is undefined", and the code reads a shared control arm as the cell
+  whose divergence … is undefined", and the code reads a live control arm as the cell
   having live bundles.
-- No measured divergence is involved, and GATE-23 reads twinned quantities only, so it is
-  met (ADR-46). The wording is raised as issue #81 for a later HYP-22 spec-change.
+- **The effect on the verdict.** Anthropic and openai pass at L1 (`bf17daba…`). At L2,
+  `twin_failed` alone makes both slices inconclusive, so 0 of 2 providers are reported,
+  and the guard and `providers_below_minimum` fire. The same happened in the first twin.
+- **No measured divergence is involved.** GATE-23 reads twinned quantities, not verdicts,
+  so ADR-46 takes it as met. Issue #81 raises the wording for a later HYP-22 spec-change.
 
 ## Graduate / park / drop
 
 - **The absolute tolerance for ratio quantities: park.** If frozen files meet the same
   zero base, a HYP-22 spec-change, treating identical means as divergence 0, is the
   general fix. Propose it then, not now.
-- **`twin_failed` on untwinned cells that share a live control: park,** with issue #81. A
-  HYP-22 spec-change that judges only cells whose arms both have live bundles is Class C
-  and changes no number on the M1 page.
+- **`twin_failed` on untwinned cells with a live control arm: park,** with issue #81. A
+  HYP-22 spec-change that judges only cells whose arms both have live bundles is Class C.
+  It would change no divergence figure. It would change the L2 verdict's provider
+  statuses, back to pass for anthropic and openai on this loop.
