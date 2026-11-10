@@ -7,4 +7,5 @@
 | [2026-09-21-turn-transport](../lab/2026-09-21-turn-transport.md) | Lab note — turn-transport (2026-09-21) |
 | [2026-10-08-engine-survey](../lab/2026-10-08-engine-survey.md) | Lab note — engine survey, vLLM v0.30 and SGLang v0.5.21 (2026-10-08) |
 | [2026-10-09-p4-twin-zero-base](../lab/2026-10-09-p4-twin-zero-base.md) | Lab note — p4-twin, a relative tolerance over a zero base (2026-10-09) |
+| [2026-11-10-p4-pilot](../lab/2026-11-10-p4-pilot.md) | Lab note — p4-pilot, what a real-provider POC 4 would spend (2026-11-10) |
 | [2026-11-10-turn-transport-2](../lab/2026-11-10-turn-transport-2.md) | Lab note — turn-transport, second spike: framing against transport (2026-11-10) |
