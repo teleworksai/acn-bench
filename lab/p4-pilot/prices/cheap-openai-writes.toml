@@ -1,0 +1,25 @@
+# USD per million tokens, standard tier, read from each provider's pricing page on
+# 2026-11-10. A price sheet for an estimate, not a quote: check the pages again
+# before any spend is approved.
+#
+# This sheet is an upper bound for OpenAI, not its page prices: `input` is set to the
+# 30-minute cache-write price, as if every uncached prompt token were billed as a
+# write. The sheet without `-openai-writes` holds the page prices.
+
+[provider.anthropic]
+model = "claude-haiku-5-5"
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+as_of = "2026-11-10"
+input = 0.10
+cache_read = 0.01
+cache_write = 0.125   # 5-minute cache writes
+output = 0.50
+
+[provider.openai]
+model = "gpt-6-luna"
+source = "https://developers.openai.com/api/docs/pricing"
+as_of = "2026-11-10"
+input = 0.125
+cache_read = 0.01
+cache_write = 0.125
+output = 0.50
