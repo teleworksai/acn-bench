@@ -53,3 +53,4 @@
 | [ADR-47](../decisions/ADR-47.md) | What `docs-inventory` recomputes from a committed twin, and a candidate's bytes | accepted (issue #84, checks 1 and 2; Class A, `crates/xtask`) | P16-20, P16-21, LOOP-12, HYP-5, HYP-22, GATE-23 |
 | [ADR-48](../decisions/ADR-48.md) | A bundle is built in a staging directory and moved into place | accepted (issue #20; Class B, `crates/acn-trace/src/bundle.rs`) | CON-29, TRC-22, TRC-23, HAR-23, CTL-13 |
 | [ADR-49](../decisions/ADR-49.md) | The evidence page shows each layer, and marks a candidate's loops | accepted (issue #83; Class A, `crates/xtask/src/evidence.rs`) | P16-21, LOOP-30, LOOP-12, HYP-3, HYP-22, HYP-24, GATE-23 |
+| [ADR-51](../decisions/ADR-51.md) | SPEC 040 v0.5: the request a live run sends, and a reply cut at its limit | accepted (`spec-change`; issue #27, following ADR-29) | HAR-3, HAR-21, HAR-60, P4-3, P4-9; by reference TRC-12, CON-29, P4-10 |
