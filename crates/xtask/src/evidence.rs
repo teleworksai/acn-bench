@@ -73,6 +73,116 @@ struct TwinDivergence {
     divergence: Vec<Divergence>,
 }
 
+/// A tolerance as a twin writes it (LOOP-12): absolute, or relative to sim.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+enum Tolerance {
+    Abs(f64),
+    Relative(f64),
+}
+
+/// A figure that must be written, as a number or as `null` (undefined, or for
+/// `effect` not read): a missing key is refused, not taken for `null`.
+fn figure<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<f64>, D::Error> {
+    serde::Deserialize::deserialize(d)
+}
+
+/// One quantity's figures in a twin, read to recompute `within` (LOOP-12).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Figures {
+    tolerance: Tolerance,
+    #[serde(deserialize_with = "figure")]
+    treatment: Option<f64>,
+    #[serde(deserialize_with = "figure")]
+    control: Option<f64>,
+    #[serde(deserialize_with = "figure")]
+    effect: Option<f64>,
+    within: bool,
+}
+
+/// Each twinned quantity's `within` flag, recomputed from its own figures
+/// (LOOP-12, HYP-22): within when every figure is defined and at or under the
+/// tolerance. A twinned cell has both arms live, so a `null` arm figure is an
+/// undefined divergence. A `null` effect is undefined only for a quantity
+/// whose effect the twin reads, which the file shows by a defined effect of
+/// that quantity in another cell (ADR-47).
+fn check_within(divergence: &[Divergence], file: &Path) -> Result<()> {
+    let mut all = Vec::new();
+    let mut reads_effect = BTreeSet::new();
+    for d in divergence {
+        for c in &d.cells {
+            for (q, raw) in &c.quantities {
+                let f: Figures = serde_json::from_str(raw.get()).map_err(|e| {
+                    Error::Invalid(format!(
+                        "{}: {} / {} / {q}: not a twin's figures (tolerance, treatment, control, effect, within): {e}",
+                        file.display(),
+                        d.slice,
+                        c.key
+                    ))
+                })?;
+                if f.effect.is_some() {
+                    reads_effect.insert(q.as_str());
+                }
+                all.push((d, c, q, f));
+            }
+        }
+    }
+    for (d, c, q, f) in all {
+        let (Tolerance::Abs(limit) | Tolerance::Relative(limit)) = f.tolerance;
+        let over = [f.treatment, f.control, f.effect]
+            .into_iter()
+            .flatten()
+            .any(|x| x > limit);
+        let undefined = f.treatment.is_none()
+            || f.control.is_none()
+            || (f.effect.is_none() && reads_effect.contains(q.as_str()));
+        let within = !over && !undefined;
+        if f.within != within {
+            return invalid(format!(
+                "{}: {} / {} / {q}: `within` is written {}, and its figures against its tolerance give {within} (LOOP-12)",
+                file.display(),
+                d.slice,
+                c.key,
+                f.within
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A candidate still in the tree has the bytes its loop ran (HYP-5): `lab/` is
+/// outside `env-hash`, so nothing else would notice an edit after the loop. A
+/// frozen file is `env-hash`'s, and may be amended after a loop (CON-7).
+fn check_candidate(root: &Path, h: &Value, file: &Path) -> Result<()> {
+    let rel = s(h, "path");
+    if s(h, "status") != "candidate" || rel.is_empty() {
+        return Ok(());
+    }
+    let inside = Path::new(rel)
+        .components()
+        .all(|c| matches!(c, std::path::Component::Normal(_)));
+    if !inside {
+        return invalid(format!(
+            "{}: hypothesis.path `{rel}` is not a path inside the repository",
+            file.display()
+        ));
+    }
+    let path = root.join(rel);
+    if !path.is_file() {
+        return Ok(());
+    }
+    let bytes =
+        std::fs::read(&path).map_err(|e| Error::Invalid(format!("{}: {e}", path.display())))?;
+    if blake3::hash(&bytes).to_hex().as_str() != s(h, "hash") {
+        return invalid(format!(
+            "{}: {rel} no longer has the bytes this loop ran (hypothesis.hash, HYP-5): a candidate with a committed loop is edited as a new file, or looped again",
+            file.display()
+        ));
+    }
+    Ok(())
+}
+
 struct Twin {
     id: String,
     json: Value,
@@ -260,6 +370,7 @@ fn load(root: &Path) -> Result<(Vec<Loop>, BTreeMap<String, Value>)> {
         let h = report.get("hypothesis").cloned().unwrap_or(Value::Null);
         hex(&h, "hash", &file)?;
         word(&h, "status", &file)?;
+        check_candidate(root, &h, &file)?;
         for b in report
             .get("bundles")
             .and_then(Value::as_array)
@@ -327,6 +438,7 @@ fn load(root: &Path) -> Result<(Vec<Loop>, BTreeMap<String, Value>)> {
             }
             let div: TwinDivergence = serde_json::from_str(&text)
                 .map_err(|e| Error::Invalid(format!("{}: {e}", tf.display())))?;
+            check_within(&div.divergence, &tf)?;
             twins.push(Twin {
                 id: name(&t),
                 json: twin,
