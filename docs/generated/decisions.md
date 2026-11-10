@@ -51,3 +51,4 @@
 | [ADR-45](../decisions/ADR-45.md) | An amendment may keep a frozen file unpinned (HYP-26) | accepted (issue #70, PR 72: spec-change and env-change) | HYP-26, HYP-23 |
 | [ADR-46](../decisions/ADR-46.md) | GATE-23's loop of record, and `twin_failed` on untwinned cells | accepted (T17.2, issue #81) | GATE-23, HYP-22, HYP-24, LOOP-12, LOOP-30, P16-20, P16-21, CON-25, CON-26 |
 | [ADR-47](../decisions/ADR-47.md) | What `docs-inventory` recomputes from a committed twin, and a candidate's bytes | accepted (issue #84, checks 1 and 2; Class A, `crates/xtask`) | P16-20, P16-21, LOOP-12, HYP-5, HYP-22, GATE-23 |
+| [ADR-50](../decisions/ADR-50.md) | SPEC 080 v0.3: five open conflicts settled in one amendment | accepted (`spec-change`; issues #10, #13, #15, #18, #81) | HYP-9, HYP-15, HYP-20, HYP-22, HYP-24, HYP-27; by reference HYP-13, HYP-21, HYP-23, CON-25, LOOP-12, GATE-23 |
