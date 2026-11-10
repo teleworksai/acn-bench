@@ -211,13 +211,19 @@ fn check_candidate(root: &Path, h: &Value, file: &Path) -> Result<()> {
             file.display()
         ));
     }
+    // The page prints the path in a code span: only characters that are
+    // themselves there.
+    let plain = rel
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'-' | b'_'));
     let inside = !rel.is_empty()
+        && plain
         && Path::new(rel)
             .components()
             .all(|c| matches!(c, std::path::Component::Normal(_)));
     if !inside {
         return invalid(format!(
-            "{}: hypothesis.path `{rel}` is not a path inside the repository",
+            "{}: hypothesis.path `{rel}` is not a path inside the repository, of letters, digits, `/`, `.`, `-` and `_`",
             file.display()
         ));
     }
@@ -596,12 +602,13 @@ fn verdict_row(p: &mut String, layer: &str, v: &Value) {
     );
 }
 
-/// A loop of a file outside `hypotheses/` (HYP-3), which shares its page with
-/// the frozen hypothesis of the same id.
+/// A loop that is not the frozen hypothesis's, though it shares its page: of
+/// a file outside `hypotheses/`, or of a file there that its report calls a
+/// candidate, which is one not yet in the freeze record (HYP-3).
 fn candidate(l: &Loop) -> bool {
     let h = l.report.get("hypothesis");
-    let path = h.map_or("", |h| s(h, "path"));
-    !Path::new(path).starts_with("hypotheses")
+    let (status, path) = h.map_or(("", ""), |h| (s(h, "status"), s(h, "path")));
+    status != "frozen" || !Path::new(path).starts_with("hypotheses")
 }
 
 /// A verdict's slices, one row each: the slice's verdict and its own reasons,
@@ -801,7 +808,7 @@ fn loop_section(p: &mut String, l: &Loop, verdicts: &BTreeMap<String, Value>) {
     let h = r.get("hypothesis").cloned().unwrap_or(Value::Null);
     let path = s(&h, "path");
     if candidate(l) {
-        let _ = writeln!(p, "## Loop `{}` (candidate `{}`)\n", l.id, esc(path));
+        let _ = writeln!(p, "## Loop `{}` (candidate `{path}`)\n", l.id);
     } else {
         let _ = writeln!(p, "## Loop `{}`\n", l.id);
     }
@@ -813,7 +820,9 @@ fn loop_section(p: &mut String, l: &Loop, verdicts: &BTreeMap<String, Value>) {
         s(&h, "status"),
         s(&h, "hash")
     );
-    let _ = writeln!(p, "| File | `{}` |", esc(path));
+    // In a code span, as written: `check_candidate` admits no character that
+    // could end the span or need escaping.
+    let _ = writeln!(p, "| File | `{path}` |");
     let _ = writeln!(p, "| Seed | `{}` |", s(r, "seed"));
     let _ = writeln!(p, "| engine_hash | `{}` |", s(r, "engine_hash"));
     let _ = writeln!(p, "| build_hash | `{}` |", s(r, "build_hash"));

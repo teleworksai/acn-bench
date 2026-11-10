@@ -675,8 +675,8 @@ fn the_sections_a_gate_reads_come_before_the_control_effects() {
 /// Cites: P16-21, HYP-3
 #[test]
 fn a_frozen_hypothesiss_loop_is_not_marked_and_says_so_only_for_candidates() {
-    // The same loop, of a file under hypotheses/: no candidate heading, and
-    // no statement about candidates on the page.
+    // A file under hypotheses/ that its report still calls a candidate, one
+    // not yet in the freeze record: marked like any other candidate.
     let d = root();
     edit(
         d.path(),
@@ -685,9 +685,101 @@ fn a_frozen_hypothesiss_loop_is_not_marked_and_says_so_only_for_candidates() {
         "\"path\":\"hypotheses/zz.toml\"",
     );
     assert!(xtask_at(d.path(), &["docs-inventory"]).ok());
+    at(
+        &page(d.path()),
+        &format!("## Loop `{LOOP}` (candidate `hypotheses/zz.toml`)"),
+    );
+    // The same loop, of the frozen file: no candidate heading, and no
+    // statement about candidates on the page.
+    edit(
+        d.path(),
+        &report(),
+        "\"status\":\"candidate\"",
+        "\"status\":\"frozen\"",
+    );
+    assert!(xtask_at(d.path(), &["docs-inventory"]).ok());
     let page = page(d.path());
     at(&page, &format!("## Loop `{LOOP}`\n"));
     at(&page, "| File | `hypotheses/zz.toml` |");
     assert!(!page.contains("candidate `"), "{page}");
     assert!(!page.contains("A loop marked candidate"), "{page}");
+}
+
+/// Cites: P16-21
+#[test]
+fn a_path_is_shown_as_written_and_cannot_end_its_code_span() {
+    // An underscore is not escaped inside a code span.
+    let d = root();
+    edit(
+        d.path(),
+        &report(),
+        "\"path\":\"target/evfix/zz.toml\"",
+        "\"path\":\"lab/hypo_theses/z-z.v2.toml\"",
+    );
+    assert!(xtask_at(d.path(), &["docs-inventory"]).ok());
+    let page = page(d.path());
+    at(
+        &page,
+        &format!("## Loop `{LOOP}` (candidate `lab/hypo_theses/z-z.v2.toml`)"),
+    );
+    at(&page, "| File | `lab/hypo_theses/z-z.v2.toml` |");
+    // A character that could end the span, or start anything else, is refused.
+    for bad in [
+        "a`b.toml",
+        "a|b.toml",
+        "a b.toml",
+        "a\\\\nb.toml",
+        "a*b.toml",
+        "é.toml",
+    ] {
+        let d = root();
+        edit(
+            d.path(),
+            &report(),
+            "\"path\":\"target/evfix/zz.toml\"",
+            &format!("\"path\":\"lab/{bad}\""),
+        );
+        fails(d.path(), "not a path inside the repository");
+    }
+}
+
+/// Cites: P16-21, HYP-3
+#[test]
+fn the_frozen_hypothesiss_loops_come_before_a_candidates() {
+    // A second loop of the same id, of a candidate, whose id sorts first.
+    let d = root();
+    let first = "0".repeat(64);
+    let (from, to) = (
+        d.path().join(format!("docs/runs/loop/{LOOP}")),
+        d.path().join(format!("docs/runs/loop/{first}")),
+    );
+    copy(&from, &to);
+    for rel in [
+        format!("docs/runs/loop/{first}/report.json"),
+        format!("docs/runs/loop/{first}/twin/{L2}/twin.json"),
+    ] {
+        edit(d.path(), &rel, LOOP, &first);
+    }
+    // The fixture's own loop becomes the frozen file's.
+    edit(
+        d.path(),
+        &report(),
+        "\"path\":\"target/evfix/zz.toml\"",
+        "\"path\":\"hypotheses/zz.toml\"",
+    );
+    edit(
+        d.path(),
+        &report(),
+        "\"status\":\"candidate\"",
+        "\"status\":\"frozen\"",
+    );
+    let run = xtask_at(d.path(), &["docs-inventory"]);
+    assert!(run.ok(), "{}", run.json);
+    let page = page(d.path());
+    let frozen = at(&page, &format!("## Loop `{LOOP}`\n"));
+    let candidate = at(
+        &page,
+        &format!("## Loop `{first}` (candidate `target/evfix/zz.toml`)"),
+    );
+    assert!(frozen < candidate, "{page}");
 }

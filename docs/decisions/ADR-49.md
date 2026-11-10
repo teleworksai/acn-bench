@@ -15,7 +15,8 @@ The issue offered two ways to handle the third: key pages by hypothesis path or 
 - **One provider table per layer** (HYP-24), each under its layer and its verdict's id, in the order L1, then each twin's L2.
 - **A "Slices" table lists every slice of each layer's verdict** with the slice's own verdict and reasons. Each reason is followed by how many things it refers to, which for `twin_failed` is the number of cells (HYP-22).
 - **Pages stay keyed by hypothesis id.** P16-21 names the page `docs/evidence/<hypothesis-id>.md`, and a page per path or hash would be a spec change. On the shared page:
-  - a loop of a file outside `hypotheses/` has the file in its heading, as "(candidate `<path>`)", decided by where the file is (HYP-3), as in ADR-47;
+  - a loop has the file in its heading, as "(candidate `<path>`)", unless its report says `frozen` and the file is under `hypotheses/` (HYP-3). A file there that its report calls a candidate, one not yet in the freeze record, is marked too. ADR-47's check of a candidate's bytes still goes by location alone, since `env-hash` covers that directory;
+  - a path is printed in a code span as written, and a report whose path has any character but letters, digits, `/`, `.`, `-` and `_` is refused;
   - every loop has a "File" row;
   - the page says, when it holds such a loop, that it is not a loop of the frozen hypothesis;
   - the frozen hypothesis's loops come first.
