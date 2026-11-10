@@ -81,6 +81,9 @@ pub struct Tuning {
     pub mtud: bool,
     /// Client keep-alive. quinn's default is none, and it is not neutral: see the lab note.
     pub keep_alive: Option<Duration>,
+    /// Server: write output at most once per interval, so several tokens share a
+    /// packet. `None` writes each token as it is generated.
+    pub coalesce: Option<Duration>,
 }
 
 fn transport(tuning: Tuning, client: bool) -> Result<Arc<quinn::TransportConfig>> {
@@ -149,6 +152,7 @@ struct State {
     turns: Mutex<HashMap<TurnKey, Arc<Turn>>>,
     /// Output length of every turn the deadline cut short.
     expired: Mutex<Vec<usize>>,
+    coalesce: Option<Duration>,
 }
 
 pub struct TurnServer {
@@ -180,6 +184,7 @@ impl TurnServer {
             sessions: Mutex::default(),
             turns: Mutex::default(),
             expired: Mutex::default(),
+            coalesce: tuning.coalesce,
         });
         let (accepting, shared) = (endpoint.clone(), state.clone());
         tokio::spawn(async move {
@@ -302,14 +307,18 @@ async fn serve_stream(state: Arc<State>, mut send: SendStream, mut recv: RecvStr
 
     // The deadline bounds the writes too: a write blocked on flow control would
     // otherwise never see the turn expire.
-    let sent =
-        match tokio::time::timeout_at(turn.deadline, stream_out(&mut send, &turn, offset)).await {
-            Ok(sent) => sent,
-            Err(_) => {
-                let _ = send.reset(ERR_DEADLINE);
-                Ok(())
-            }
-        };
+    let sent = match tokio::time::timeout_at(
+        turn.deadline,
+        stream_out(&mut send, &turn, offset, state.coalesce),
+    )
+    .await
+    {
+        Ok(sent) => sent,
+        Err(_) => {
+            let _ = send.reset(ERR_DEADLINE);
+            Ok(())
+        }
+    };
     if sent.is_err() && !resumable {
         // Status quo: the generation dies with its stream, and so does its state.
         turn.abort();
@@ -389,7 +398,12 @@ async fn generate(state: Arc<State>, key: TurnKey, turn: Arc<Turn>) {
     }
 }
 
-async fn stream_out(send: &mut SendStream, turn: &Turn, mut offset: usize) -> Result<()> {
+async fn stream_out(
+    send: &mut SendStream,
+    turn: &Turn,
+    mut offset: usize,
+    coalesce: Option<Duration>,
+) -> Result<()> {
     let mut out = turn.out.subscribe();
     let mut status_sent = false;
     loop {
@@ -419,6 +433,10 @@ async fn stream_out(send: &mut SendStream, turn: &Turn, mut offset: usize) -> Re
             return Ok(());
         }
         out.changed().await?;
+        if let Some(interval) = coalesce {
+            // Hold the write back: what is generated meanwhile goes with it.
+            tokio::time::sleep(interval).await;
+        }
     }
 }
 
