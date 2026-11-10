@@ -24,7 +24,8 @@ if [ -n "${RUSTFLAGS:-}" ]; then
   echo "RUSTFLAGS is set; a reference manifest is made with none (P16-10)" >&2
   exit 1
 fi
-dirty=$(git status --porcelain -- crates Cargo.toml Cargo.lock rust-toolchain.toml .cargo)
+# Ignored files count too: source_hash reads crates/ without asking git (CON-31).
+dirty=$(git status --porcelain --ignored -- crates Cargo.toml Cargo.lock rust-toolchain.toml .cargo | grep -v '^!! crates/[^/]*/target/$' || true)
 if [ -n "$dirty" ]; then
   echo "not a clean checkout of what build_hash covers (P16-10):" >&2
   echo "$dirty" >&2
@@ -33,9 +34,18 @@ fi
 
 cargo build -p acn-cli --locked
 acn=$PWD/target/debug/acn
+# The build this binary records is the one P16-10 describes: dev profile, and no
+# flags from any source (RUSTFLAGS, a Cargo configuration, a target table).
+"$acn" version > target/kit-version.json
+grep -q '"profile":"debug"' target/kit-version.json && grep -q '"rustflags":""' target/kit-version.json || {
+  echo "this build is not the dev profile with no rustflags (P16-10):" >&2
+  cat target/kit-version.json >&2
+  exit 1
+}
 out=target/kit
 rm -rf "$out"
-mkdir -p "$out/json" kit/manifests
+# Staged: kit/manifests/ is replaced only when every manifest is made.
+mkdir -p "$out/json" "$out/manifests"
 
 # The run_ids the report names, each once.
 grep -o '"run_id":"[0-9a-f]\{64\}"' "$report" | sed 's/.*:"\(.*\)"/\1/' | sort -u > "$out/ids"
@@ -44,6 +54,12 @@ test -s "$out/ids"
 one() {
   id=$1
   json=$out/json/$id.json
+  # The loop's own bundle, never a reference manifest left from an earlier run
+  # (P16-2 falls back to kit/manifests/ when the bundle is missing).
+  if [ ! -f "$runs/$id/manifest.json" ]; then
+    echo "$runs/$id is not a bundle; the loop's bundles are needed" >&2
+    return 1
+  fi
   "$acn" run --from-run-id "$id" --runs-dir "$runs" --across-builds > "$json" 2> "$out/json/$id.err" || {
     cat "$json" "$out/json/$id.err" >&2
     return 1
@@ -54,7 +70,7 @@ one() {
     return 1
   }
   dir=$(sed -n 's/.*"dir":"\([^"]*\)".*/\1/p' "$json")
-  cp "$dir/manifest.json" "kit/manifests/$id.json"
+  cp "$dir/manifest.json" "$out/manifests/$id.json"
 }
 export -f one
 export acn out runs
@@ -64,10 +80,16 @@ xargs -P "$jobs" -n 1 bash -c 'one "$0"' < "$out/ids"
 tools/p16-target.sh > /dev/null
 ref=$(sed -n 's/.*"run_id":"\([0-9a-f]\{64\}\)".*/\1/p' target/p16/run.json)
 test -n "$ref"
-cp "target/p16/runs/$ref/manifest.json" "kit/manifests/$ref.json"
+cp "target/p16/runs/$ref/manifest.json" "$out/manifests/$ref.json"
 
-made=$(ls kit/manifests | wc -l | tr -d ' ')
+made=$(ls "$out/manifests" | wc -l | tr -d ' ')
 want=$(( $(wc -l < "$out/ids" | tr -d ' ') + 1 ))
-"$acn" version
-echo "kit/manifests: $made manifests, $want expected (the loop's and the reference run $ref)"
-test "$made" -eq "$want"
+if [ "$made" -ne "$want" ]; then
+  echo "$made manifests made, $want expected; kit/manifests/ is left as it was" >&2
+  exit 1
+fi
+rm -rf kit/manifests
+mkdir -p kit
+mv "$out/manifests" kit/manifests
+cat target/kit-version.json
+echo "kit/manifests: $made manifests (the loop's $(( want - 1 )) and the reference run $ref)"

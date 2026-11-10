@@ -20,12 +20,17 @@ if [ -n "${RUSTFLAGS:-}" ]; then
   exit 1
 fi
 head=$(git rev-parse HEAD)
-at=$(git rev-parse "$tag^{commit}")
+# A tag, and nothing else that names a commit.
+at=$(git rev-parse --verify --quiet "refs/tags/$tag^{commit}") || {
+  echo "$tag is not a tag" >&2
+  exit 1
+}
 if [ "$head" != "$at" ]; then
   echo "HEAD $head is not the tag $tag ($at)" >&2
   exit 1
 fi
-dirty=$(git status --porcelain -- crates Cargo.toml Cargo.lock rust-toolchain.toml .cargo kit)
+# Ignored files count too: source_hash reads crates/ without asking git (CON-31).
+dirty=$(git status --porcelain --ignored -- crates Cargo.toml Cargo.lock rust-toolchain.toml .cargo kit | grep -v '^!! crates/[^/]*/target/$' || true)
 if [ -n "$dirty" ]; then
   echo "not a clean checkout of $tag:" >&2
   echo "$dirty" >&2
@@ -36,6 +41,14 @@ cargo build -p acn-cli --locked
 acn=$PWD/target/debug/acn
 target=$(rustc -vV | sed -n 's/^host: //p')
 record=${3:-docs/runs/$day-p16-$target.md}
+# No record of an earlier run stands in for this one's.
+rm -f "$record"
+"$acn" version > target/kit-regen-version.json
+grep -q '"profile":"debug"' target/kit-regen-version.json && grep -q '"rustflags":""' target/kit-regen-version.json || {
+  echo "this build is not the dev profile with no rustflags (P16-10):" >&2
+  cat target/kit-regen-version.json >&2
+  exit 1
+}
 out=target/kit-regen
 rm -rf "$out"
 mkdir -p "$out/json" "$out/runs"
