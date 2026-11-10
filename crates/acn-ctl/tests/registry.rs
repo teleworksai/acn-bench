@@ -405,14 +405,15 @@ fn the_worker_runs_one_at_a_time_refuses_a_retry_while_running_and_stops() {
         let c = ctl.clone();
         move || c.work()
     });
-    // The run's own hook says when a run has started; no polling. Each worker
-    // took one request, and either may be the first to run (CTL-12 orders the
+    // The run's own hook says when a run has started; no polling. With two
+    // workers either request may be the first to run (CTL-12 orders the
     // requests of one worker, which is what the server has).
     assert!(
         has_started
             .recv_timeout(std::time::Duration::from_secs(120))
             .is_ok(),
-        "no request ever started"
+        "no run reached its hook in 120 s; requests: {:?}",
+        ctl.list().unwrap()
     );
     let state = |id: &str| ctl.get(id).unwrap().1.state;
     let seed = match (state(&a), state(&b)) {
