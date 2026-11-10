@@ -1,6 +1,10 @@
 # USD per million tokens, standard tier, read from each provider's pricing page on
 # 2026-11-10. A price sheet for an estimate, not a quote: check the pages again
 # before any spend is approved.
+#
+# This sheet is an upper bound for OpenAI, not its page prices: `input` is set to the
+# 30-minute cache-write price, as if every uncached prompt token were billed as a
+# write. The sheet without `-openai-writes` holds the page prices.
 
 [provider.anthropic]
 model = "claude-sonnet-5-5"
