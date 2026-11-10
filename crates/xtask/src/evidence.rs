@@ -73,6 +73,186 @@ struct TwinDivergence {
     divergence: Vec<Divergence>,
 }
 
+/// A number exactly as the committed JSON writes it. `serde_json` parses a
+/// float to within one unit in the last place unless it is built with
+/// `float_roundtrip`, which would refuse a truthful figure one step over its
+/// tolerance; `str::parse` is correctly rounded.
+fn number(raw: &RawValue) -> Option<f64> {
+    let t = raw.get();
+    // A JSON number only: `parse` alone would also take `inf` and `nan`.
+    let json = t
+        .bytes()
+        .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'+' | b'.' | b'e' | b'E'));
+    t.parse::<f64>().ok().filter(|x| json && x.is_finite())
+}
+
+/// A tolerance as a twin writes it (LOOP-12): absolute, or relative to sim.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawTolerance {
+    abs: Option<Box<RawValue>>,
+    relative: Option<Box<RawValue>>,
+}
+
+/// One quantity's entry in a twin, every key required (LOOP-12).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFigures {
+    tolerance: RawTolerance,
+    treatment: Box<RawValue>,
+    control: Box<RawValue>,
+    effect: Box<RawValue>,
+    within: bool,
+}
+
+/// One quantity's figures, read to recompute `within`: `None` is `null`.
+struct Figures {
+    limit: f64,
+    treatment: Option<f64>,
+    control: Option<f64>,
+    effect: Option<f64>,
+    within: bool,
+}
+
+fn figures(raw: &RawValue) -> std::result::Result<Figures, String> {
+    let r: RawFigures = serde_json::from_str(raw.get()).map_err(|e| e.to_string())?;
+    let limit = match (&r.tolerance.abs, &r.tolerance.relative) {
+        (Some(x), None) | (None, Some(x)) => {
+            number(x).ok_or("its tolerance is not a number".to_owned())?
+        }
+        _ => return Err("its tolerance is not one of `abs` and `relative`".to_owned()),
+    };
+    let fig = |x: &RawValue, name: &str| {
+        if x.get() == "null" {
+            Ok(None)
+        } else {
+            number(x)
+                .map(Some)
+                .ok_or(format!("`{name}` is neither a number nor null"))
+        }
+    };
+    Ok(Figures {
+        limit,
+        treatment: fig(&r.treatment, "treatment")?,
+        control: fig(&r.control, "control")?,
+        effect: fig(&r.effect, "effect")?,
+        within: r.within,
+    })
+}
+
+/// Each twinned quantity's `within` flag, recomputed from its own figures
+/// (LOOP-12, HYP-22): within when every figure is defined and at or under the
+/// tolerance. A twinned cell has both arms live, so a `null` arm figure is an
+/// undefined divergence. A `null` effect is undefined for a quantity whose
+/// effect the twin reads, which the file shows by a defined effect of that
+/// quantity in another cell; where it shows nothing, a written `false` is
+/// taken as that case and a written `true` as an effect not read (ADR-47).
+fn check_within(divergence: &[Divergence], file: &Path) -> Result<()> {
+    let mut all = Vec::new();
+    let mut reads_effect = BTreeSet::new();
+    for d in divergence {
+        for c in &d.cells {
+            for (q, raw) in &c.quantities {
+                let f = figures(raw).map_err(|e| {
+                    Error::Invalid(format!(
+                        "{}: {} / {} / {q}: not a twin's figures (tolerance, treatment, control, effect, within): {e}",
+                        file.display(),
+                        d.slice,
+                        c.key
+                    ))
+                })?;
+                if f.effect.is_some() {
+                    reads_effect.insert(q.as_str());
+                }
+                all.push((d, c, q, f));
+            }
+        }
+    }
+    for (d, c, q, f) in all {
+        let over = [f.treatment, f.control, f.effect]
+            .into_iter()
+            .flatten()
+            .any(|x| x > f.limit);
+        let within = if over || f.treatment.is_none() || f.control.is_none() {
+            Some(false)
+        } else if f.effect.is_some() {
+            Some(true)
+        } else if reads_effect.contains(q.as_str()) {
+            Some(false)
+        } else {
+            // The file does not say whether this effect is read.
+            None
+        };
+        if let Some(within) = within
+            && f.within != within
+        {
+            return invalid(format!(
+                "{}: {} / {} / {q}: `within` is written {}, and its figures against its tolerance give {within} (LOOP-12)",
+                file.display(),
+                d.slice,
+                c.key,
+                f.within
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A candidate still in the tree has the bytes its loop ran (HYP-5): `lab/` is
+/// outside `env-hash`, so nothing else would notice an edit after the loop.
+/// Which check a file gets goes by where it is, not by what the report calls
+/// it (HYP-3): a file under `hypotheses/` is `env-hash`'s, and may be amended
+/// after a loop (CON-7); any other is compared here.
+fn check_candidate(root: &Path, h: &Value, file: &Path) -> Result<()> {
+    let (status, rel) = (s(h, "status"), s(h, "path"));
+    if !["candidate", "frozen"].contains(&status) {
+        return invalid(format!(
+            "{}: hypothesis.status `{status}` is neither `candidate` nor `frozen` (HYP-3)",
+            file.display()
+        ));
+    }
+    let inside = !rel.is_empty()
+        && Path::new(rel)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+    if !inside {
+        return invalid(format!(
+            "{}: hypothesis.path `{rel}` is not a path inside the repository",
+            file.display()
+        ));
+    }
+    let frozen_dir = Path::new(rel).starts_with("hypotheses");
+    if frozen_dir {
+        return Ok(());
+    }
+    if status == "frozen" {
+        return invalid(format!(
+            "{}: hypothesis.status is `frozen`, and hypothesis.path `{rel}` is not under hypotheses/ (HYP-3)",
+            file.display()
+        ));
+    }
+    let path = root.join(rel);
+    let Ok(meta) = std::fs::symlink_metadata(&path) else {
+        // No longer in the tree: nothing to compare.
+        return Ok(());
+    };
+    if !meta.is_file() {
+        return invalid(format!(
+            "{}: hypothesis.path `{rel}` is not a regular file",
+            file.display()
+        ));
+    }
+    let bytes =
+        std::fs::read(&path).map_err(|e| Error::Invalid(format!("{}: {e}", path.display())))?;
+    if blake3::hash(&bytes).to_hex().as_str() != s(h, "hash") {
+        return invalid(format!(
+            "{}: {rel} no longer has the bytes this loop ran (hypothesis.hash, HYP-5): a candidate with a committed loop is edited as a new file, or looped again",
+            file.display()
+        ));
+    }
+    Ok(())
+}
+
 struct Twin {
     id: String,
     json: Value,
@@ -260,6 +440,7 @@ fn load(root: &Path) -> Result<(Vec<Loop>, BTreeMap<String, Value>)> {
         let h = report.get("hypothesis").cloned().unwrap_or(Value::Null);
         hex(&h, "hash", &file)?;
         word(&h, "status", &file)?;
+        check_candidate(root, &h, &file)?;
         for b in report
             .get("bundles")
             .and_then(Value::as_array)
@@ -327,6 +508,7 @@ fn load(root: &Path) -> Result<(Vec<Loop>, BTreeMap<String, Value>)> {
             }
             let div: TwinDivergence = serde_json::from_str(&text)
                 .map_err(|e| Error::Invalid(format!("{}: {e}", tf.display())))?;
+            check_within(&div.divergence, &tf)?;
             twins.push(Twin {
                 id: name(&t),
                 json: twin,
