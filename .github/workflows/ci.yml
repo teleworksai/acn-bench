@@ -133,3 +133,24 @@ jobs:
           persist-credentials: false # build scripts and tests never see the token
       - run: rustup toolchain install
       - run: sudo -E env "PATH=$PATH" cargo test --workspace --features netem -- --ignored
+
+  p16-kit:
+    # SPEC 140 P16-11, SPEC 095 GATE-24: on a runner, which is a second machine
+    # of its target, regenerate every reference manifest of the kit from a clean
+    # checkout of its tag, and keep the record. Run by hand on a tag
+    # (workflow_dispatch with the tag as the ref); never part of the gates. No
+    # build cache: the build is the one P16-10 describes, from nothing.
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # build scripts and tests never see the token
+      - run: rustup toolchain install
+      - run: tools/kit-regen.sh "${GITHUB_REF_NAME}" "$(date -u +%F)" target/p16-kit-record.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: p16-kit-record
+          path: target/p16-kit-record.md
+          if-no-files-found: error
+          overwrite: true

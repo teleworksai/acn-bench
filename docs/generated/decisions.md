@@ -53,3 +53,4 @@
 | [ADR-47](../decisions/ADR-47.md) | What `docs-inventory` recomputes from a committed twin, and a candidate's bytes | accepted (issue #84, checks 1 and 2; Class A, `crates/xtask`) | P16-20, P16-21, LOOP-12, HYP-5, HYP-22, GATE-23 |
 | [ADR-48](../decisions/ADR-48.md) | A bundle is built in a staging directory and moved into place | accepted (issue #20; Class B, `crates/acn-trace/src/bundle.rs`) | CON-29, TRC-22, TRC-23, HAR-23, CTL-13 |
 | [ADR-49](../decisions/ADR-49.md) | The evidence page shows each layer, and marks a candidate's loops | accepted (issue #83; Class A, `crates/xtask/src/evidence.rs`) | P16-21, LOOP-30, LOOP-12, HYP-3, HYP-22, HYP-24, GATE-23 |
+| [ADR-52](../decisions/ADR-52.md) | How the kit's reference manifests and its second-machine record are made | accepted (T17.3, preparation; Class A, `tools/` and `.github/workflows/ci.yml`) | P16-10, P16-11, P16-12, GATE-24, GATE-25; by reference P16-5, P16-6, CON-31, GATE-23 |
