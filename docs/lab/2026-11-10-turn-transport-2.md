@@ -29,9 +29,12 @@ Three arms were added to the five of the first spike. Nothing else changed.
 whole-context request without HTTP, JSON or SSE. Against `quic` it has the same payload
 on the other transport. Like `sse`, it retries a dead connection from scratch.
 
-Coalescing is the simplest possible: after the first new output, the server waits
-100 ms and writes whatever has been generated. At 20 ms per token that is five tokens
-a write. It also holds the first token back, which shows in the results below.
+Coalescing is the simplest possible, and it is not the same code in the two arms.
+`raw-tcp-coalesce` writes on fixed 100 ms windows from the first held token: five
+tokens a write at 20 ms a token, 20 writes a turn. `turn-coalesce` waits 100 ms after
+it sees new output and then writes what has been generated, so its period is about
+120 ms and about six tokens a write (the period was not timed; a warm turn took 19 to
+22 datagrams). Both hold the first token back by the interval, which shows below.
 
 Run: `cargo run --release` in `lab/turn-transport`, defaults (6 turns; 16 KiB system
 and tools, +2 KiB per turn; 100 tokens per turn at 20 ms; 150 ms prefill; 40 ms RTT,
@@ -60,40 +63,55 @@ headers back, it is an estimate and says so.
 | turn | 47946 | 30894 | 343 | 631 | 2177 | 197 |
 | turn-coalesce | 41597 | 15271 | 142 | 136 | 2238 | 297 |
 
-"pkts" is writes seen at the relay for the TCP arms and datagrams for the QUIC arms.
+"pkts" is datagrams for the QUIC arms. For the TCP arms it is reads at the relay, with
+a 16 KiB buffer: downlink, one read is one server write in practice (603 reads for
+606 writes); uplink, the 12 is two reads a request and says nothing about segments,
+so it is not comparable with the QUIC columns beside it.
 
 1. **On the downlink, the baseline's application bytes are almost all framing.** The
-   600 tokens are 3 420 B of text. `sse` writes 78 378 B to carry them, 23 times as
+   600 tokens are 3 414 B of text. `sse` writes 78 378 B to carry them, 23 times as
    much: 131 B per token for the SSE event and its JSON. `raw-tcp` writes the text and
-   six NULs.
+   six NULs, 3 420 B.
 2. **On the uplink, framing is nothing.** `raw-tcp` sends 2% less than `sse` (150.0
-   against 153.3 KB): the HTTP headers and JSON quoting. The uplink is the context sent
+   against 153.3 KB). That 2% is everything `sse` sends that `raw-tcp` does not: the
+   HTTP headers, a stand-in credential among them, the model parameters and the JSON
+   quoting. The uplink is the context sent
    again every turn, and only the delta removes it (`turn`: 47.9 KB). The first note's
    "the delta is the whole uplink story" holds with the framing taken away.
 3. **Framing costs no time here.** `raw-tcp` and `sse` have the same turn time and the
    same TTFT to the millisecond. At 50 Mbit/s down, 131 B a token is not a load. It
    would be at a few kbit/s, which this link does not model.
 4. **Per token, the transport's own overhead is larger than the token.** A token is
-   about 6 B. `turn` sends about 49 B of datagram for each (30 894 B over 631
-   datagrams), and that is before UDP and IP headers. The TCP arms pay the same kind of
-   cost where the relay cannot see it: 603 segments with 40 to 52 B of TCP and IP
-   header each is an estimated 24 to 31 KB, against 3.4 KB of text. So the first note's
-   "QUIC arms send ~31 KB against the baseline's 78 KB" was framing against
-   packetisation, as it suspected, and with headers counted `raw-tcp` and `turn` are
-   in the same range. **One token per packet is the cost, on either transport.**
-5. **Coalescing halves the QUIC downlink and cuts its uplink by 13%.** `turn-coalesce` sends 15.3 KB down against 30.9 KB, in 136 datagrams
-   against 631. Its uplink falls from 47.9 to 41.6 KB, and from 343 datagrams to 142,
-   because there are fewer packets to acknowledge: the first note's "the next uplink
-   win is ACK frequency" is the same effect. Per turn after the first, `turn-coalesce`
-   sends about 2.74 KB up, of which about 2.1 KB is the request.
+   about 6 B. Over the conversation `turn` sends about 49 B a datagram (30 894 B over
+   631), which includes the first turn's handshake and MTU probes; a warm turn is about
+   3.9 KB over about 103 datagrams, so about 38 B each (one rep, not a median). That is
+   before UDP and IP headers. The TCP arms pay the same kind of cost where the relay
+   cannot see it: 603 segments with 40 to 52 B of TCP and IP header each is an
+   estimated 24 to 31 KB, against 3.4 KB of text. With headers added on both sides the
+   estimates are 27.5 to 34.8 KB down for `raw-tcp` and 48.6 KB for `turn`: `turn` is
+   1.4 to 1.8 times `raw-tcp`, part of which is that QUIC is encrypted and the TCP
+   arms have no TLS. Neither estimate counts the TCP ACKs going up. **One token per
+   packet is the cost, on either transport.**
+5. **Coalescing halves the QUIC downlink over the conversation, cuts a warm turn's by
+   about two thirds, and cuts the uplink by 13%.** `turn-coalesce` sends 15.3 KB down
+   against 30.9 KB, in 136 datagrams against 631. The first turn's handshake is in
+   both; a warm turn falls from about 3.9 KB to about 1.3 KB (one rep). Its uplink
+   falls from 47.9 to 41.6 KB, and from 343 datagrams to 142, because there are fewer
+   packets to acknowledge: the first note's "the next uplink win is ACK frequency" is
+   the same effect. Per turn after the first, `turn-coalesce` sends about 2.74 KB up.
+   About 2.1 KB of that is the request, by the protocol's arithmetic (62 B of `OPEN`,
+   a 5 B record header, the 2 048 B user message), not by a measurement in this run.
 6. **This coalescer costs 100 ms of TTFT, and it need not.** Warm TTFT goes from 197
    to 297 ms on `turn` and from 216 to 315 ms on `raw-tcp`, exactly the interval,
-   because the first token waits like every other. Turn time rises by 20 to 60 ms. A
+   because the first token waits like every other. Turn time rises by 20 to 60 ms in the medians, and by up to 84 ms in a single rep on
+   `turn-coalesce`, whose end-of-turn time depends on where its period falls. A
    coalescer that writes the first token at once and holds only the ones after it
    would keep the TTFT; it was not built.
 7. **On TCP, coalescing changes the write count and not the counted bytes** (120
    writes against 603, the same 3 420 B). Its saving is in the headers the relay does
-   not count, an estimated 19 to 25 KB of the 24 to 31 KB above.
+   not count, an estimated 19 to 25 KB of the 24 to 31 KB above. That is a lower bound:
+   fewer segments also means fewer ACKs going up, which the relay does not count
+   either. It is the TCP counterpart of the ACK saving finding 5 measures on QUIC.
 
 ### With a gap
 
@@ -111,19 +129,26 @@ headers back, it is an estimate and says so.
    recovers a break in 3.1 s is the turn outliving its stream (`turn`), which is the
    first note's finding and is unchanged by coalescing.
 9. **Coalescing does not hurt resumption.** `turn-coalesce` resumes after a break in
-   the same 3.09 s and throws nothing away. After a blackout it is 60 ms slower than
-   `turn` (3 327 against 3 265 ms), about the hold interval.
+   the same 3.09 s and throws nothing away. After a blackout it is 62 ms slower than
+   `turn` (3 327 against 3 265 ms). It is 20 to 60 ms slower with no gap as well, and
+   `turn`'s own blackout time moved by 28 ms between the two notes, so the blackout
+   adds nothing that can be told apart.
 
 The blackout sweep and the deadline and eviction checks of the first note were run
-again with the new code and are within a few milliseconds of it; they are not repeated
-here.
+again with the new code. The `sse` and `turn-probe` columns of the sweep and both
+checks are within a few milliseconds of the first note. The `turn` column moved by 10
+to 73 ms (4 000 ms blackout: 6 750 then, 6 677 now), which is the run-to-run spread of
+that arm's stepwise recovery. They are not repeated here.
 
 ### What this does to the first note's claims
 
-- **Narrower:** "downlink is framing, not tokens" was right about `sse` and wrong to
-  credit the saving to the raw stream alone. The saving over `sse` is the framing
-  (finding 1). What is left after it is one packet per token (finding 4), and that is
-  what coalescing addresses (finding 5).
+- **Confirmed:** the first note said its downlink difference was "between two complete
+  implementations, not a QUIC effect", and named the missing raw-stream-over-TCP arm.
+  With that arm, the saving over `sse` is the framing (finding 1), and what is left is
+  one packet per token (finding 4).
+- **Revised:** it guessed that coalescing tokens "would save most of the rest". It
+  saved half of the conversation's downlink and about two thirds of a warm turn's
+  (finding 5), at the cost of TTFT with this coalescer (finding 6).
 - **Unchanged:** the delta prefix for the uplink, and the turn that outlives its
   stream for a break. Neither depends on the framing or on coalescing.
 
@@ -131,15 +156,18 @@ here.
 
 Those of the first note all stand. In addition:
 
-- **The TCP arms' packet counts are writes at the relay, not segments on a wire.** With
-  `TCP_NODELAY` and a 20 ms cadence one write is one segment in practice; this was not
-  captured.
+- **The TCP arms' packet counts are reads at the relay, not segments on a wire.** With
+  `TCP_NODELAY` and a 20 ms cadence one downlink write is one read and one segment in
+  practice; this was not captured. The uplink count is not usable at all.
+- **TCP ACKs are counted nowhere**, in either direction, and are not in the header
+  estimates.
 - **The header estimates in findings 4 and 7 are arithmetic, not measurements**: 40 B
   for IPv4 and TCP without options, 52 B with timestamps, per write.
 - **The QUIC figures exclude UDP and IP headers** (28 B a datagram over IPv4), so they
-  understate QUIC on the wire as well, by about 19 KB down for `turn` and 4 KB for
+  understate QUIC on the wire as well, by about 17.7 KB down for `turn` and 3.8 KB for
   `turn-coalesce`.
-- **One coalescing interval, one token cadence.** 100 ms against 20 ms. The trade
+- **Two coalescers, one interval, one token cadence.** 100 ms against 20 ms, with the
+  two arms' coalescers differing as described above. The trade
   between interval, TTFT and bytes was not swept.
 
 ## Graduate / park / drop
