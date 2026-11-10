@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)] // CON-19 still binds lab crates: CON-23 exempts CON-4 to CON-18 only
 
 mod link;
+mod raw;
 mod sse;
 mod turn;
 mod workload;
@@ -27,6 +28,7 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 
 use link::{GapKind, Link, LinkCfg, Snapshot};
+use raw::{RawClient, RawServer};
 use sse::{SseClient, SseServer};
 use turn::{ClientCfg, IDLE_TIMEOUT, Recovery, Tuning, TurnClient, TurnServer};
 use workload::{TurnStats, Workload};
@@ -49,6 +51,9 @@ struct Args {
     prefill_ms: u64,
     #[arg(long, default_value_t = 40)]
     rtt_ms: u64,
+    /// The write interval of the coalescing arms.
+    #[arg(long, default_value_t = 100)]
+    coalesce_ms: u64,
     #[arg(long, default_value_t = 10.0)]
     up_mbps: f64,
     #[arg(long, default_value_t = 50.0)]
@@ -121,7 +126,12 @@ impl Args {
         Tuning {
             mtud: !self.no_mtud,
             keep_alive: (self.keep_alive_ms > 0).then(|| Duration::from_millis(self.keep_alive_ms)),
+            coalesce: None,
         }
+    }
+
+    fn coalesce(&self) -> Duration {
+        Duration::from_millis(self.coalesce_ms)
     }
 
     /// Server time for a whole turn, without the network.
@@ -158,17 +168,26 @@ impl Args {
 #[serde(rename_all = "kebab-case")]
 enum Arm {
     Sse,
+    /// The baseline's TCP path and whole-context request, without HTTP, JSON or SSE.
+    RawTcp,
+    /// `raw-tcp`, the server writing at most once per `--coalesce-ms`.
+    RawTcpCoalesce,
     Quic,
     QuicMigrate,
     Turn,
+    /// `turn`, the server writing at most once per `--coalesce-ms`.
+    TurnCoalesce,
     TurnProbe,
 }
 
-const ARMS: [Arm; 5] = [
+const ARMS: [Arm; 8] = [
     Arm::Sse,
+    Arm::RawTcp,
+    Arm::RawTcpCoalesce,
     Arm::Quic,
     Arm::QuicMigrate,
     Arm::Turn,
+    Arm::TurnCoalesce,
     Arm::TurnProbe,
 ];
 const SWEEP_ARMS: [Arm; 3] = [Arm::Sse, Arm::Turn, Arm::TurnProbe];
@@ -188,6 +207,10 @@ enum Rig {
     Sse {
         _server: SseServer,
         client: SseClient,
+    },
+    Raw {
+        _server: RawServer,
+        client: RawClient,
     },
     Quic {
         server: TurnServer,
@@ -214,9 +237,24 @@ impl Rig {
                 };
                 return Ok((rig, link));
             }
+            Arm::RawTcp | Arm::RawTcpCoalesce => {
+                let coalesce = (arm == Arm::RawTcpCoalesce).then(|| args.coalesce());
+                let server = RawServer::start(workload, coalesce).await?;
+                let link = Arc::new(Link::tcp(server.addr, args.link()).await?);
+                let client = RawClient::new(link.addr, link.state(), &system);
+                let rig = Rig::Raw {
+                    _server: server,
+                    client,
+                };
+                return Ok((rig, link));
+            }
             Arm::Quic => (false, Recovery::Restart),
             Arm::QuicMigrate => (false, Recovery::Migrate),
-            Arm::Turn | Arm::TurnProbe => (true, Recovery::Resume),
+            Arm::Turn | Arm::TurnCoalesce | Arm::TurnProbe => (true, Recovery::Resume),
+        };
+        let server_tuning = Tuning {
+            coalesce: (arm == Arm::TurnCoalesce).then(|| args.coalesce()),
+            ..args.tuning()
         };
         let cfg = ClientCfg {
             delta,
@@ -225,7 +263,7 @@ impl Rig {
             silence: (arm == Arm::TurnProbe).then(|| Duration::from_millis(args.silence_ms)),
             tuning: args.tuning(),
         };
-        let server = TurnServer::start(workload, args.tuning())?;
+        let server = TurnServer::start(workload, server_tuning)?;
         let link = Arc::new(Link::udp(server.addr, args.link()).await?);
         let client = TurnClient::new(
             cfg,
@@ -242,6 +280,7 @@ impl Rig {
     async fn turn(&mut self, idx: u32, user: &str) -> Result<TurnStats> {
         match self {
             Rig::Sse { client, .. } => client.turn(user).await,
+            Rig::Raw { client, .. } => client.turn(user).await,
             Rig::Quic { client, .. } => client.turn(idx, user).await,
         }
     }
