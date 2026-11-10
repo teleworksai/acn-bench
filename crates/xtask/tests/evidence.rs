@@ -81,7 +81,12 @@ fn a_committed_loop_renders_a_page_with_every_layer_and_its_chain() {
     let page = page(d.path());
     for needle in [
         "# Evidence: zz",
-        &format!("## Loop `{LOOP}`"),
+        &format!("## Loop `{LOOP}` (candidate `target/evfix/zz.toml`)"),
+        "| File | `target/evfix/zz.toml` |",
+        "A loop marked candidate ran the candidate file its heading names",
+        // The slices of each layer's verdict.
+        &format!("| L1 | `{}` | (none) | fail | none |", &L1[..12]),
+        &format!("| L2 | `{}` | (none) | fail | none |", &L2[..12]),
         // Each layer's verdict, with its labels, whether it is citable, and its reasons.
         &format!(
             "| L1 | fail | `{L1}` | exploratory, mock-gated, sim-only | no (exploratory, mock-gated, sim-only) | none |"
@@ -122,7 +127,7 @@ fn divergence_figures_are_written_as_committed() {
     // Compact, every digit as written: `1.10`, not `1.1`.
     assert!(
         page.contains(&format!(
-            "| `{}` | (none) | tool\\_order\\_stable=false | cached\\_token\\_ratio | {{\"tolerance\":{{\"abs\":1.10}},\"treatment\":0.50,\"control\":0.25,\"effect\":null,\"within\":true}} |",
+            "| `{}` | (none) | tool\\_order\\_stable=false | cached\\_token\\_ratio | abs 1.10 | 0.50 | 0.25 | null | yes |",
             &L2[..12]
         )),
         "{page}"
@@ -543,4 +548,146 @@ fn this_repositorys_committed_candidates_are_in_the_tree_as_their_loops_ran_them
         seen += 1;
     }
     assert!(seen > 0, "no committed loop of a candidate");
+}
+
+/// The position of `needle` in `page`, which must hold it.
+fn at(page: &str, needle: &str) -> usize {
+    page.find(needle)
+        .unwrap_or_else(|| panic!("the page lacks `{needle}`\n{page}"))
+}
+
+/// Cites: P16-21, HYP-24
+#[test]
+fn each_layer_has_its_own_provider_table_and_slice_reasons() {
+    let d = root();
+    let (l1, l2) = (
+        format!("docs/runs/verdicts/{L1}/verdict.json"),
+        format!("docs/runs/verdicts/{L2}/verdict.json"),
+    );
+    // L1 passes its provider; at L2 the twin rule makes it inconclusive, as
+    // on GATE-23's loop of record (ADR-46).
+    edit(
+        d.path(),
+        &l1,
+        "\"providers\":null",
+        "\"providers\":{\"aa\":\"pass\"}",
+    );
+    edit(
+        d.path(),
+        &l2,
+        "\"providers\":null",
+        "\"providers\":{\"aa\":\"inconclusive\"}",
+    );
+    // The verdict's own reasons come first in the file, then its slice's.
+    edit(
+        d.path(),
+        &l2,
+        "\"reasons\":[],\"replicates\"",
+        "\"reasons\":[{\"reason\":\"slice_inconclusive\",\"refers\":[\"\"]}],\"replicates\"",
+    );
+    edit(
+        d.path(),
+        &l2,
+        "\"reasons\":[],\"replicates\"",
+        "\"reasons\":[{\"reason\":\"twin_failed\",\"refers\":[\"a\",\"b\",\"c\"]},{\"reason\":\"undefined_value\",\"refers\":[\"x\"]}],\"replicates\"",
+    );
+    let run = xtask_at(d.path(), &["docs-inventory"]);
+    assert!(run.ok(), "{}", run.json);
+    let page = page(d.path());
+    // One table per layer, each under its layer and verdict, in layer order.
+    let t1 = at(&page, &format!("L1, verdict `{}`:", &L1[..12]));
+    let t2 = at(&page, &format!("L2, verdict `{}`:", &L2[..12]));
+    let pass = at(&page, "| aa | pass |");
+    let inconclusive = at(&page, "| aa | inconclusive |");
+    assert!(t1 < pass && pass < t2 && t2 < inconclusive, "{page}");
+    assert!(!page.contains("has no `provider` parameter"));
+    // The slice's own reasons, each with how many things it refers to.
+    at(
+        &page,
+        &format!(
+            "| L2 | `{}` | (none) | fail | twin\\_failed (3), undefined\\_value (1) |",
+            &L2[..12]
+        ),
+    );
+    at(
+        &page,
+        &format!("| L1 | `{}` | (none) | fail | none |", &L1[..12]),
+    );
+    // The verdict's row keeps the verdict's reasons, not its slices'.
+    at(
+        &page,
+        &format!(
+            "| L2 | fail | `{L2}` | exploratory, mock-gated | no (exploratory, mock-gated) | slice\\_inconclusive |"
+        ),
+    );
+}
+
+/// Cites: P16-21, LOOP-12
+#[test]
+fn the_divergence_table_says_how_many_quantities_are_within() {
+    let d = root();
+    edit(
+        d.path(),
+        &twin(),
+        "\"quantities\":{}",
+        &quantity("{\"abs\":0.01}", "0.0", "0.0", "0.001", true),
+    );
+    edit(
+        d.path(),
+        &twin(),
+        "\"quantities\":{}",
+        &quantity("{\"relative\":0.05}", "0.2", "0.0", "0.0", false),
+    );
+    assert!(xtask_at(d.path(), &["docs-inventory"]).ok());
+    let page = page(d.path());
+    at(
+        &page,
+        "1 of 2 twinned quantities are within their tolerance (CON-25). GATE-23 asks that none be outside.",
+    );
+    at(
+        &page,
+        "| cached\\_token\\_ratio | abs 0.01 | 0.0 | 0.0 | 0.001 | yes |",
+    );
+    at(
+        &page,
+        "| cached\\_token\\_ratio | relative 0.05 | 0.2 | 0.0 | 0.0 | no |",
+    );
+}
+
+/// Cites: P16-21
+#[test]
+fn the_sections_a_gate_reads_come_before_the_control_effects() {
+    let d = root();
+    assert!(xtask_at(d.path(), &["docs-inventory"]).ok());
+    let page = page(d.path());
+    let order = [
+        "### Verdicts",
+        "### Divergence, sim against live (LOOP-12)",
+        "### Providers (HYP-24)",
+        "### Slices",
+        "### Chain",
+        "### Control effects (CON-18)",
+    ]
+    .map(|h| at(&page, h));
+    assert!(order.is_sorted(), "{order:?}\n{page}");
+}
+
+/// Cites: P16-21, HYP-3
+#[test]
+fn a_frozen_hypothesiss_loop_is_not_marked_and_says_so_only_for_candidates() {
+    // The same loop, of a file under hypotheses/: no candidate heading, and
+    // no statement about candidates on the page.
+    let d = root();
+    edit(
+        d.path(),
+        &report(),
+        "\"path\":\"target/evfix/zz.toml\"",
+        "\"path\":\"hypotheses/zz.toml\"",
+    );
+    assert!(xtask_at(d.path(), &["docs-inventory"]).ok());
+    let page = page(d.path());
+    at(&page, &format!("## Loop `{LOOP}`\n"));
+    at(&page, "| File | `hypotheses/zz.toml` |");
+    assert!(!page.contains("candidate `"), "{page}");
+    assert!(!page.contains("A loop marked candidate"), "{page}");
 }
