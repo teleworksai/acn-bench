@@ -211,13 +211,19 @@ fn check_candidate(root: &Path, h: &Value, file: &Path) -> Result<()> {
             file.display()
         ));
     }
+    // The page prints the path in a code span: only characters that are
+    // themselves there.
+    let plain = rel
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'-' | b'_'));
     let inside = !rel.is_empty()
+        && plain
         && Path::new(rel)
             .components()
             .all(|c| matches!(c, std::path::Component::Normal(_)));
     if !inside {
         return invalid(format!(
-            "{}: hypothesis.path `{rel}` is not a path inside the repository",
+            "{}: hypothesis.path `{rel}` is not a path inside the repository, of letters, digits, `/`, `.`, `-` and `_`",
             file.display()
         ));
     }
@@ -596,13 +602,315 @@ fn verdict_row(p: &mut String, layer: &str, v: &Value) {
     );
 }
 
+/// A loop that is not the frozen hypothesis's, though it shares its page: of
+/// a file outside `hypotheses/`, or of a file there that its report calls a
+/// candidate, which is one not yet in the freeze record (HYP-3).
+fn candidate(l: &Loop) -> bool {
+    let h = l.report.get("hypothesis");
+    let (status, path) = h.map_or(("", ""), |h| (s(h, "status"), s(h, "path")));
+    status != "frozen" || !Path::new(path).starts_with("hypotheses")
+}
+
+/// A verdict's slices, one row each: the slice's verdict and its own reasons,
+/// each with how many things it refers to (cells, for `twin_failed`).
+fn slice_rows(p: &mut String, layer: &str, v: &Value) {
+    for sl in v
+        .get("slices")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let rs: Vec<String> = sl
+            .get("reasons")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|r| {
+                let n = r
+                    .get("refers")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                format!("{} ({n})", esc(s(r, "reason")))
+            })
+            .collect();
+        let key = s(sl, "key");
+        let _ = writeln!(
+            p,
+            "| {layer} | `{}` | {} | {} | {} |",
+            &s(v, "verdict_id")[..12],
+            if key.is_empty() {
+                "(none)".to_owned()
+            } else {
+                esc(key)
+            },
+            esc(s(sl, "verdict")),
+            list(&rs)
+        );
+    }
+}
+
+/// One layer's provider table (HYP-24), or nothing when its verdict has none.
+fn providers(p: &mut String, layer: &str, v: &Value) -> bool {
+    let Some(ps) = v
+        .get("providers")
+        .and_then(Value::as_object)
+        .filter(|ps| !ps.is_empty())
+    else {
+        return false;
+    };
+    let _ = writeln!(
+        p,
+        "{layer}, verdict `{}`:\n\n| Provider | Status |\n|---|---|",
+        &s(v, "verdict_id")[..12]
+    );
+    for (k, v) in ps {
+        let status = v.as_str().map_or_else(|| v.to_string(), str::to_owned);
+        let _ = writeln!(p, "| {} | {} |", esc(k), esc(&status));
+    }
+    let _ = writeln!(p);
+    true
+}
+
+/// One figure of a divergence entry, as written.
+fn fig(x: &RawValue) -> String {
+    esc(&compact(x.get()))
+}
+
+/// The divergence rows of a loop's twins, with how many are within their
+/// tolerance. Every entry was checked by [`check_within`] when it was loaded.
+fn divergence_rows(l: &Loop) -> (Vec<String>, usize) {
+    let mut rows = Vec::new();
+    let mut within = 0;
+    for t in &l.twins {
+        for d in &t.divergence {
+            for c in &d.cells {
+                for (q, raw) in &c.quantities {
+                    let Ok(f) = serde_json::from_str::<RawFigures>(raw.get()) else {
+                        continue;
+                    };
+                    let tolerance = match (&f.tolerance.abs, &f.tolerance.relative) {
+                        (Some(x), _) => format!("abs {}", fig(x)),
+                        (None, Some(x)) => format!("relative {}", fig(x)),
+                        (None, None) => String::new(),
+                    };
+                    within += usize::from(f.within);
+                    rows.push(format!(
+                        "| `{}` | {} | {} | {} | {tolerance} | {} | {} | {} | {} |",
+                        &t.id[..12],
+                        esc(&d.slice),
+                        esc(&c.key),
+                        esc(q),
+                        fig(&f.treatment),
+                        fig(&f.control),
+                        fig(&f.effect),
+                        if f.within { "yes" } else { "no" }
+                    ));
+                }
+            }
+        }
+    }
+    (rows, within)
+}
+
+fn control_effects(p: &mut String, l: &Loop) {
+    let _ = writeln!(p, "### Control effects (CON-18)\n");
+    if l.effects.is_empty() {
+        let _ = writeln!(p, "None recorded.\n");
+        return;
+    }
+    let _ = writeln!(
+        p,
+        "| Slice | Cell | Quantity | Effect | Interval | Replicates (treatment / control) |\n|---|---|---|---|---|---|"
+    );
+    for e in &l.effects {
+        let _ = writeln!(
+            p,
+            "| {} | {} | {} | {} | [{}, {}] | {} / {} |",
+            esc(&e.slice),
+            esc(&e.cell),
+            esc(&e.quantity),
+            fig(&e.effect),
+            fig(&e.ci_low),
+            fig(&e.ci_high),
+            fig(&e.treatment_replicates),
+            fig(&e.control_replicates)
+        );
+    }
+    let _ = writeln!(p);
+}
+
+fn chain(p: &mut String, l: &Loop) {
+    let r = &l.report;
+    let _ = writeln!(p, "### Chain\n");
+    let _ = writeln!(p, "- L1 verdict: `{}`", s(r, "verdict_id"));
+    let ids: Vec<&str> = r
+        .get("bundles")
+        .and_then(Value::as_array)
+        .map(|b| b.iter().map(|x| s(x, "run_id")).collect())
+        .unwrap_or_default();
+    let _ = writeln!(p, "- L1 bundles ({}):\n", ids.len());
+    let _ = writeln!(p, "```");
+    for id in ids {
+        let _ = writeln!(p, "{id}");
+    }
+    let _ = writeln!(p, "```\n");
+    for t in &l.twins {
+        let label = s(&t.json, "twin_label");
+        let _ = writeln!(
+            p,
+            "- L2 verdict: `{}`, the twin of L1 verdict `{}`; its reasons: {}{}",
+            t.id,
+            s(&t.json, "l1_verdict_id"),
+            reasons(&t.json),
+            if label.is_empty() {
+                String::new()
+            } else {
+                format!("; label: {}", esc(label))
+            }
+        );
+        let _ = writeln!(p, "- L2 bundles, each beside the L1 bundle it twins:\n");
+        let _ = writeln!(
+            p,
+            "| Cell | Arm | Live run_id | Twin of |\n|---|---|---|---|"
+        );
+        for c in t
+            .json
+            .get("cells")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let key = esc(s(c, "key"));
+            for (arm, a) in c
+                .get("arms")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+            {
+                let _ = writeln!(
+                    p,
+                    "| {key} | {} | `{}` | `{}` |",
+                    esc(arm),
+                    s(a, "run_id"),
+                    s(a, "derived_from")
+                );
+            }
+        }
+        let _ = writeln!(p);
+    }
+}
+
+/// One loop's section. The sections a gate reads come first: the verdicts,
+/// the divergence GATE-23 reads, the providers and slices of each layer, the
+/// chain. The control effects, one row per cell and quantity, come last.
+fn loop_section(p: &mut String, l: &Loop, verdicts: &BTreeMap<String, Value>) {
+    let r = &l.report;
+    let h = r.get("hypothesis").cloned().unwrap_or(Value::Null);
+    let path = s(&h, "path");
+    if candidate(l) {
+        let _ = writeln!(p, "## Loop `{}` (candidate `{path}`)\n", l.id);
+    } else {
+        let _ = writeln!(p, "## Loop `{}`\n", l.id);
+    }
+    let _ = writeln!(p, "| Item | Value |\n|---|---|");
+    let _ = writeln!(
+        p,
+        "| Hypothesis | {} ({}), `{}` |",
+        esc(s(&h, "id")),
+        s(&h, "status"),
+        s(&h, "hash")
+    );
+    // In a code span, as written: `check_candidate` admits no character that
+    // could end the span or need escaping.
+    let _ = writeln!(p, "| File | `{path}` |");
+    let _ = writeln!(p, "| Seed | `{}` |", s(r, "seed"));
+    let _ = writeln!(p, "| engine_hash | `{}` |", s(r, "engine_hash"));
+    let _ = writeln!(p, "| build_hash | `{}` |", s(r, "build_hash"));
+    let _ = writeln!(p, "| Stopped | {} |\n", s(r, "stop"));
+    // Each layer's verdict, in order: L1, then every twin's L2.
+    let mut layers: Vec<(&str, &Value)> = Vec::new();
+    if let Some(v) = verdicts.get(s(r, "verdict_id")) {
+        layers.push(("L1", v));
+    }
+    for t in &l.twins {
+        if let Some(v) = verdicts.get(&t.id) {
+            layers.push(("L2", v));
+        }
+    }
+    let _ = writeln!(p, "### Verdicts\n");
+    let _ = writeln!(
+        p,
+        "| Layer | Verdict | verdict_id | Labels | Citable | Reasons |\n|---|---|---|---|---|---|"
+    );
+    for (layer, v) in &layers {
+        verdict_row(p, layer, v);
+    }
+    let _ = writeln!(p, "| L3 | none yet | | | | |\n");
+    let _ = writeln!(p, "### Divergence, sim against live (LOOP-12)\n");
+    let (rows, within) = divergence_rows(l);
+    if rows.is_empty() {
+        let _ = writeln!(
+            p,
+            "None recorded: {}.\n",
+            if l.twins.is_empty() {
+                "no twin is committed"
+            } else {
+                "the twin compared no quantity with a tolerance"
+            }
+        );
+    } else {
+        let _ = writeln!(
+            p,
+            "{within} of {} twinned quantities are within their tolerance (CON-25). GATE-23 asks that none be outside.\n",
+            rows.len()
+        );
+        let _ = writeln!(
+            p,
+            "| Twin | Slice | Cell | Quantity | Tolerance | Treatment | Control | Effect | Within |\n|---|---|---|---|---|---|---|---|---|"
+        );
+        for row in rows {
+            let _ = writeln!(p, "{row}");
+        }
+        let _ = writeln!(p);
+    }
+    let _ = writeln!(p, "### Providers (HYP-24)\n");
+    let mut any = false;
+    for (layer, v) in &layers {
+        any |= providers(p, layer, v);
+    }
+    if !any {
+        let _ = writeln!(p, "The hypothesis has no `provider` parameter.\n");
+    }
+    let _ = writeln!(p, "### Slices\n");
+    let _ = writeln!(
+        p,
+        "Each reason is followed by how many things it refers to, cells for `twin_failed` (HYP-22).\n"
+    );
+    let _ = writeln!(
+        p,
+        "| Layer | Verdict id | Slice | Verdict | Reasons |\n|---|---|---|---|---|"
+    );
+    for (layer, v) in &layers {
+        slice_rows(p, layer, v);
+    }
+    let _ = writeln!(p);
+    chain(p, l);
+    control_effects(p, l);
+}
+
 fn page(id: &str, loops: &[&Loop], verdicts: &BTreeMap<String, Value>) -> String {
     let mut p = String::new();
     let _ = writeln!(p, "# Evidence: {}\n", esc(id));
     let _ = writeln!(
         p,
-        "Rendered by `cargo xtask docs-inventory` from the loop reports, twins and verdicts committed under `{RUNS_DIR}/` (SPEC 085 LOOP-30, SPEC 140 P16-21). This page is the citation target for this hypothesis. A verdict marked not citable is shown, never cited (HYP-23). Loops and twins are listed in the order of their ids; none is marked current.\n"
+        "Rendered by `cargo xtask docs-inventory` from the loop reports, twins and verdicts committed under `{RUNS_DIR}/` (SPEC 085 LOOP-30, SPEC 140 P16-21). This page is the citation target for this hypothesis. A verdict marked not citable is shown, never cited (HYP-23). Loops and twins are listed in the order of their ids, the frozen hypothesis's loops first; none is marked current.\n"
     );
+    if loops.iter().any(|l| candidate(l)) {
+        let _ = writeln!(
+            p,
+            "A loop marked candidate ran the candidate file its heading names, which carries this id. It is not a loop of the frozen hypothesis, and nothing in it is that hypothesis's result (HYP-3).\n"
+        );
+    }
     let attribution = loops
         .iter()
         .flat_map(|l| quantities(l))
@@ -613,173 +921,9 @@ fn page(id: &str, loops: &[&Loop], verdicts: &BTreeMap<String, Value>) -> String
             "Network time on this page is time on the emulated network of each run's scenario, not a real provider's WAN (SPEC 090 ATR-42).\n"
         );
     }
-    for l in loops {
-        let r = &l.report;
-        let h = r.get("hypothesis").cloned().unwrap_or(Value::Null);
-        let _ = writeln!(p, "## Loop `{}`\n", l.id);
-        let _ = writeln!(p, "| Item | Value |\n|---|---|");
-        let _ = writeln!(
-            p,
-            "| Hypothesis | {} ({}), `{}` |",
-            esc(s(&h, "id")),
-            s(&h, "status"),
-            s(&h, "hash")
-        );
-        let _ = writeln!(p, "| Seed | `{}` |", s(r, "seed"));
-        let _ = writeln!(p, "| engine_hash | `{}` |", s(r, "engine_hash"));
-        let _ = writeln!(p, "| build_hash | `{}` |", s(r, "build_hash"));
-        let _ = writeln!(p, "| Stopped | {} |\n", s(r, "stop"));
-        let _ = writeln!(p, "### Verdicts\n");
-        let _ = writeln!(
-            p,
-            "| Layer | Verdict | verdict_id | Labels | Citable | Reasons |\n|---|---|---|---|---|---|"
-        );
-        if let Some(v) = verdicts.get(s(r, "verdict_id")) {
-            verdict_row(&mut p, "L1", v);
-        }
-        for t in &l.twins {
-            if let Some(v) = verdicts.get(&t.id) {
-                verdict_row(&mut p, "L2", v);
-            }
-        }
-        let _ = writeln!(p, "| L3 | none yet | | | | |\n");
-        let _ = writeln!(p, "### Control effects (CON-18)\n");
-        if l.effects.is_empty() {
-            let _ = writeln!(p, "None recorded.\n");
-        } else {
-            let _ = writeln!(
-                p,
-                "| Slice | Cell | Quantity | Effect | Interval | Replicates (treatment / control) |\n|---|---|---|---|---|---|"
-            );
-            for e in &l.effects {
-                let _ = writeln!(
-                    p,
-                    "| {} | {} | {} | {} | [{}, {}] | {} / {} |",
-                    esc(&e.slice),
-                    esc(&e.cell),
-                    esc(&e.quantity),
-                    esc(&compact(e.effect.get())),
-                    esc(&compact(e.ci_low.get())),
-                    esc(&compact(e.ci_high.get())),
-                    esc(&compact(e.treatment_replicates.get())),
-                    esc(&compact(e.control_replicates.get()))
-                );
-            }
-            let _ = writeln!(p);
-        }
-        let _ = writeln!(p, "### Divergence, sim against live (LOOP-12)\n");
-        let mut rows = Vec::new();
-        for t in &l.twins {
-            for d in &t.divergence {
-                for c in &d.cells {
-                    for (q, fig) in &c.quantities {
-                        rows.push(format!(
-                            "| `{}` | {} | {} | {} | {} |",
-                            &t.id[..12],
-                            esc(&d.slice),
-                            esc(&c.key),
-                            esc(q),
-                            esc(&compact(fig.get()))
-                        ));
-                    }
-                }
-            }
-        }
-        if rows.is_empty() {
-            let _ = writeln!(
-                p,
-                "None recorded: {}.\n",
-                if l.twins.is_empty() {
-                    "no twin is committed"
-                } else {
-                    "the twin compared no quantity with a tolerance"
-                }
-            );
-        } else {
-            let _ = writeln!(
-                p,
-                "| Twin | Slice | Cell | Quantity | Figures |\n|---|---|---|---|---|"
-            );
-            for row in rows {
-                let _ = writeln!(p, "{row}");
-            }
-            let _ = writeln!(p);
-        }
-        let _ = writeln!(p, "### Providers (HYP-24)\n");
-        match verdicts
-            .get(s(r, "verdict_id"))
-            .and_then(|v| v.get("providers"))
-            .and_then(Value::as_object)
-        {
-            Some(ps) if !ps.is_empty() => {
-                let _ = writeln!(p, "| Provider | Status |\n|---|---|");
-                for (k, v) in ps {
-                    let status = v.as_str().map_or_else(|| v.to_string(), str::to_owned);
-                    let _ = writeln!(p, "| {} | {} |", esc(k), esc(&status));
-                }
-                let _ = writeln!(p);
-            }
-            _ => {
-                let _ = writeln!(p, "The hypothesis has no `provider` parameter.\n");
-            }
-        }
-        let _ = writeln!(p, "### Chain\n");
-        let _ = writeln!(p, "- L1 verdict: `{}`", s(r, "verdict_id"));
-        let ids: Vec<&str> = r
-            .get("bundles")
-            .and_then(Value::as_array)
-            .map(|b| b.iter().map(|x| s(x, "run_id")).collect())
-            .unwrap_or_default();
-        let _ = writeln!(p, "- L1 bundles ({}):\n", ids.len());
-        let _ = writeln!(p, "```");
-        for id in ids {
-            let _ = writeln!(p, "{id}");
-        }
-        let _ = writeln!(p, "```\n");
-        for t in &l.twins {
-            let label = s(&t.json, "twin_label");
-            let _ = writeln!(
-                p,
-                "- L2 verdict: `{}`, the twin of L1 verdict `{}`; its reasons: {}{}",
-                t.id,
-                s(&t.json, "l1_verdict_id"),
-                reasons(&t.json),
-                if label.is_empty() {
-                    String::new()
-                } else {
-                    format!("; label: {}", esc(label))
-                }
-            );
-            let _ = writeln!(p, "- L2 bundles, each beside the L1 bundle it twins:\n");
-            let _ = writeln!(
-                p,
-                "| Cell | Arm | Live run_id | Twin of |\n|---|---|---|---|"
-            );
-            for c in t
-                .json
-                .get("cells")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                let key = esc(s(c, "key"));
-                for (arm, a) in c
-                    .get("arms")
-                    .and_then(Value::as_object)
-                    .into_iter()
-                    .flatten()
-                {
-                    let _ = writeln!(
-                        p,
-                        "| {key} | {} | `{}` | `{}` |",
-                        esc(arm),
-                        s(a, "run_id"),
-                        s(a, "derived_from")
-                    );
-                }
-            }
-            let _ = writeln!(p);
-        }
+    let (frozen, candidates): (Vec<&Loop>, Vec<&Loop>) = loops.iter().partition(|l| !candidate(l));
+    for l in frozen.into_iter().chain(candidates) {
+        loop_section(&mut p, l, verdicts);
     }
     p.trim_end().to_owned() + "\n"
 }
