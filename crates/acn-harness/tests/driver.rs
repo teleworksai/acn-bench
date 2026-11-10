@@ -103,7 +103,7 @@ fn tool(name: &str) -> ToolDef {
 fn sampling() -> Sampling {
     Sampling {
         max_tokens: 16,
-        temperature: 0.0,
+        temperature: Some(0.0),
         stream: true,
     }
 }

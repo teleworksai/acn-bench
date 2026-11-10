@@ -127,3 +127,22 @@ fn a_child_tool_missing_from_a_task_that_spawns_it_is_refused() {
         "{e}"
     );
 }
+
+/// Cites: HAR-60
+#[test]
+fn a_workload_may_leave_temperature_out_and_nothing_stands_in_for_it() {
+    let good = common::smoke();
+    assert_eq!(
+        Workload::parse(good.as_bytes()).unwrap().agent.temperature,
+        Some(0.0)
+    );
+    let without = good.replace("temperature = 0.0\n", "");
+    assert_ne!(without, good);
+    let w = Workload::parse(without.as_bytes()).unwrap();
+    assert_eq!(w.agent.temperature, None, "no default stands in for it");
+    // Every other agent key is still required.
+    let err = Workload::parse(without.replace("max_tokens = 64\n", "").as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("missing field"), "{err}");
+}

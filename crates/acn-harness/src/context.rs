@@ -120,7 +120,8 @@ pub struct Context {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Sampling {
     pub max_tokens: u64,
-    pub temperature: f64,
+    /// `None` leaves it out of the request, for the provider's default (HAR-21).
+    pub temperature: Option<f64>,
     pub stream: bool,
 }
 
@@ -269,7 +270,9 @@ impl Context {
             body.insert("tools".into(), Value::Array(tools));
         }
         body.insert("max_completion_tokens".into(), json!(s.max_tokens));
-        body.insert("temperature".into(), json!(s.temperature));
+        if let Some(t) = s.temperature {
+            body.insert("temperature".into(), json!(t));
+        }
         body.insert("stream".into(), json!(s.stream));
         if s.stream {
             body.insert("stream_options".into(), json!({ "include_usage": true }));
@@ -346,7 +349,9 @@ impl Context {
             body.insert("tools".into(), Value::Array(tools));
         }
         body.insert("max_tokens".into(), json!(s.max_tokens));
-        body.insert("temperature".into(), json!(s.temperature));
+        if let Some(t) = s.temperature {
+            body.insert("temperature".into(), json!(t));
+        }
         body.insert("stream".into(), json!(s.stream));
         Value::Object(body)
     }
