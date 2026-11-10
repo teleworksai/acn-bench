@@ -47,7 +47,7 @@ fn golden() -> Context {
 
 const SAMPLING: Sampling = Sampling {
     max_tokens: 64,
-    temperature: 0.0,
+    temperature: Some(0.0),
     stream: true,
 };
 
@@ -685,4 +685,42 @@ fn a_tool_choice_is_written_in_each_dialects_form_and_only_where_it_applies() {
     let mut plain = enc(&forbid, Dialect::ChatCompletions, true);
     plain.as_object_mut().unwrap().remove("tool_choice");
     assert_eq!(plain, enc(&golden(), Dialect::ChatCompletions, true));
+}
+
+/// Cites: HAR-21
+#[test]
+fn a_request_carries_no_temperature_when_the_workload_states_none() {
+    for dialect in [Dialect::ChatCompletions, Dialect::Messages] {
+        let encoding = Encoding {
+            dialect,
+            marks_breakpoints: false,
+            restricts_tools: false,
+        };
+        let stated = golden().encode(encoding, "m", SAMPLING, Placement::None);
+        let unstated = golden().encode(
+            encoding,
+            "m",
+            Sampling {
+                temperature: None,
+                ..SAMPLING
+            },
+            Placement::None,
+        );
+        assert_eq!(stated["temperature"], json!(0.0), "{dialect:?}");
+        assert!(unstated.get("temperature").is_none(), "{dialect:?}");
+        // Nothing else about the request changes.
+        let mut rest = stated.clone();
+        rest.as_object_mut().unwrap().remove("temperature");
+        assert_eq!(rest, unstated, "{dialect:?}");
+        // No other sampling parameter is ever sent.
+        for key in [
+            "top_p",
+            "top_k",
+            "seed",
+            "presence_penalty",
+            "frequency_penalty",
+        ] {
+            assert!(unstated.get(key).is_none(), "{dialect:?}: {key}");
+        }
+    }
 }

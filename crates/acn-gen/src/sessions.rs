@@ -124,7 +124,7 @@ impl Driver for GenDriver {
         Ok(Workload {
             agent: Agent {
                 system_prompt: String::new(),
-                temperature: 0.0,
+                temperature: Some(0.0),
                 max_tokens: 0,
                 stream: true,
                 max_calls_per_turn: 0,

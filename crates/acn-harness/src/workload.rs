@@ -26,7 +26,10 @@ pub struct Range {
 #[serde(deny_unknown_fields)]
 pub struct Agent {
     pub system_prompt: String,
-    pub temperature: f64,
+    /// Sent when stated. A workload that states none sends none (HAR-21), and
+    /// no default stands in for it (HAR-60).
+    #[serde(default)]
+    pub temperature: Option<f64>,
     pub max_tokens: u64,
     pub stream: bool,
     pub max_calls_per_turn: u64,
@@ -160,7 +163,7 @@ impl Workload {
         }
         let a = &f.agent;
         // CON-27(c) and serde_json agree on every float in this range (ADR-17).
-        if !(0.0..=2.0).contains(&a.temperature) {
+        if a.temperature.is_some_and(|t| !(0.0..=2.0).contains(&t)) {
             return bad("agent.temperature must lie in [0, 2]");
         }
         for (name, v) in [

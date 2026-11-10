@@ -373,7 +373,7 @@ fn breakpoints_go_where_the_placement_says_and_only_where_they_are_read() {
     };
     let sampling = Sampling {
         max_tokens: 1,
-        temperature: 0.0,
+        temperature: Some(0.0),
         stream: false,
     };
     for d in [Dialect::ChatCompletions, Dialect::Messages] {
@@ -518,7 +518,7 @@ fn only_anthropic_and_the_mock_are_ever_sent_a_breakpoint() {
     };
     let sampling = Sampling {
         max_tokens: 1,
-        temperature: 0.0,
+        temperature: Some(0.0),
         stream: true,
     };
     for (b, marks) in [
