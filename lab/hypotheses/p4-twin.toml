@@ -1,0 +1,55 @@
+# lab/hypotheses/p4-twin.toml — POC 4's design, twinned (SPEC 095 GATE-23, ADR-42)
+# A candidate (CON-17), not frozen: hypotheses/p4.toml with twin_required = true and a
+# sim/live tolerance on every quantity its predicate reads, so that its L2 twin tests
+# what its verdict rests on. Its verdicts are mock-gated and never cited (CON-26).
+
+[poc]
+id = "p4"
+title = "Harness cache discipline as a controlled variable, twinned in live on the mock"
+spec = "specs/100-p4-harness-discipline.md"
+report_refs = ["§3.6", "Appendix E POC 4"]
+
+[hypothesis]
+statement = "The harness, not the model or the serving layer, decides cacheability, and its discipline moves cost per successful task by more than the run-to-run noise floor. Instantiated and reported per provider (CON-26); mechanics differ (explicit breakpoints vs automatic prefix vs block-granular)."
+
+[varies]
+# name = { kind, values | range } — the only parameters a search loop may change
+timestamp_in_system_prompt = { kind = "bool" }
+tool_order_stable          = { kind = "bool" }
+backfill_mode              = { kind = "enum", values = ["tail_restate", "mid_prefix"] }
+fanout_prompting           = { kind = "enum", values = ["fork_from_prefix", "per_child"] }
+compaction_trigger         = { kind = "enum", values = ["window_full", "read_cost_threshold"] }
+cache_breakpoint_placement = { kind = "enum", values = ["none", "system_only", "system_and_tools", "rolling_tail"] }  # explicit-breakpoint providers only
+provider                   = { kind = "enum", values = ["anthropic", "openai", "vllm", "sglang"] }  # reported per value, never pooled
+workload                   = { kind = "enum", values = ["coding", "retrieval", "fanout"] }
+
+[measures]
+primary   = ["cached_token_ratio", "ttft_p50_ms", "ttft_p99_ms", "cost_per_success"]
+secondary = ["input_tokens_per_turn", "compactions_per_session"]
+
+[control]
+description = "The harness's default configuration (all knobs at their shipped defaults) on the same workload, seed and backend."
+config = { timestamp_in_system_prompt = true, tool_order_stable = true, backfill_mode = "mid_prefix", fanout_prompting = "per_child", compaction_trigger = "window_full", cache_breakpoint_placement = "system_only" }
+
+[design]
+twin_required = true         # GATE-23: the twin is the point of this file
+search = "grid"              # LOOP-10
+replicates = 20
+seeds = "derived"           # seed_i = blake3(run_seed ‖ i)
+backends = ["mockllm", "real-api"]   # mockllm bundles are mock-gated and never cited (CON-26)
+min_providers_for_verdict = 2
+# cached_token_ratio is a ratio in [0, 1] that is exactly 0 where nothing is cached
+# (cache_breakpoint_placement = none on mock-explicit), and a relative divergence over a
+# zero sim mean is undefined (HYP-22), so it takes an absolute tolerance. Twin of loop
+# f32216f4 failed on exactly that (docs/lab/2026-10-09-p4-twin-zero-base.md).
+sim_live_tolerance = { cached_token_ratio = { abs = 0.01 }, ttft_p50_ms = 0.15, cost_per_success = 0.05 }   # CON-25: every quantity the predicate reads
+
+[falsifier]
+# Predicate over bundle statistics, evaluated by `acn hyp verdict`.
+# True ⇒ hypothesis FAILS.
+predicate = "max_over_knobs(abs(effect(cost_per_success))) < noise_floor(cost_per_success, control, ci = 0.95)"
+inconclusive_if = "replicates < 20 or providers_reported < 2"
+
+[expected]
+outcome = "pass"
+note = "Discipline is expected to move cost per successful task by tens of percent; a fail is a publishable negative."
