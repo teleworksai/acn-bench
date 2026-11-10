@@ -275,12 +275,18 @@ fn a_twins_within_flag_is_recomputed_from_its_figures() {
         // Every figure at or under the tolerance, the bound included.
         (abs, "0.0", "0.01", "0.002", true),
         (rel, "0.05", "0.0", "0.049", true),
-        // No effect figure, on a quantity whose effect the twin never reads.
-        (abs, "0.0", "0.0", "null", true),
-        // One figure over.
+        (abs, "1e-2", "-0.5", "0", true),
+        // One figure over, by a lot or by the last place of a double.
         (abs, "0.011", "0.0", "0.0", false),
         (abs, "0.0", "0.02", "null", false),
         (rel, "0.0", "0.0", "0.06", false),
+        (
+            "{\"abs\":0.03}",
+            "0.030000000000000002",
+            "0.0",
+            "0.0",
+            false,
+        ),
         // An arm whose divergence is undefined (HYP-22).
         (abs, "null", "0.0", "0.0", false),
         (abs, "0.0", "null", "null", false),
@@ -304,51 +310,116 @@ fn a_twins_within_flag_is_recomputed_from_its_figures() {
             "\"quantities\":{}",
             &quantity(tol, t, c, e, !want),
         );
-        fails(d.path(), "`within`");
-        fails(d.path(), "cached_token_ratio");
-        fails(d.path(), "tool_order_stable=false");
+        let run = xtask_at(d.path(), &["docs-inventory"]);
+        let text = run.json.to_string();
+        assert!(!run.ok(), "{tol} {t} {c} {e} {}: {text}", !want);
+        for needle in [
+            "`within` is written",
+            "cached_token_ratio",
+            "tool_order_stable=false",
+        ] {
+            assert!(text.contains(needle), "{needle}: {text}");
+        }
     }
 }
 
 /// Cites: P16-20, LOOP-12
 #[test]
-fn an_undefined_effect_is_told_from_an_effect_the_twin_never_reads() {
+fn a_null_effect_is_undefined_where_the_twin_reads_that_quantitys_effect() {
+    let fine =
+        |effect: &str, within: bool| quantity("{\"abs\":0.01}", "0.0", "0.0", effect, within);
+    // The second cell's entry, after the first cell holds `first`.
+    let two = |first: &str, second: &str| {
+        let d = root();
+        edit(d.path(), &twin(), "\"quantities\":{}", first);
+        edit(d.path(), &twin(), "\"quantities\":{}", second);
+        d
+    };
     // The effect is defined in one cell, so the twin reads this quantity's
-    // effect; `null` in the other cell is then undefined, and not within.
-    let two = |second: bool| {
+    // effect: `null` in the other cell is undefined, and not within.
+    assert!(
+        xtask_at(
+            two(&fine("0.001", true), &fine("null", false)).path(),
+            &["docs-inventory"]
+        )
+        .ok()
+    );
+    fails(
+        two(&fine("0.001", true), &fine("null", true)).path(),
+        "`within` is written true",
+    );
+    // Another quantity's defined effect says nothing about this one's.
+    let other = fine("0.001", true).replace("cached_token_ratio", "cost_per_success");
+    assert!(xtask_at(two(&other, &fine("null", true)).path(), &["docs-inventory"]).ok());
+    // Where no cell shows whether the effect is read, the file is taken at
+    // its word either way (ADR-47): `false` can only fail a gate.
+    for within in [true, false] {
         let d = root();
         edit(
             d.path(),
             &twin(),
             "\"quantities\":{}",
-            &quantity("{\"abs\":0.01}", "0.0", "0.0", "0.001", true),
+            &fine("null", within),
         );
-        edit(
-            d.path(),
-            &twin(),
-            "\"quantities\":{}",
-            &quantity("{\"abs\":0.01}", "0.0", "0.0", "null", second),
-        );
-        d
-    };
-    assert!(xtask_at(two(false).path(), &["docs-inventory"]).ok());
-    fails(two(true).path(), "`within`");
+        assert!(xtask_at(d.path(), &["docs-inventory"]).ok(), "{within}");
+    }
 }
 
 /// Cites: P16-20, LOOP-12
 #[test]
 fn a_twin_quantity_of_another_shape_is_refused() {
-    for bad in [
-        "\"quantities\":{\"q\":{\"abs\": 1.10, \"within\": true}}",
-        "\"quantities\":{\"q\":{\"tolerance\":{\"abs\":0.01},\"treatment\":0.0,\"control\":0.0,\"effect\":null}}",
-        "\"quantities\":{\"q\":{\"tolerance\":{\"about\":0.01},\"treatment\":0.0,\"control\":0.0,\"effect\":null,\"within\":true}}",
-        "\"quantities\":{\"q\":{\"tolerance\":{\"abs\":0.01},\"treatment\":\"0.0\",\"control\":0.0,\"effect\":null,\"within\":true}}",
-        "\"quantities\":{\"q\":{\"tolerance\":{\"abs\":0.01},\"control\":0.0,\"effect\":null,\"within\":true}}",
+    let entry = |body: &str| format!("\"quantities\":{{\"q\":{{{body}}}}}");
+    let ok = "\"tolerance\":{\"abs\":0.01},\"treatment\":0.0,\"control\":0.0,\"effect\":null,\"within\":true";
+    // The whole entry is accepted; each change to it is refused for its shape.
+    let d = root();
+    edit(d.path(), &twin(), "\"quantities\":{}", &entry(ok));
+    assert!(xtask_at(d.path(), &["docs-inventory"]).ok());
+    for (from, to) in [
+        // A key missing: each figure, the flag, the tolerance.
+        ("\"treatment\":0.0,", ""),
+        ("\"control\":0.0,", ""),
+        ("\"effect\":null,", ""),
+        (",\"within\":true", ""),
+        ("\"tolerance\":{\"abs\":0.01},", ""),
+        // A key the writer does not write.
+        ("\"within\":true", "\"within\":true,\"note\":1"),
+        // A tolerance of no kind, of both kinds, of another kind.
+        ("{\"abs\":0.01}", "{}"),
+        ("{\"abs\":0.01}", "{\"abs\":0.01,\"relative\":0.01}"),
+        ("{\"abs\":0.01}", "{\"about\":0.01}"),
+        ("{\"abs\":0.01}", "{\"abs\":\"0.01\"}"),
+        // A figure that is not a number.
+        ("\"treatment\":0.0", "\"treatment\":\"0.0\""),
+        ("\"control\":0.0", "\"control\":true"),
+        ("\"effect\":null", "\"effect\":[0.0]"),
     ] {
+        assert!(ok.contains(from), "{from}");
         let d = root();
-        edit(d.path(), &twin(), "\"quantities\":{}", bad);
-        fails(d.path(), "twin.json");
+        edit(
+            d.path(),
+            &twin(),
+            "\"quantities\":{}",
+            &entry(&ok.replacen(from, to, 1)),
+        );
+        fails(d.path(), "not a twin's figures");
     }
+    // The first shape this page was once given.
+    let d = root();
+    edit(
+        d.path(),
+        &twin(),
+        "\"quantities\":{}",
+        "\"quantities\":{\"q\":{\"abs\": 1.10, \"within\": true}}",
+    );
+    fails(d.path(), "not a twin's figures");
+}
+
+/// The fixture's candidate, written into the tree with other bytes than its
+/// loop ran.
+fn edited_candidate(d: &Path) {
+    let path = d.join("target/evfix/zz.toml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "# edited after the loop\n").unwrap();
 }
 
 /// Cites: P16-20, HYP-5
@@ -358,22 +429,95 @@ fn a_candidate_edited_after_its_loop_fails() {
     let d = root();
     assert!(xtask_at(d.path(), &["docs-inventory"]).ok());
     // In the tree with other bytes than the loop ran: refused.
-    let path = d.path().join("target/evfix/zz.toml");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, "# edited after the loop\n").unwrap();
-    fails(d.path(), "target/evfix/zz.toml");
+    edited_candidate(d.path());
+    fails(d.path(), "target/evfix/zz.toml no longer has the bytes");
     fails(d.path(), "HYP-5");
-    // A path that leaves the tree is never read.
+    // Not a regular file: refused, a link's target never read.
     let d = root();
-    edit(d.path(), &report(), "target/evfix/zz.toml", "../zz.toml");
-    fails(d.path(), "hypothesis.path");
+    fs::create_dir_all(d.path().join("target/evfix/zz.toml")).unwrap();
+    fails(d.path(), "not a regular file");
+    #[cfg(unix)]
+    {
+        let d = root();
+        fs::create_dir_all(d.path().join("target/evfix")).unwrap();
+        fs::write(d.path().join("elsewhere.toml"), "x").unwrap();
+        std::os::unix::fs::symlink(
+            d.path().join("elsewhere.toml"),
+            d.path().join("target/evfix/zz.toml"),
+        )
+        .unwrap();
+        fails(d.path(), "not a regular file");
+    }
+}
+
+/// Cites: P16-20, HYP-3, HYP-5
+#[test]
+fn a_report_cannot_talk_its_way_out_of_the_candidate_check() {
+    let path = "\"path\":\"target/evfix/zz.toml\"";
+    let status = "\"status\":\"candidate\"";
+    // Each edit is made to the report and to the verdicts that carry the
+    // same hypothesis object where they must agree; the candidate is edited.
+    for (from, to, needle) in [
+        // Called frozen, outside hypotheses/.
+        (status, "\"status\":\"frozen\"", "is not under hypotheses/"),
+        // A status that is neither.
+        (
+            status,
+            "\"status\":\"candidat\"",
+            "neither `candidate` nor `frozen`",
+        ),
+        // No path, an empty one, one that leaves the tree, an absolute one.
+        (path, "\"path\":\"\"", "not a path inside the repository"),
+        (
+            path,
+            "\"path\":\"../zz.toml\"",
+            "not a path inside the repository",
+        ),
+        (
+            path,
+            "\"path\":\"/etc/hosts\"",
+            "not a path inside the repository",
+        ),
+        (
+            path,
+            "\"path\":\"./target/evfix/zz.toml\"",
+            "not a path inside the repository",
+        ),
+    ] {
+        let d = root();
+        edited_candidate(d.path());
+        edit(d.path(), &report(), from, to);
+        fails(d.path(), needle);
+    }
+    let d = root();
+    edited_candidate(d.path());
+    edit(d.path(), &report(), &format!(",{path}"), "");
+    fails(d.path(), "not a path inside the repository");
+    // A file under hypotheses/ is env-hash's, whatever its loop called it: an
+    // amendment after the loop is not this check's to refuse (CON-7).
+    for word in ["candidate", "frozen"] {
+        let d = root();
+        fs::create_dir_all(d.path().join("hypotheses")).unwrap();
+        fs::write(d.path().join("hypotheses/zz.toml"), "# amended\n").unwrap();
+        edit(d.path(), &report(), path, "\"path\":\"hypotheses/zz.toml\"");
+        edit(
+            d.path(),
+            &report(),
+            status,
+            &format!("\"status\":\"{word}\""),
+        );
+        let run = xtask_at(d.path(), &["docs-inventory"]);
+        assert!(run.ok(), "{word}: {}", run.json);
+    }
 }
 
 /// Cites: P16-20, HYP-5
 #[test]
-fn this_repositorys_committed_candidates_hash_to_what_their_loops_ran() {
-    // The real tree: every committed loop of a candidate that is still in the
-    // tree ran these bytes. At least one such loop is committed (GATE-23's).
+fn this_repositorys_committed_candidates_are_in_the_tree_as_their_loops_ran_them() {
+    // The fixtures cannot hold a candidate with its loop's bytes, and a
+    // candidate moved away is not compared, so the real tree is checked here:
+    // every committed loop of a file outside hypotheses/ still has that file,
+    // with the bytes it ran. At least one such loop is committed (GATE-23's).
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut seen = 0;
     for e in fs::read_dir(root.join("docs/runs/loop")).unwrap() {
@@ -382,16 +526,21 @@ fn this_repositorys_committed_candidates_hash_to_what_their_loops_ran() {
         )
         .unwrap();
         let h = &report["hypothesis"];
-        let file = root.join(h["path"].as_str().unwrap());
-        if h["status"] == "candidate" && file.is_file() {
-            assert_eq!(
-                blake3::hash(&fs::read(&file).unwrap()).to_hex().as_str(),
-                h["hash"].as_str().unwrap(),
-                "{}",
-                file.display()
-            );
-            seen += 1;
+        let rel = h["path"].as_str().unwrap();
+        if rel.starts_with("hypotheses/") {
+            continue;
         }
+        let file = root.join(rel);
+        assert!(
+            file.is_file(),
+            "{rel}: a committed loop's candidate left the tree"
+        );
+        assert_eq!(
+            blake3::hash(&fs::read(&file).unwrap()).to_hex().as_str(),
+            h["hash"].as_str().unwrap(),
+            "{rel}"
+        );
+        seen += 1;
     }
-    assert!(seen > 0, "no committed loop of a candidate in the tree");
+    assert!(seen > 0, "no committed loop of a candidate");
 }
