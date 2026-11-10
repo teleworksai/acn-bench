@@ -864,6 +864,21 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install
       - run: sudo -E env "PATH=$PATH" cargo test --workspace --features netem -- --ignored
+  p16-kit:
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@PINNED
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - run: tools/kit-regen.sh "${GITHUB_REF_NAME}" "$(date -u +%F)" target/p16-kit-record.md
+      - uses: actions/upload-artifact@PINNED
+        with:
+          name: p16-kit-record
+          path: target/p16-kit-record.md
+          if-no-files-found: error
+          overwrite: true
 "#;
 
 const PR_CHECK_YML: &str = r#"
