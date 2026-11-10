@@ -382,16 +382,20 @@ fn the_worker_runs_one_at_a_time_refuses_a_retry_while_running_and_stops() {
     let now = Arc::new(AtomicUsize::new(0));
     let most = Arc::new(AtomicUsize::new(0));
     let gate = Arc::new(Mutex::new(()));
+    let (started, has_started) = std::sync::mpsc::channel::<()>();
     let (n, m, g) = (now.clone(), most.clone(), gate.clone());
     let ctl = open(dir.path()).with_before_run(Arc::new(move || {
         let k = n.fetch_add(1, Ordering::SeqCst) + 1;
         m.fetch_max(k, Ordering::SeqCst);
-        drop(g.lock().unwrap());
+        let _ = started.send(());
+        // A poisoned gate still opens: when an assertion fails on the test's
+        // thread, the run must end rather than panic a second time here.
+        drop(g.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
         n.fetch_sub(1, Ordering::SeqCst);
     }));
     let held = gate.lock().unwrap();
     let a = ctl.submit(&request("1")).unwrap().request_id;
-    ctl.submit(&request("2")).unwrap();
+    let b = ctl.submit(&request("2")).unwrap().request_id;
     // Two workers on one registry: runs still never overlap.
     let w1 = std::thread::spawn({
         let c = ctl.clone();
@@ -401,12 +405,24 @@ fn the_worker_runs_one_at_a_time_refuses_a_retry_while_running_and_stops() {
         let c = ctl.clone();
         move || c.work()
     });
-    // While the first runs, a retry of it is refused.
+    // The run's own hook says when a run has started; no polling. With two
+    // workers either request may be the first to run (CTL-12 orders the
+    // requests of one worker, which is what the server has).
     assert!(
-        wait(|| ctl.get(&a).unwrap().1.state == State::Running),
-        "the first request never started"
+        has_started
+            .recv_timeout(std::time::Duration::from_secs(120))
+            .is_ok(),
+        "no run reached its hook in 120 s; requests: {:?}",
+        ctl.list().unwrap()
     );
-    let mut retry = request("1");
+    let state = |id: &str| ctl.get(id).unwrap().1.state;
+    let seed = match (state(&a), state(&b)) {
+        (State::Running, State::Queued) => "1",
+        (State::Queued, State::Running) => "2",
+        other => panic!("one request runs while the other waits, not {other:?}"),
+    };
+    // While it runs, a retry of it is refused.
+    let mut retry = request(seed);
     retry.retry = true;
     assert_eq!(ctl.submit(&retry).unwrap_err().status, 409);
     drop(held);
