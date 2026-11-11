@@ -1578,4 +1578,4 @@ fff090240396fac5c56e3e7398e5755fb7bc5edd7ccc018bf55ffece7b85a400 identical
 
 ## Where it was made
 
-The lines above are the `p16-kit-record` artifact of CI run `43046880286` as uploaded, unedited: the `p16-kit` job of the `ci` workflow, dispatched by hand on the tag `kit-m1`, on a GitHub-hosted `macos-latest` runner, from a clean checkout with no build cache (ADR-52). The job took 48 minutes. The reference manifests were made on the development machine, another machine of the same target (`docs/runs/2026-10-10-p4-twin-loop.md`, "Regeneration").
+The lines above are the `p16-kit-record` artifact of CI run `43046880286` as uploaded, unedited: the `p16-kit` job of the `ci` workflow, dispatched by hand on the tag `kit-m1`, on a GitHub-hosted `macos-latest` runner, from a clean checkout with no build cache (ADR-52). The job took 48 minutes. The reference manifests were made on the development machine, which holds the loop's bundles and is another machine of the same target (`docs/decisions/ADR-52.md`).

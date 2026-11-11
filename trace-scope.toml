@@ -71,9 +71,10 @@ spec = "095"
 ids = [
   "GATE-1", "GATE-2", "GATE-3", "GATE-4", "GATE-5", "GATE-6",
   "GATE-10", "GATE-11", "GATE-12", "GATE-13", "GATE-14", "GATE-15", "GATE-16",
+  "GATE-20", "GATE-21", "GATE-22", "GATE-23", "GATE-24", "GATE-25", "GATE-26", "GATE-27",
 ]
-# T07 (ADR-31): §1, every gate, and §2, gate M0. M1 to M4 are written by the
-# tasks that close them.
+# T07 (ADR-31): §1, every gate, and §2, gate M0. T17.4: §3, gate M1. M2 to M4
+# are written by the tasks that close them.
 
 [[implemented]]
 spec = "040"
@@ -132,9 +133,8 @@ ids = [
 [[implemented]]
 spec = "140"
 ids = [
-  "P16-1", "P16-2", "P16-3", "P16-4", "P16-5", "P16-6", "P16-12", "P16-20", "P16-21",
-  "P16-30",
+  "P16-1", "P16-2", "P16-3", "P16-4", "P16-5", "P16-6", "P16-10", "P16-11", "P16-12",
+  "P16-20", "P16-21", "P16-30",
 ]
-# P16-10 (the kit: kit/manifests/, kit/inputs/ at a release tag) and P16-11 (the
-# second-machine record) land with the M1 gate (T17); the .gitattributes part of
-# P16-10 is already in place and tested.
+# P16-10 (the kit at its tag) and P16-11 (the second-machine record) landed with
+# the M1 gate (T17.3, T17.4; ADR-52): tests/accept/gates.rs checks both.

@@ -476,6 +476,21 @@ fn cited_paths<'a>(row: &'a Row, prefix: &str) -> Vec<&'a str> {
         .collect()
 }
 
+/// The commit a tag names, when the tag is in this clone (a shallow checkout
+/// of a branch has none).
+fn tag_commit(root: &Path, tag: &str) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--verify", "--quiet"])
+        .arg(format!("refs/tags/{tag}^{{commit}}"))
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
 /// The value of an `| Item | \`value\` |` row of a run record.
 fn item<'a>(record: &'a str, name: &str) -> Option<&'a str> {
     record.lines().find_map(|l| {
@@ -489,7 +504,7 @@ fn item<'a>(record: &'a str, name: &str) -> Option<&'a str> {
 /// that runs this; GATE-27 and the substance of GATE-26 are the maintainer's.
 /// What depends on the record is checked once the record is written.
 ///
-/// Cites: GATE-14, GATE-20, GATE-21, GATE-22, GATE-23, GATE-24, GATE-25, GATE-26, GATE-27
+/// Cites: GATE-14, GATE-20, GATE-21, GATE-22, GATE-23, GATE-24, GATE-25, GATE-26, GATE-27, P16-10, P16-11
 #[test]
 fn m1_criteria_hold_where_a_test_can_see_them() {
     let root = repo_root();
@@ -609,6 +624,7 @@ fn m1_criteria_hold_where_a_test_can_see_them() {
         manifests.insert(m.run_id.clone(), m);
     }
     let mut regenerated = BTreeSet::new();
+    let mut tags = BTreeSet::new();
     for record in &records {
         let text = std::fs::read_to_string(root.join(record)).unwrap();
         let tag = item(&text, "Tag").unwrap_or_else(|| panic!("{record}: no tag"));
@@ -616,6 +632,12 @@ fn m1_criteria_hold_where_a_test_can_see_them() {
             !tag.is_empty() && tag != "HEAD",
             "{record}: `{tag}` is not a tag"
         );
+        // Where the tag is in this clone, the record's commit is the tag's.
+        let commit = item(&text, "Commit").unwrap_or_else(|| panic!("{record}: no commit"));
+        if let Some(at) = tag_commit(&root, tag) {
+            assert_eq!(commit, at, "{record}: not the commit of the tag {tag}");
+        }
+        tags.insert(tag.to_owned());
         let target = item(&text, "Target").unwrap_or_else(|| panic!("{record}: no target"));
         let build = item(&text, "build_hash").unwrap_or_else(|| panic!("{record}: no build_hash"));
         assert!(is_hex64(build), "{record}: build_hash");
@@ -637,6 +659,11 @@ fn m1_criteria_hold_where_a_test_can_see_them() {
             of_target += 1;
         }
         assert!(of_target > 0, "{record}: no reference manifest of {target}");
+        // The record's own count is the count of that target's manifests.
+        assert!(
+            text.contains(&format!("{of_target} of {of_target} reference manifests")),
+            "{record}: its count is not {of_target} of {of_target}"
+        );
     }
     assert_eq!(
         regenerated.len(),
@@ -660,10 +687,21 @@ fn m1_criteria_hold_where_a_test_can_see_them() {
         readme.contains("```sh quickstart"),
         "no quickstart (P16-30)"
     );
+    let comparisons = cited_paths(r25, "docs/runs/");
     assert!(
-        !cited_paths(r25, "docs/runs/").is_empty(),
+        !comparisons.is_empty(),
         "GATE-25 cites no cross-target comparison record"
     );
+    for record in comparisons {
+        // P16-12 at the tag: the comparison names the kit's tag, says
+        // `identical`, and is of a run whose manifest the kit holds.
+        let text = std::fs::read_to_string(root.join(record)).unwrap();
+        let tag = item(&text, "Tag").unwrap_or_else(|| panic!("{record}: no tag"));
+        assert!(tags.contains(tag), "{record}: `{tag}` is not the kit's tag");
+        assert!(text.contains("identical"), "{record}: no `identical`");
+        let run = item(&text, "run_id").unwrap_or_else(|| panic!("{record}: no run_id"));
+        assert!(manifests.contains_key(run), "{record}: the kit lacks {run}");
+    }
     for loop_id in &loops {
         let report = json(&root.join(format!("docs/runs/loop/{loop_id}/report.json")));
         for b in report["bundles"].as_array().unwrap() {
