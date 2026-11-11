@@ -441,6 +441,254 @@ fn m0_criteria_hold_where_a_test_can_see_them() {
     assert_eq!(rows["GATE-16"].status, "met");
 }
 
+/// The rows of the real M1 record, by ID; `None` until the record is written.
+fn m1_rows() -> Option<BTreeMap<String, Row>> {
+    let text = std::fs::read_to_string(repo_root().join(RECORDS).join("M1.md")).ok()?;
+    Some(
+        rows(&text, "M1", &mut Vec::new())
+            .into_iter()
+            .map(|r| (r.id.clone(), r))
+            .collect(),
+    )
+}
+
+/// The `/// Cites:` IDs of a suite under `tests/accept/`.
+fn cited(root: &Path, suite: &str) -> BTreeSet<String> {
+    let path = root.join("tests/accept").join(suite);
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    text.lines()
+        .filter_map(|l| l.strip_prefix("/// Cites:"))
+        .flat_map(|l| l.split(','))
+        .map(|id| id.trim().to_owned())
+        .collect()
+}
+
+fn json(path: &Path) -> serde_json::Value {
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// The spans of a row's evidence that are repository paths under `prefix`.
+fn cited_paths<'a>(row: &'a Row, prefix: &str) -> Vec<&'a str> {
+    all_ticks(&row.evidence)
+        .into_iter()
+        .filter(|s| is_path(s) && s.starts_with(prefix))
+        .collect()
+}
+
+/// The value of an `| Item | \`value\` |` row of a run record.
+fn item<'a>(record: &'a str, name: &str) -> Option<&'a str> {
+    record.lines().find_map(|l| {
+        let mut cells = l.trim().trim_matches('|').split('|').map(str::trim);
+        (cells.next()? == name).then_some(())?;
+        cells.next()?.strip_prefix('`')?.strip_suffix('`')
+    })
+}
+
+/// What a test can see of M1's criteria (SPEC 095 §9). GATE-20 is the CI run
+/// that runs this; GATE-27 and the substance of GATE-26 are the maintainer's.
+/// What depends on the record is checked once the record is written.
+///
+/// Cites: GATE-14, GATE-20, GATE-21, GATE-22, GATE-23, GATE-24, GATE-25, GATE-26, GATE-27
+#[test]
+fn m1_criteria_hold_where_a_test_can_see_them() {
+    let root = repo_root();
+    let spec = std::fs::read_to_string(root.join(SPEC)).unwrap();
+    let m1: Vec<String> = (20..=27).map(|n| format!("GATE-{n}")).collect();
+    assert_eq!(criteria(&spec, &mut Vec::new()).get(&1), Some(&m1));
+
+    // GATE-21: the substrate specs are in scope (trace-check proves the citing).
+    let scope: toml::Value =
+        toml::from_str(&std::fs::read_to_string(root.join("trace-scope.toml")).unwrap()).unwrap();
+    let specs: BTreeSet<&str> = scope["implemented"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["spec"].as_str())
+        .collect();
+    for s in ["020", "050", "070", "090", "140"] {
+        assert!(specs.contains(s), "SPEC {s} is not in trace-scope.toml");
+    }
+
+    // GATE-22: the suites exist, each cites CON-5, and the kit's cites P16-6.
+    for suite in [
+        "trace_determinism.rs",
+        "emu_sim.rs",
+        "harness_sim.rs",
+        "gen_sim.rs",
+        "kit.rs",
+    ] {
+        assert!(cited(&root, suite).contains("CON-5"), "{suite}: CON-5");
+    }
+    assert!(cited(&root, "kit.rs").contains("P16-6"), "kit.rs: P16-6");
+
+    let Some(rows) = m1_rows() else {
+        return;
+    };
+    for suite in [
+        "tests/accept/trace_determinism.rs",
+        "tests/accept/emu_sim.rs",
+        "tests/accept/harness_sim.rs",
+        "tests/accept/gen_sim.rs",
+        "tests/accept/kit.rs",
+    ] {
+        assert!(
+            cited_paths(&rows["GATE-22"], "tests/accept/").contains(&suite),
+            "GATE-22 does not cite {suite}"
+        );
+    }
+
+    // GATE-23: the cited twin is committed with its loop's report and both
+    // verdicts, its page shows the loop, and no twinned quantity is outside
+    // its tolerance. Read from the twin itself, not from the page (issue 84).
+    let r23 = &rows["GATE-23"];
+    let twins: Vec<&str> = cited_paths(r23, "docs/runs/loop/")
+        .into_iter()
+        .filter(|p| p.ends_with("/twin.json"))
+        .collect();
+    assert!(!twins.is_empty(), "GATE-23 cites no committed twin");
+    let page = cited_paths(r23, "docs/evidence/");
+    assert_eq!(page.len(), 1, "GATE-23 cites one evidence page");
+    let page = std::fs::read_to_string(root.join(page[0])).unwrap();
+    let mut loops = BTreeSet::new();
+    for twin_path in twins {
+        let twin = json(&root.join(twin_path));
+        let loop_id = twin["loop_id"].as_str().unwrap().to_owned();
+        let report = root.join(format!("docs/runs/loop/{loop_id}/report.json"));
+        assert_eq!(json(&report)["loop_id"], twin["loop_id"], "{twin_path}");
+        for key in ["verdict_id", "l1_verdict_id"] {
+            let id = twin[key].as_str().unwrap();
+            let verdict = root.join(format!("docs/runs/verdicts/{id}/verdict.json"));
+            assert_eq!(
+                json(&verdict)["verdict_id"],
+                twin[key],
+                "{twin_path}: {key}"
+            );
+        }
+        assert!(page.contains(&loop_id), "the page lacks loop {loop_id}");
+        let mut compared = 0;
+        for slice in twin["divergence"].as_array().unwrap() {
+            for cell in slice["cells"].as_array().unwrap() {
+                for (quantity, figures) in cell["quantities"].as_object().unwrap() {
+                    assert_eq!(
+                        figures["within"], true,
+                        "{twin_path}: {} / {quantity} is outside its tolerance",
+                        cell["key"]
+                    );
+                    compared += 1;
+                }
+            }
+        }
+        assert!(compared > 0, "{twin_path}: no twinned quantity");
+        loops.insert(loop_id);
+    }
+
+    // GATE-24 (P16-11): the cited records name the tag, the target, the
+    // build_hash and `identical`; every reference manifest of that target is
+    // canonical, of `sim`, of that build, and regenerated in the record.
+    let records = cited_paths(&rows["GATE-24"], "docs/runs/");
+    assert!(!records.is_empty(), "GATE-24 cites no regeneration record");
+    let mut manifests = BTreeMap::new();
+    for e in std::fs::read_dir(root.join("kit/manifests")).unwrap() {
+        let path = e.unwrap().path();
+        let bytes = std::fs::read(&path).unwrap();
+        let m: acn_trace::bundle::Manifest =
+            serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert_eq!(
+            m.to_bytes().unwrap(),
+            bytes,
+            "{}: not canonical",
+            path.display()
+        );
+        assert_eq!(m.mode, "sim", "{}", path.display());
+        assert_eq!(
+            path.file_name().unwrap().to_str().unwrap(),
+            format!("{}.json", m.run_id),
+            "a reference manifest is named by its run_id"
+        );
+        manifests.insert(m.run_id.clone(), m);
+    }
+    let mut regenerated = BTreeSet::new();
+    for record in &records {
+        let text = std::fs::read_to_string(root.join(record)).unwrap();
+        let tag = item(&text, "Tag").unwrap_or_else(|| panic!("{record}: no tag"));
+        assert!(
+            !tag.is_empty() && tag != "HEAD",
+            "{record}: `{tag}` is not a tag"
+        );
+        let target = item(&text, "Target").unwrap_or_else(|| panic!("{record}: no target"));
+        let build = item(&text, "build_hash").unwrap_or_else(|| panic!("{record}: no build_hash"));
+        assert!(is_hex64(build), "{record}: build_hash");
+        assert!(
+            record.ends_with(&format!("-p16-{target}.md")),
+            "{record} is not named for {target} (P16-11)"
+        );
+        let mut of_target = 0;
+        for (id, m) in manifests.iter().filter(|(_, m)| m.build.target == target) {
+            assert_eq!(
+                m.build.build_hash, build,
+                "{id}: another build than {record}"
+            );
+            assert!(
+                text.lines().any(|l| l == format!("{id} identical")),
+                "{record}: {id} is not recorded identical"
+            );
+            regenerated.insert(id.clone());
+            of_target += 1;
+        }
+        assert!(of_target > 0, "{record}: no reference manifest of {target}");
+    }
+    assert_eq!(
+        regenerated.len(),
+        manifests.len(),
+        "a reference manifest is of a target no record covers"
+    );
+
+    // GATE-25 (P16-10, P16-12): the kit holds the manifest of every sim bundle
+    // of GATE-23's loop, the quickstart, and a cross-target comparison record.
+    let r25 = &rows["GATE-25"];
+    assert!(
+        !cited_paths(r25, "kit/manifests/").is_empty(),
+        "GATE-25 cites no reference manifest"
+    );
+    assert!(
+        all_ticks(&r25.evidence).contains(&"README.md"),
+        "GATE-25 does not cite the quickstart"
+    );
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    assert!(
+        readme.contains("```sh quickstart"),
+        "no quickstart (P16-30)"
+    );
+    assert!(
+        !cited_paths(r25, "docs/runs/").is_empty(),
+        "GATE-25 cites no cross-target comparison record"
+    );
+    for loop_id in &loops {
+        let report = json(&root.join(format!("docs/runs/loop/{loop_id}/report.json")));
+        for b in report["bundles"].as_array().unwrap() {
+            let id = b["run_id"].as_str().unwrap();
+            assert!(
+                manifests.contains_key(id),
+                "the kit lacks the manifest of {id}"
+            );
+        }
+    }
+
+    // GATE-26: met with an account under docs/wg/, or deferred. GATE-14 is
+    // carried, deferred again. GATE-27 is the merge.
+    let r26 = &rows["GATE-26"];
+    match r26.status.as_str() {
+        "met" => assert!(
+            !cited_paths(r26, "docs/wg/").is_empty(),
+            "GATE-26 is met without an account under docs/wg/"
+        ),
+        other => assert_eq!(other, "deferred"),
+    }
+    assert_eq!(rows["GATE-14"].status, "deferred");
+    assert_eq!(rows["GATE-27"].status, "met");
+}
+
 const ID: &str = "f3afab225f575fdab86fb088a2fa9d06b472aca3fbccc91747615bef16128344";
 
 /// A repository with the real SPEC 095, one run record, ADRs 29, 31 and 40
