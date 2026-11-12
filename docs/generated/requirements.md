@@ -2,7 +2,7 @@
 
 # Requirement inventory
 
-Specs: 13 · IDs: 292 · MUSTs: 259 · implemented: 243 · cited: 261
+Specs: 13 · IDs: 292 · MUSTs: 259 · implemented: 253 · cited: 270
 
 | ID | Spec | § | Level | Implemented | Cited by |
 |---|---|---|---|---|---|
@@ -263,17 +263,17 @@ Specs: 13 · IDs: 292 · MUSTs: 259 · implemented: 243 · cited: 261
 | GATE-11 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
 | GATE-12 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
 | GATE-13 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
-| GATE-14 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
+| GATE-14 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them`<br>`tests/accept/gates.rs` `m1_criteria_hold_where_a_test_can_see_them` |
 | GATE-15 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
 | GATE-16 | `095-gates.md` | 2 | — | yes | `tests/accept/gates.rs` `m0_criteria_hold_where_a_test_can_see_them` |
-| GATE-20 | `095-gates.md` | 3 | — | no | — |
-| GATE-21 | `095-gates.md` | 3 | — | no | — |
-| GATE-22 | `095-gates.md` | 3 | — | no | — |
-| GATE-23 | `095-gates.md` | 3 | — | no | — |
-| GATE-24 | `095-gates.md` | 3 | — | no | — |
-| GATE-25 | `095-gates.md` | 3 | — | no | — |
-| GATE-26 | `095-gates.md` | 3 | — | no | — |
-| GATE-27 | `095-gates.md` | 3 | — | no | — |
+| GATE-20 | `095-gates.md` | 3 | — | yes | `tests/accept/gates.rs` `m1_criteria_hold_where_a_test_can_see_them` |
+| GATE-21 | `095-gates.md` | 3 | — | yes | `tests/accept/gates.rs` `m1_criteria_hold_where_a_test_can_see_them` |
+| GATE-22 | `095-gates.md` | 3 | — | yes | `tests/accept/gates.rs` `m1_criteria_hold_where_a_test_can_see_them` |
+| GATE-23 | `095-gates.md` | 3 | — | yes | `tests/accept/gates.rs` `m1_criteria_hold_where_a_test_can_see_them` |
+| GATE-24 | `095-gates.md` | 3 | — | yes | `tests/accept/gates.rs` `m1_criteria_hold_where_a_test_can_see_them` |
+| GATE-25 | `095-gates.md` | 3 | — | yes | `tests/accept/gates.rs` `m1_criteria_hold_where_a_test_can_see_them` |
+| GATE-26 | `095-gates.md` | 3 | — | yes | `tests/accept/gates.rs` `m1_criteria_hold_where_a_test_can_see_them` |
+| GATE-27 | `095-gates.md` | 3 | — | yes | `tests/accept/gates.rs` `m1_criteria_hold_where_a_test_can_see_them` |
 | P4-1 | `100-p4-harness-discipline.md` | 2 | MUST | yes | `crates/acn-hyp/tests/existing_files.rs` `p4_names_the_spec_100_providers_and_workloads_and_pins_them_when_pinned`<br>`tests/accept/p4.rs` `the_p4_workloads_meet_the_spec`<br>`tests/accept/p4.rs` `the_run_of_record_is_accepted_at_its_budget_and_refused_below_it` |
 | P4-2 | `100-p4-harness-discipline.md` | 2 | MUST | yes | `tests/accept/p4.rs` `the_p4_workloads_meet_the_spec` |
 | P4-3 | `100-p4-harness-discipline.md` | 2 | MUST | yes | `tests/accept/p4.rs` `the_p4_workloads_meet_the_spec`<br>`tests/accept/p4.rs` `every_knob_changes_the_requests_of_some_p4_workload` |
@@ -292,8 +292,8 @@ Specs: 13 · IDs: 292 · MUSTs: 259 · implemented: 243 · cited: 261
 | P16-4 | `140-p16-kit.md` | 2 | MUST | yes | `tests/accept/kit.rs` `harness_and_generator_bundles_regenerate_byte_for_byte_from_their_run_ids`<br>`tests/accept/kit.rs` `every_refusal_names_its_reason`<br>`tests/accept/kit.rs` `a_manifest_of_an_unknown_producer_is_refused` |
 | P16-5 | `140-p16-kit.md` | 2 | MUST | yes | `tests/accept/kit.rs` `another_build_is_refused_unless_compared_without_its_build`<br>`tests/accept/kit.rs` `identities_and_directories_are_checked` |
 | P16-6 | `140-p16-kit.md` | 2 | MUST | yes | `crates/acn-cli/tests/run_cli.rs` `a_run_regenerates_from_its_id_and_an_unknown_id_exits_one`<br>`tests/accept/kit.rs` `harness_and_generator_bundles_regenerate_byte_for_byte_from_their_run_ids`<br>`tests/accept/kit.rs` `a_reference_manifest_alone_regenerates`<br>`tests/accept/kit.rs` `another_build_is_refused_unless_compared_without_its_build`<br>`tests/accept/kit.rs` `a_bundle_that_differs_is_never_reported_identical`<br>`tests/accept/kit.rs` `identities_and_directories_are_checked`<br>`tests/accept/kit.rs` `one_run_made_by_two_builds_has_one_build_neutral_form` |
-| P16-10 | `140-p16-kit.md` | 3 | MUST | no | `crates/acn-cli/tests/quickstart.rs` `the_readme_quickstart_runs_as_written`<br>`crates/acn-cli/tests/quickstart.rs` `the_kits_byte_compared_files_keep_their_bytes` |
-| P16-11 | `140-p16-kit.md` | 3 | MUST | no | — |
+| P16-10 | `140-p16-kit.md` | 3 | MUST | yes | `crates/acn-cli/tests/quickstart.rs` `the_readme_quickstart_runs_as_written`<br>`crates/acn-cli/tests/quickstart.rs` `the_kits_byte_compared_files_keep_their_bytes`<br>`tests/accept/gates.rs` `m1_criteria_hold_where_a_test_can_see_them` |
+| P16-11 | `140-p16-kit.md` | 3 | MUST | yes | `tests/accept/gates.rs` `m1_criteria_hold_where_a_test_can_see_them` |
 | P16-12 | `140-p16-kit.md` | 3 | MUST | yes | `crates/xtask/tests/p16.rs` `records_that_agree_are_identical_and_differences_are_reported_not_failed`<br>`crates/xtask/tests/p16.rs` `records_of_another_run_or_of_no_bundle_are_refused`<br>`crates/xtask/tests/p16.rs` `ci_regenerates_on_every_target_and_compares_them`<br>`tests/accept/kit.rs` `one_run_made_by_two_builds_has_one_build_neutral_form` |
 | P16-20 | `140-p16-kit.md` | 4 | MUST | yes | `crates/xtask/tests/evidence.rs` `a_committed_loop_renders_a_page_with_every_layer_and_its_chain`<br>`crates/xtask/tests/evidence.rs` `committed_files_are_checked_against_what_they_name`<br>`crates/xtask/tests/evidence.rs` `a_stale_page_or_a_missing_committed_verdict_fails`<br>`crates/xtask/tests/evidence.rs` `a_twins_within_flag_is_recomputed_from_its_figures`<br>`crates/xtask/tests/evidence.rs` `a_null_effect_is_undefined_where_the_twin_reads_that_quantitys_effect`<br>`crates/xtask/tests/evidence.rs` `a_twin_quantity_of_another_shape_is_refused`<br>`crates/xtask/tests/evidence.rs` `a_candidate_edited_after_its_loop_fails`<br>`crates/xtask/tests/evidence.rs` `a_report_cannot_talk_its_way_out_of_the_candidate_check`<br>`crates/xtask/tests/evidence.rs` `this_repositorys_committed_candidates_are_in_the_tree_as_their_loops_ran_them` |
 | P16-21 | `140-p16-kit.md` | 4 | MUST | yes | `crates/xtask/tests/evidence.rs` `a_committed_loop_renders_a_page_with_every_layer_and_its_chain`<br>`crates/xtask/tests/evidence.rs` `divergence_figures_are_written_as_committed`<br>`crates/xtask/tests/evidence.rs` `committed_text_cannot_write_the_page`<br>`crates/xtask/tests/evidence.rs` `a_page_showing_an_attribution_quantity_says_its_network_is_emulated`<br>`crates/xtask/tests/evidence.rs` `a_stale_page_or_a_missing_committed_verdict_fails`<br>`crates/xtask/tests/evidence.rs` `each_layer_has_its_own_provider_table_and_slice_reasons`<br>`crates/xtask/tests/evidence.rs` `the_divergence_table_says_how_many_quantities_are_within`<br>`crates/xtask/tests/evidence.rs` `the_sections_a_gate_reads_come_before_the_control_effects`<br>`crates/xtask/tests/evidence.rs` `a_frozen_hypothesiss_loop_is_not_marked_and_says_so_only_for_candidates`<br>`crates/xtask/tests/evidence.rs` `a_path_is_shown_as_written_and_cannot_end_its_code_span`<br>`crates/xtask/tests/evidence.rs` `the_frozen_hypothesiss_loops_come_before_a_candidates` |
