@@ -188,14 +188,16 @@ async fn a_lost_request_or_body_leaves_the_connection_silent() {
 /// Cites: EMU-44
 #[tokio::test]
 async fn a_lost_event_cuts_the_response_at_the_next_delivered_one() {
-    // The first event is read at once and lost (the downlink drops [0, 100 ms));
-    // the second, 200 ms later, is delivered: the client sees a broken
-    // response then, long before its timeout.
-    let up = serve(streaming(vec![(0, "data: a\n\n"), (200, "data: b\n\n")])).await;
-    let c = client(5_000);
+    // The first event is read at once and lost (the downlink drops [0, 1 s));
+    // the second, 2 s later, is delivered: the client sees a broken response
+    // then, long before its timeout. The window is a second wide because the
+    // times are wall-clock: on a slow runner the first event must still fall
+    // inside it (issue 98).
+    let up = serve(streaming(vec![(0, "data: a\n\n"), (2_000, "data: b\n\n")])).await;
+    let c = client(20_000);
     let (p, clock) = proxy(
         link(Direction::Up, 0),
-        dropping(Direction::Down, 0, 100),
+        dropping(Direction::Down, 0, 1_000),
         &up,
     )
     .await;
@@ -207,7 +209,7 @@ async fn a_lost_event_cuts_the_response_at_the_next_delivered_one() {
     .await;
     let e = result.unwrap_err();
     assert!(!e.is_timeout(), "{e}");
-    assert!(clock.now_ns() - t0 < 2_000 * MS);
+    assert!(clock.now_ns() - t0 < 10_000 * MS);
     p.shutdown().await;
 }
 
@@ -444,19 +446,23 @@ async fn a_broken_upstream_stream_breaks_the_clients_response() {
 /// Cites: EMU-44
 #[tokio::test]
 async fn a_lost_middle_event_cuts_a_started_response() {
-    // Event 1 at once (delivered), event 2 at 150 ms (lost: [100, 200 ms)),
-    // event 3 at 300 ms (delivered): the head and event 1 arrive, then the
-    // response breaks.
+    // Event 1 at once, event 2 about 500 ms later, event 3 about 3 s after
+    // the start; the link loses what crosses it in [100 ms, 2.5 s). Event 2
+    // is lost unless it is two seconds late, and event 3 would be delivered,
+    // so the response breaks at event 2 and not for want of anything to
+    // send. The margins are wide because the times are wall-clock: with a
+    // window of [100, 200 ms) a slow runner delivered event 2 after the
+    // window had closed, and the whole response arrived (issue 98).
     let up = serve(streaming(vec![
         (0, "data: a\n\n"),
-        (150, "data: b\n\n"),
-        (150, "data: c\n\n"),
+        (500, "data: b\n\n"),
+        (2_500, "data: c\n\n"),
     ]))
     .await;
-    let c = client(5_000);
+    let c = client(10_000);
     let (p, _) = proxy(
         link(Direction::Up, 0),
-        dropping(Direction::Down, 100, 200),
+        dropping(Direction::Down, 100, 2_500),
         &up,
     )
     .await;
