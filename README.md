@@ -6,7 +6,7 @@ A Rust workspace that builds the experimental substrate for **Agentic Communicat
 
 The question it exists to answer: *when the endpoint is an agent loop rather than a person, where does the network actually matter, and by how much?* Every experiment is stated so that "it does not" is a publishable result.
 
-**Status:** milestone M1 in progress: the substrate runs on the mock, in `sim` and `live`, with attribution and regeneration from a `run_id`. Nothing here is citable yet: mock results never are (CON-26), and citable numbers wait for live providers. See [`TASKS.md`](TASKS.md).
+**Status:** gates M0 and M1 are closed ([`docs/gates/`](docs/gates/M1.md)): the substrate runs on the mock, in `sim` and `live`, with attribution, regeneration from a `run_id`, and a kit at the tag `kit-m1` that a second machine reproduced. Nothing here is citable yet: mock results never are (CON-26), and citable numbers wait for live providers. See [`TASKS.md`](TASKS.md).
 
 ## How it is organised
 

@@ -1,6 +1,6 @@
 # acn-bench — development plan
 
-**Status:** Draft v0.2, September 2026 (v0.2: per-provider POC 4, sim↔live twin rule, turn-native transport and A2A lab spikes first, traces from day one, hardware prerequisites, WG cadence). **Owner:** Young He.
+**Status:** Draft v0.3, November 2026 (v0.3: §5a, where the milestones stand after gates M0 and M1, and the statuses of §11; v0.2, September 2026: per-provider POC 4, sim↔live twin rule, turn-native transport and A2A lab spikes first, traces from day one, hardware prerequisites, WG cadence). **Owner:** Young He.
 **What this is:** the plan for an independent Rust project that builds the ACN experimental substrate (report Appendix E, §E.2) and runs the POC catalogue (POC 1a–16) — and, just as much, a place to find the POCs the catalogue doesn't have yet. ACN is an exploration of a new field. Spec-driven development and testing are the method for the part of the project that produces defensible numbers; they are deliberately *not* applied to the part that produces questions. Two tracks (§1a). No Python in the run path; no required dependency on dora-rs, Genesis or any robotics stack.
 
 ---
@@ -99,6 +99,20 @@ Every MUST is numbered (`EMU-60`). Every implemented MUST is cited by at least o
 
 Each gate is a spec (095) with an acceptance suite; a gate closes with a human-merged PR that records the evidence in `docs/gates/M<n>.md`.
 
+## 5a. Where the milestones stand (2026-11-12)
+
+The table above is the plan. This is what happened; the gate records are the authority.
+
+| Gate | Closed | How it differs from the plan |
+|---|---|---|
+| **M0** | 2026-10-06, `docs/gates/M0.md` | On mocks only. The real-provider POC 4 runs (GATE-14) were deferred: the maintainer chose to build the substrate on mocks first (ADR-29). The first measured trace is a published 5G drive test, not our own walk capture (ADR-29, ADR-30). |
+| **M1** | 2026-11-12, `docs/gates/M1.md` | On mocks. The kit is the tag `kit-m1`, regenerated on a second machine. GATE-14 was deferred again, to M2 (ADR-42), and so was the working-group package, GATE-26, because no meeting had been arranged (ADR-53). The live twin was read on its twinned quantities (ADR-46). |
+| **M2** | open | Carries GATE-14 and GATE-26. Its own criteria are not written yet (SPEC 095). |
+
+Two things follow for the order of work.
+- **No number in the repository is citable yet.** Every verdict so far is `mock-gated` (CON-26). The first citable number needs a real provider, which is GATE-14; a first estimate of what that costs is `docs/lab/2026-11-10-p4-pilot.md`.
+- **The lab has two notes on a turn-native transport** (`docs/lab/2026-09-21-turn-transport.md`, `docs/lab/2026-11-10-turn-transport-2.md`), both parked until bytes can be counted at one layer for every arm. The other lab spikes of §10 (trace capture, the A2A candidate, the toy simulator) were not started.
+
 ## 6. Determinism design (CON-5)
 
 - `Clock` trait with `SimClock` (virtual) and `WallClock`; no direct `Instant::now()` or `SystemTime::now()` outside `acn-emu::clock` (clippy `disallowed_methods` enforces it).
@@ -163,8 +177,8 @@ Lab, starting day one: (1) `lab/turn-transport` — a QUIC (quinn) prototype in 
 
 | Need | Decides | Status |
 |---|---|---|
-| API keys with cache metrics for ≥ 2 providers (Anthropic, OpenAI; Tensormesh as a third, OpenAI-compatible, $0 cached tokens) | M0 exit (per-provider POC 4) | to confirm |
-| One phone + 5G plan + a reachable server | first measured trace (M0) | to confirm |
+| API keys with cache metrics for ≥ 2 providers (Anthropic, OpenAI; Tensormesh as a third, OpenAI-compatible, $0 cached tokens) | GATE-14, now due at M2 (per-provider POC 4; it was M0's exit) | not arranged; a first spend estimate is `docs/lab/2026-11-10-p4-pilot.md` |
+| One phone + 5G plan + a reachable server | our own measured trace, now with the trace library (T41, M4); M0 used a published drive test (ADR-29) | not done |
 | Two GPU nodes running vLLM or SGLang with Mooncake Store between them, reachable by the control plane | M3 (POC 7 in midfill: regeneration rate, fetch vs rebuild; POC 8 prefetch) — comparable to the published vLLM × Mooncake results | **open — decides whether M3 is a quarter or a year away** |
 | Multiple inference workers behind a router | POC 2a | not planned; POC 2a deferred until available |
 | Linux box with root | M4 `netem` validation | to confirm |
