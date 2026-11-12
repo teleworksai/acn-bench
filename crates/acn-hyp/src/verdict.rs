@@ -486,7 +486,11 @@ fn check_bundle<'a>(cx: &Context<'_>, b: &'a BundleData) -> Result<Info<'a>> {
     }
     let price_key = provider.unwrap_or_else(|| m.backend.clone());
     if let Some(pins) = &h.design.pins {
-        let model_ok = pins.models.get(&price_key) == Some(&m.model);
+        // HYP-20: the model pin is a real backend's, looked up under the
+        // bundle's provider value or, with no `provider` parameter, its
+        // backend. A mock bundle's model is a mock profile and is not looked
+        // up, so a pinned file can still be looped and twinned on the mock.
+        let model_ok = m.backend == MOCK_BACKEND || pins.models.get(&price_key) == Some(&m.model);
         if !pins.scenario.contains(&m.scenario_hash)
             || !pins.workload.contains(&m.workload_hash)
             || !model_ok

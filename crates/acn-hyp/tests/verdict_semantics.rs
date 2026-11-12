@@ -879,7 +879,7 @@ fn tolerances_are_relative_or_absolute_and_an_undefined_divergence_fails_a_twinn
         let mut out = Vec::new();
         for m in ["fast", "slow"] {
             out.push(bundle(
-                &e,
+                e,
                 &Spec::new(
                     &format!("{mode}c-{m}"),
                     &[("knob", "false"), ("mode", m)],
@@ -892,7 +892,7 @@ fn tolerances_are_relative_or_absolute_and_an_undefined_divergence_fails_a_twinn
         for k in [false, true] {
             for m in ["fast", "slow"] {
                 out.push(bundle(
-                    &e,
+                    e,
                     &Spec::new(
                         &format!("{mode}t-{k}-{m}"),
                         &[("knob", knob(k)), ("mode", m)],
@@ -1058,6 +1058,65 @@ fn labels_follow_the_file_and_the_bundles_and_a_frozen_file_needs_its_seed() {
         }
         assert!(refused(&p, b).contains("pins"), "change {change}");
     }
+}
+
+/// Cites: HYP-9, HYP-20
+#[test]
+fn a_file_with_no_provider_pins_one_real_backend_and_the_mock_is_not_pinned() {
+    let pinned = |backends: &str, models: &str| {
+        BASE.replace(
+            "twin_required = false",
+            &format!(
+                "twin_required = false\nbackends = [{backends}]\npins = {{ scenario = [\"{}\"], workload = [\"{}\"], models = {{ {models} }} }}",
+                Digest::of(b"scenario").to_hex(),
+                Digest::of(b"workload").to_hex()
+            ),
+        )
+    };
+    let both = "\"mockllm\", \"real-api\"";
+    // Exactly one real backend: none, two, the mock, and a name that is not
+    // one are each refused at load.
+    for (backends, models, needle) in [
+        (both, "", "exactly one real backend"),
+        (
+            both,
+            "openai = \"gpt\", anthropic = \"claude\"",
+            "exactly one real backend",
+        ),
+        (both, "mockllm = \"mock-auto\"", "is not pinned"),
+        (both, "\"Open AI\" = \"gpt\"", "not a backend name"),
+        // A file about the mock alone has no real backend to pin.
+        ("\"mockllm\"", "openai = \"gpt\"", "no real backend to pin"),
+    ] {
+        let e = candidate(&pinned(backends, models), "t1")
+            .0
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains(needle), "{models}: {e}");
+    }
+    // A mock-only file may still pin its scenario and workload.
+    let m = load(&pinned("\"mockllm\"", ""));
+    assert_eq!(run(&m, set(&m, &big)).verdict, V::Pass);
+
+    let h = load(&pinned(both, "openai = \"gpt\""));
+    // Mock bundles are judged whatever their model: a pinned file can still
+    // be looped and twinned on the mock.
+    assert_eq!(run(&h, set(&h, &big)).verdict, V::Pass);
+    // Bundles of the pinned backend with the pinned model are judged.
+    let real = |backend: &'static str, model: &'static str| {
+        slice_set(&h, 4, &[], "", &move |s| s.backend(backend, model), &big)
+    };
+    assert_eq!(run(&h, real("openai", "gpt")).verdict, V::Pass);
+    // Another model of that backend, and any other real backend, are refused:
+    // the file is about one, so the others cannot be run and one kept.
+    assert!(refused(&h, real("openai", "gpt-other")).contains("pins"));
+    assert!(refused(&h, real("anthropic", "gpt")).contains("pins"));
+    // The scenario and workload pins still apply to a mock bundle.
+    let mut b = set(&h, &big);
+    for x in &mut b {
+        x.manifest.workload_hash = Digest::of(b"other").to_hex();
+    }
+    assert!(refused(&h, b).contains("pins"));
 }
 
 /// Cites: HYP-28, HYP-15, HYP-20, HYP-4

@@ -693,22 +693,8 @@ impl<'h> Setup<'h> {
                     "the loop runs with no scenario (hash zero), which pins.scenario does not list (HYP-20)",
                 );
             }
-            let keys: Vec<String> = match value_texts(h, PROVIDER_PARAM)? {
-                Some(v) => v,
-                None => vec![MOCK_BACKEND.to_owned()],
-            };
-            for k in keys {
-                let m = models.get(&k).or_else(|| models.get("")).cloned();
-                if pins.models.get(&k) != m.as_ref() {
-                    return err(
-                        Code::Pins,
-                        format!(
-                            "`{k}` would run `{}`, which pins.models does not name for it (HYP-20)",
-                            m.unwrap_or_default()
-                        ),
-                    );
-                }
-            }
+            // `pins.models` is not checked here: L1 runs on the mock, whose
+            // model is a mock profile and is not pinned (HYP-20).
         }
         if args.budget > u64::try_from(i64::MAX).unwrap_or(u64::MAX) {
             return err(
