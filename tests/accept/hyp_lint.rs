@@ -214,16 +214,33 @@ fn a_guard_that_disarms_the_falsifier_fails_lint() {
 
 /// Cites: HYP-27
 #[test]
-fn a_falsifier_on_a_negative_effect_is_reported_not_refused() {
-    // HYP-27's probes are non-negative; the signed fallback finds the witness and
-    // the gap is reported (ADR-18, spec-conflict on HYP-27).
+fn a_falsifier_about_a_negative_interval_bound_has_a_witness() {
+    // An interval bound bounds an effect, so it is probed with negative values
+    // too: "discipline never raises the cache ratio" is a falsifier, with no
+    // warning about it (issue 10).
     let r = frozen("max_over_knobs(ci_high(cached_token_ratio)) < 0", None);
     assert!(r.ok(), "{:?}", r.errors);
     assert!(
-        r.warnings.iter().any(|w| w.contains("negative value")),
+        !r.warnings.iter().any(|w| w.contains("negative")),
         "{:?}",
         r.warnings
     );
+    let fires = r.fires.as_ref().unwrap();
+    assert!(fires.values().any(|v| *v < 0.0), "{fires:?}");
+    // Its mirror is no longer said to fire always.
+    let r = frozen("max_over_knobs(ci_high(cached_token_ratio)) >= 0", None);
+    assert!(r.ok(), "{:?}", r.errors);
+    // Only bounds are signed. A quantity is never negative, so a predicate
+    // that needs a negative one can never fire, and is refused.
+    let r = frozen("max_over_knobs(cached_token_ratio) < 0", None);
+    assert!(errs(&r, "can never fire"), "{:?}", r.errors);
+    // An effect is not a probe of its own: it is computed from its arms, so
+    // it cannot be positive while the relative effect is negative.
+    let r = frozen(
+        "max_over_knobs(effect(cached_token_ratio)) > 0 and max_over_knobs(rel_effect(cached_token_ratio)) < 0",
+        None,
+    );
+    assert!(errs(&r, "can never fire"), "{:?}", r.errors);
 }
 
 /// Cites: HYP-27
