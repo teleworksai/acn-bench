@@ -3,8 +3,10 @@
 //! quantity, can both fire and fail to fire, and is not disarmed by its guard.
 //! The witness search evaluates the predicate with the shared evaluator
 //! ([`crate::eval`]) in one probe cell: each distinct term (per arm, the same in
-//! every cell), each `noise_floor` and each interval bound is drawn from
-//! {0, 1e-9, 1, 1e9}, with `ci_low ≤ ci_high`.
+//! every cell) and each `noise_floor` is drawn from {0, 1e-9, 1, 1e9}, and each
+//! interval bound, which bounds an effect and may be negative, from those values
+//! and their negatives, with `ci_low ≤ ci_high`. `effect` and `rel_effect` are
+//! not probed: the evaluator computes them from their arms' terms.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -15,19 +17,19 @@ use crate::eval::{CounterKind, Source, Term, terms, truth};
 use crate::file::{Hypothesis, load};
 use crate::predicate::{AtRange, Builtin, Expr};
 
-/// The probe values of HYP-27.
+/// The probe values of HYP-27 for a quantity term and a `noise_floor`.
 pub const PROBES: [f64; 4] = [0.0, 1e-9, 1.0, 1e9];
 
-/// HYP-27's values and their negatives, tried when the first set finds no
-/// witness, so that a falsifier on a negative effect is reported, not refused
-/// (ADR-18; a spec-conflict on HYP-27 records the gap).
+/// The probe values of an interval bound (HYP-27): those and their negatives,
+/// since a bound of an effect may be negative.
 pub const SIGNED_PROBES: [f64; 7] = [-1e9, -1.0, -1e-9, 0.0, 1e-9, 1.0, 1e9];
 
 /// The most probe slots searched exhaustively.
 pub const MAX_SLOTS: usize = 10;
 
-/// The most slots searched with the signed probes (7^6 assignments).
-pub const MAX_SIGNED_SLOTS: usize = 6;
+/// The most assignments searched: ten unsigned slots' worth. A predicate with
+/// many interval bounds reaches it with fewer slots.
+pub const MAX_ASSIGNMENTS: u64 = 1 << 20;
 
 /// One probe assignment, rendered: term → value.
 pub type Probe = BTreeMap<String, f64>;
@@ -82,19 +84,28 @@ fn render(keys: &[Term], values: &[f64]) -> Probe {
         .collect()
 }
 
-/// Search the probe assignments over `probes` for one under which the predicate
-/// is true and one under which it is false; `None` when there are too many slots.
+/// Search the probe assignments for one under which the predicate is true and
+/// one under which it is false; `None` when there are too many to search. One
+/// search, each slot over its own values (HYP-27): an interval bound over
+/// [`SIGNED_PROBES`], every other term over [`PROBES`].
 #[must_use]
-pub fn witnesses(
-    predicate: &Expr,
-    probes: &[f64],
-    max_slots: usize,
-) -> Option<(Option<Probe>, Option<Probe>)> {
+pub fn witnesses(predicate: &Expr) -> Option<(Option<Probe>, Option<Probe>)> {
     let mut keys = Vec::new();
     terms(predicate, &mut keys);
-    if keys.len() > max_slots {
+    if keys.len() > MAX_SLOTS {
         return None;
     }
+    let slots: Vec<&[f64]> = keys
+        .iter()
+        .map(|k| match k {
+            Term::CiLow { .. } | Term::CiHigh { .. } => &SIGNED_PROBES[..],
+            _ => &PROBES[..],
+        })
+        .collect();
+    let total = slots
+        .iter()
+        .try_fold(1u64, |n, s| n.checked_mul(s.len() as u64))
+        .filter(|n| *n <= MAX_ASSIGNMENTS)?;
     let index: BTreeMap<Term, usize> = keys.iter().cloned().zip(0..).collect();
     // Interval bounds pair up: low ≤ high.
     let pairs: Vec<(usize, usize)> = keys
@@ -121,12 +132,12 @@ pub fn witnesses(
         values: vec![0.0; keys.len()],
     };
     let (mut fires, mut holds) = (None, None);
-    let n = u32::try_from(keys.len()).ok()?;
-    for code in 0..probes.len().pow(n) {
+    for code in 0..total {
         let mut c = code;
-        for v in &mut cell.values {
-            *v = probes[c % probes.len()];
-            c /= probes.len();
+        for (v, probes) in cell.values.iter_mut().zip(&slots) {
+            let n = probes.len() as u64;
+            *v = probes[usize::try_from(c % n).ok()?];
+            c /= n;
         }
         if pairs
             .iter()
@@ -242,31 +253,15 @@ pub fn lint_hypothesis(h: &Hypothesis) -> Report {
             "the falsifier reads no primary quantity (HYP-27)".into(),
         );
     }
-    match witnesses(h.predicate(), &PROBES, MAX_SLOTS) {
+    match witnesses(h.predicate()) {
         None => finding(
             &mut r,
             frozen,
             format!(
-                "the predicate reads more than {MAX_SLOTS} distinct terms; no witness search was made"
+                "the predicate reads more than {MAX_SLOTS} distinct terms, or too many interval bounds to search; no witness search was made"
             ),
         ),
-        Some((mut fires, mut holds)) => {
-            if (fires.is_none() || holds.is_none())
-                && let Some((f2, h2)) = witnesses(h.predicate(), &SIGNED_PROBES, MAX_SIGNED_SLOTS)
-            {
-                if fires.is_none() && f2.is_some() {
-                    r.warnings.push(
-                        "the falsifier fires only with a negative value, which HYP-27's probes do not include (spec-conflict on HYP-27)".into(),
-                    );
-                    fires = f2;
-                }
-                if holds.is_none() && h2.is_some() {
-                    r.warnings.push(
-                        "the falsifier fails to fire only with a negative value, which HYP-27's probes do not include (spec-conflict on HYP-27)".into(),
-                    );
-                    holds = h2;
-                }
-            }
+        Some((fires, holds)) => {
             if fires.is_none() {
                 finding(
                     &mut r,

@@ -226,6 +226,36 @@ pub enum Tolerance {
     Absolute(f64),
 }
 
+/// What is wrong with `pins.models` in a file that has no `provider` parameter
+/// (HYP-9). Such a file is about one real backend: it names exactly that one,
+/// so that it cannot be run on several and the passing one kept. The mock has
+/// no key, because its model is a mock profile and is never pinned (HYP-20);
+/// a file whose backends do not include `real-api` has nothing to pin.
+fn pins_without_provider(models: &BTreeMap<String, String>, real: bool) -> Option<String> {
+    if !real {
+        return (!models.is_empty()).then(|| {
+            "a file whose backends do not include `real-api` has no real backend to pin (HYP-9)"
+                .to_owned()
+        });
+    }
+    let mut keys = models.keys();
+    let (Some(k), None) = (keys.next(), keys.next()) else {
+        return Some(format!(
+            "a file with no `provider` parameter pins the model of exactly one real backend, not {} (HYP-9)",
+            models.len()
+        ));
+    };
+    if k == acn_trace::bundle::MOCK_BACKEND {
+        return Some(format!(
+            "`{k}` is not pinned: its model is a mock profile (HYP-9, HYP-20)"
+        ));
+    }
+    let word = !k.is_empty()
+        && k.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
+    (!word).then(|| format!("`{k}` is not a backend name (TRC-10)"))
+}
+
 /// `[design].pins`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pins {
@@ -1211,16 +1241,18 @@ fn check_design(
                     );
                 }
             }
-            if let Some(k) = p
-                .models
-                .keys()
-                .find(|k| providers.is_none_or(|ps| !ps.contains(k)))
-            {
-                return fail(
-                    path,
-                    "design.pins.models",
-                    format!("`{k}` is not a provider value"),
-                );
+            // HYP-9: the keys are provider values in a file that varies
+            // `provider`, and the one real backend of a file that does not.
+            let bad = match providers {
+                Some(ps) => p
+                    .models
+                    .keys()
+                    .find(|k| !ps.contains(k))
+                    .map(|k| format!("`{k}` is not a provider value")),
+                None => pins_without_provider(&p.models, backends.iter().any(|b| b == "real-api")),
+            };
+            if let Some(why) = bad {
+                return fail(path, "design.pins.models", why);
             }
             Some(Pins {
                 scenario: p.scenario.clone(),

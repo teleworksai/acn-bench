@@ -141,12 +141,25 @@ fn a_provider_run_needs_an_l2_verdict_that_twins_every_decision_cell() {
     b.extend(arms(&h, "live", 0.2, &every));
     let far = judge(&h, b);
     assert!(refused(Some(&far)).contains("twin_failed"));
-    // A live control without its decision cell's live treatment: the verdict
-    // itself records `twin_failed` (HYP-22).
+    // A live control without its decision cell's live treatment: the cell is
+    // not twinned, so the verdict does not judge it (HYP-22) and records no
+    // `twin_failed`. The gate still refuses: a decision cell is untwinned.
     let mut b = sim.clone();
     b.extend(arms(&h, "live", 0.01, &|k, _| k != "true"));
     let missing = judge(&h, b);
-    assert!(refused(Some(&missing)).contains("twin_failed"));
+    assert!(
+        missing
+            .slices
+            .iter()
+            .all(|s| s.reasons.iter().all(|r| r.id.as_str() != "twin_failed")),
+        "{:?}",
+        missing.slices[0].reasons
+    );
+    let m = refused(Some(&missing));
+    assert!(
+        !m.contains("twin_failed") && m.contains("decision cells"),
+        "{m}"
+    );
     // No live arm at all where the verdict decides: no `twin_failed`, only a
     // `partially-twinned` label, and the gate still refuses (LOOP-4).
     let mut b = sim.clone();

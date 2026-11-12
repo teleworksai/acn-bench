@@ -835,19 +835,24 @@ fn a_decision_cell_is_twinned_with_half_its_replicates_in_both_arms() {
     let v = run(&h, b);
     assert_eq!(v.verdict, V::Pass, "{:?}", v.slices[0].reasons);
     assert!(labels(&v).contains("partially-twinned"));
-    // Its control's twin missing: not twinned, and its effect divergence undefined.
+    // Its control's twin missing: not twinned, and its effect divergence
+    // undefined. The figure is recorded, and the cell is not judged: with
+    // one arm live nothing shows that sim and live disagree about it.
     let mut b = set(&h, &big);
     b.extend(drop_named(live_of(&h, &|_| 0.0, &all), "live-c-slow"));
     let v = run(&h, b);
     let t = v.slices[0].twin.as_ref().unwrap();
     assert!(!t.twinned[&3] && t.twinned[&0]);
     assert_eq!(t.divergences[&3]["cached_token_ratio"].effect, Some(None));
-    assert!(t.failed.contains(&"knob=true,mode=slow".to_owned()));
+    assert!(!t.failed.contains(&"knob=true,mode=slow".to_owned()));
+    assert!(t.failed.is_empty(), "{:?}", t.failed);
+    assert!(!ids(&v).contains(&"twin_failed"), "{:?}", ids(&v));
+    assert!(labels(&v).contains("partially-twinned"));
 }
 
 /// Cites: HYP-22
 #[test]
-fn tolerances_are_relative_or_absolute_and_undefined_divergence_fails() {
+fn tolerances_are_relative_or_absolute_and_an_undefined_divergence_fails_a_twinned_cell() {
     // Relative: |live − sim| / |sim|.
     let h = load(&twin_text("0.1"));
     let mut b = set(&h, &big);
@@ -870,11 +875,11 @@ fn tolerances_are_relative_or_absolute_and_undefined_divergence_fails() {
     );
     // Exactly at an absolute tolerance is within it.
     let e = load(&twin_text("{ abs = 0.25 }").replace("max_over_knobs(abs(effect(cached_token_ratio))) < noise_floor(cached_token_ratio, control)", "max_over_knobs(effect(cached_token_ratio)) > 1"));
-    let uniform = |mode: &str, t: f64| {
+    let uniform_of = |e: &Hypothesis, mode: &str, t: f64| {
         let mut out = Vec::new();
         for m in ["fast", "slow"] {
             out.push(bundle(
-                &e,
+                e,
                 &Spec::new(
                     &format!("{mode}c-{m}"),
                     &[("knob", "false"), ("mode", m)],
@@ -887,7 +892,7 @@ fn tolerances_are_relative_or_absolute_and_undefined_divergence_fails() {
         for k in [false, true] {
             for m in ["fast", "slow"] {
                 out.push(bundle(
-                    &e,
+                    e,
                     &Spec::new(
                         &format!("{mode}t-{k}-{m}"),
                         &[("knob", knob(k)), ("mode", m)],
@@ -900,6 +905,7 @@ fn tolerances_are_relative_or_absolute_and_undefined_divergence_fails() {
         }
         out
     };
+    let uniform = |mode: &str, t: f64| uniform_of(&e, mode, t);
     let mut b = uniform("sim", 0.25);
     b.extend(uniform("live", 0.5));
     let v = run(&e, b);
@@ -909,19 +915,50 @@ fn tolerances_are_relative_or_absolute_and_undefined_divergence_fails() {
         v.slices[0].twin.as_ref().unwrap().failed.is_empty(),
         "0.25 is within 0.25"
     );
-    // No index completed in both modes: undefined, which fails.
+    // A relative divergence whose numerator is exactly zero is zero, whatever
+    // its base: sim and live agree. Here the treatment is 0 in both modes, so
+    // its base is zero too, and the cell is within the tolerance.
+    let rel = load(&twin_text("0.1").replace("max_over_knobs(abs(effect(cached_token_ratio))) < noise_floor(cached_token_ratio, control)", "max_over_knobs(effect(cached_token_ratio)) > 1"));
+    let mut b = uniform_of(&rel, "sim", 0.0);
+    b.extend(uniform_of(&rel, "live", 0.0));
+    let v = run(&rel, b);
+    let t = v.slices[0].twin.as_ref().unwrap();
+    let d = t.divergences[&0]["cached_token_ratio"];
+    assert_eq!(
+        (d.treatment, d.control, d.effect),
+        (Some(Some(0.0)), Some(Some(0.0)), Some(Some(0.0)))
+    );
+    assert!(t.twinned[&0] && t.failed.is_empty(), "{:?}", t.failed);
+    // Any other numerator over a zero base is undefined, and an undefined
+    // divergence fails a twinned cell.
+    let mut b = uniform_of(&rel, "sim", 0.0);
+    b.extend(uniform_of(&rel, "live", 0.125));
+    let v = run(&rel, b);
+    let t = v.slices[0].twin.as_ref().unwrap();
+    assert_eq!(
+        t.divergences[&0]["cached_token_ratio"].treatment,
+        Some(None)
+    );
+    assert!(t.twinned[&0]);
+    assert_eq!(
+        t.failed.len(),
+        4,
+        "every cell is twinned and undefined: {:?}",
+        t.failed
+    );
+    assert_eq!(ids(&v)[0], "twin_failed");
+    // No index completed in both modes: the cell is not twinned, so it is
+    // not judged, and nothing else fails.
     let mut b = set(&h, &big);
     find(&mut b, "t-false-fast")
         .sessions
         .retain(|s| s.replicate < 2);
     b.extend(live_of(&h, &|_| 0.0, &|n, i| n != "t-false-fast" || i >= 2));
     let v = run(&h, b);
-    assert!(
-        v.slices[0]
-            .reasons
-            .iter()
-            .any(|r| r.id.as_str() == "twin_failed" && r.refers == ["knob=false,mode=fast"])
-    );
+    let t = v.slices[0].twin.as_ref().unwrap();
+    assert!(!t.twinned[&0]);
+    assert!(t.failed.is_empty(), "{:?}", t.failed);
+    assert!(!ids(&v).contains(&"twin_failed"), "{:?}", ids(&v));
     // A sim arm and its live twin share their scenario.
     let mut b = set(&h, &big);
     let mut live = live_of(&h, &|_| 0.0, &all);
@@ -1021,6 +1058,65 @@ fn labels_follow_the_file_and_the_bundles_and_a_frozen_file_needs_its_seed() {
         }
         assert!(refused(&p, b).contains("pins"), "change {change}");
     }
+}
+
+/// Cites: HYP-9, HYP-20
+#[test]
+fn a_file_with_no_provider_pins_one_real_backend_and_the_mock_is_not_pinned() {
+    let pinned = |backends: &str, models: &str| {
+        BASE.replace(
+            "twin_required = false",
+            &format!(
+                "twin_required = false\nbackends = [{backends}]\npins = {{ scenario = [\"{}\"], workload = [\"{}\"], models = {{ {models} }} }}",
+                Digest::of(b"scenario").to_hex(),
+                Digest::of(b"workload").to_hex()
+            ),
+        )
+    };
+    let both = "\"mockllm\", \"real-api\"";
+    // Exactly one real backend: none, two, the mock, and a name that is not
+    // one are each refused at load.
+    for (backends, models, needle) in [
+        (both, "", "exactly one real backend"),
+        (
+            both,
+            "openai = \"gpt\", anthropic = \"claude\"",
+            "exactly one real backend",
+        ),
+        (both, "mockllm = \"mock-auto\"", "is not pinned"),
+        (both, "\"Open AI\" = \"gpt\"", "not a backend name"),
+        // A file about the mock alone has no real backend to pin.
+        ("\"mockllm\"", "openai = \"gpt\"", "no real backend to pin"),
+    ] {
+        let e = candidate(&pinned(backends, models), "t1")
+            .0
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains(needle), "{models}: {e}");
+    }
+    // A mock-only file may still pin its scenario and workload.
+    let m = load(&pinned("\"mockllm\"", ""));
+    assert_eq!(run(&m, set(&m, &big)).verdict, V::Pass);
+
+    let h = load(&pinned(both, "openai = \"gpt\""));
+    // Mock bundles are judged whatever their model: a pinned file can still
+    // be looped and twinned on the mock.
+    assert_eq!(run(&h, set(&h, &big)).verdict, V::Pass);
+    // Bundles of the pinned backend with the pinned model are judged.
+    let real = |backend: &'static str, model: &'static str| {
+        slice_set(&h, 4, &[], "", &move |s| s.backend(backend, model), &big)
+    };
+    assert_eq!(run(&h, real("openai", "gpt")).verdict, V::Pass);
+    // Another model of that backend, and any other real backend, are refused:
+    // the file is about one, so the others cannot be run and one kept.
+    assert!(refused(&h, real("openai", "gpt-other")).contains("pins"));
+    assert!(refused(&h, real("anthropic", "gpt")).contains("pins"));
+    // The scenario and workload pins still apply to a mock bundle.
+    let mut b = set(&h, &big);
+    for x in &mut b {
+        x.manifest.workload_hash = Digest::of(b"other").to_hex();
+    }
+    assert!(refused(&h, b).contains("pins"));
 }
 
 /// Cites: HYP-28, HYP-15, HYP-20, HYP-4

@@ -214,16 +214,33 @@ fn a_guard_that_disarms_the_falsifier_fails_lint() {
 
 /// Cites: HYP-27
 #[test]
-fn a_falsifier_on_a_negative_effect_is_reported_not_refused() {
-    // HYP-27's probes are non-negative; the signed fallback finds the witness and
-    // the gap is reported (ADR-18, spec-conflict on HYP-27).
+fn a_falsifier_about_a_negative_interval_bound_has_a_witness() {
+    // An interval bound bounds an effect, so it is probed with negative values
+    // too: "discipline never raises the cache ratio" is a falsifier, with no
+    // warning about it (issue 10).
     let r = frozen("max_over_knobs(ci_high(cached_token_ratio)) < 0", None);
     assert!(r.ok(), "{:?}", r.errors);
     assert!(
-        r.warnings.iter().any(|w| w.contains("negative value")),
+        !r.warnings.iter().any(|w| w.contains("negative")),
         "{:?}",
         r.warnings
     );
+    let fires = r.fires.as_ref().unwrap();
+    assert!(fires.values().any(|v| *v < 0.0), "{fires:?}");
+    // Its mirror is no longer said to fire always.
+    let r = frozen("max_over_knobs(ci_high(cached_token_ratio)) >= 0", None);
+    assert!(r.ok(), "{:?}", r.errors);
+    // Only bounds are signed. A quantity is never negative, so a predicate
+    // that needs a negative one can never fire, and is refused.
+    let r = frozen("max_over_knobs(cached_token_ratio) < 0", None);
+    assert!(errs(&r, "can never fire"), "{:?}", r.errors);
+    // An effect is not a probe of its own: it is computed from its arms, so
+    // it cannot be positive while the relative effect is negative.
+    let r = frozen(
+        "max_over_knobs(effect(cached_token_ratio)) > 0 and max_over_knobs(rel_effect(cached_token_ratio)) < 0",
+        None,
+    );
+    assert!(errs(&r, "can never fire"), "{:?}", r.errors);
 }
 
 /// Cites: HYP-27
@@ -275,4 +292,55 @@ fn a_broken_file_is_reported_with_its_reason() {
         "{:?}",
         r.errors
     );
+}
+
+/// Cites: HYP-27
+#[test]
+fn the_witness_search_is_bounded_by_assignments_and_says_when_it_was_not_made() {
+    // ADR-54: the search is made up to 2^20 assignments. An interval is two
+    // slots of seven probe values, its low and its high bound; every other
+    // term is one slot of four.
+    const LEVELS: [&str; 5] = ["0.5", "0.6", "0.7", "0.8", "0.9"];
+    let floors = |n: usize| -> Vec<String> {
+        ["cached_token_ratio", "ttft_p50_ms"]
+            .iter()
+            .flat_map(|q| {
+                LEVELS
+                    .iter()
+                    .map(move |l| format!("noise_floor({q}, control, ci = {l}) > 1"))
+            })
+            .take(n)
+            .collect()
+    };
+    let intervals = |n: usize| -> Vec<String> {
+        LEVELS
+            .iter()
+            .take(n)
+            .map(|l| format!("max_over_knobs(ci_low(cached_token_ratio, ci = {l})) > 1"))
+            .collect()
+    };
+    let unsearched = |parts: Vec<String>| {
+        let r = candidate(&parts.join(" and "));
+        let said = r
+            .errors
+            .iter()
+            .chain(&r.warnings)
+            .any(|m| m.contains("no witness search was made"));
+        // Either the search was made and found both witnesses, or lint said
+        // that it was not made; nothing else, a load error included.
+        assert_eq!(said, r.fires.is_none(), "{:?} {:?}", r.errors, r.warnings);
+        assert_eq!(said, r.holds.is_none(), "{:?} {:?}", r.errors, r.warnings);
+        said
+    };
+    // Ten unsigned terms are 4^10 = 2^20 assignments exactly: searched.
+    assert!(!unsearched(floors(10)));
+    // Three intervals and one other term are 49^3 · 4 = 470 596: searched.
+    assert!(!unsearched([intervals(3), floors(1)].concat()));
+    // One more term makes 1 882 384, over the cap with eight slots only: not
+    // searched, and lint says so rather than passing the file.
+    assert!(unsearched([intervals(3), floors(2)].concat()));
+    // One interval is searched with seven other terms and not with eight,
+    // which is ten slots and was searched before bounds were signed.
+    assert!(!unsearched([intervals(1), floors(7)].concat()));
+    assert!(unsearched([intervals(1), floors(8)].concat()));
 }

@@ -298,10 +298,12 @@ fn every_refusal_comes_before_anything_runs() {
         refused(&pinned(&other, &w, "mock-auto"), args(10)),
         Code::Pins
     );
-    assert_eq!(
-        refused(&pinned(&zero, &w, "mock-explicit"), args(10)),
-        Code::Pins
-    );
+    // The model pin is a real backend's: the loop runs on the mock, whose
+    // model is a mock profile and is not looked up (HYP-20), so a file pinned
+    // to a real model still runs at L1.
+    let dir = dir_with(&pinned(&zero, &w, "a-real-model"));
+    let mut ex = Exec::new(dir.path());
+    run_loop(dir.path(), args(2), &mut ex).unwrap();
     // Pinned exactly as the loop runs, it runs.
     let dir = dir_with(&pinned(&zero, &w, "mock-auto"));
     let mut ex = Exec::new(dir.path());

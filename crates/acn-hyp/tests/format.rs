@@ -536,8 +536,9 @@ fn the_design_rules_hold_and_a_frozen_file_is_stricter() {
             "BLAKE3 hex digest",
         ),
         (
+            // No `provider` parameter and no `real-api`: nothing to pin (HYP-9).
             t("pins = { scenario = [], workload = [], models = { zzz = \"m\" } }"),
-            "not a provider value",
+            "no real backend to pin",
         ),
         (
             d("twin_required = false", "twin_required = true"),
@@ -621,5 +622,10 @@ fn the_design_rules_hold_and_a_frozen_file_is_stricter() {
             .unwrap()
             .models["a"],
         "m-1"
+    );
+    // With a `provider` parameter, a key that is not one of its values.
+    assert!(
+        err(candidate(&pins.replace("a = \"m-1\"", "zzz = \"m-1\""), "t1").0)
+            .contains("not a provider value")
     );
 }
