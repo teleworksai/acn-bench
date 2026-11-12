@@ -225,7 +225,7 @@ pub struct TwinReport {
     /// Per cell: both arms have live bundles with at least `replicates / 2`
     /// (rounded up) indices paired with sim.
     pub twinned: BTreeMap<usize, bool>,
-    /// Cells outside a tolerance, or undefined, when `twin_required`.
+    /// Twinned cells outside a tolerance, or undefined, when `twin_required`.
     pub failed: Vec<String>,
 }
 
@@ -926,12 +926,17 @@ fn paired_mean(a: &Arm, b: &Arm, q: &str, idx: &[usize]) -> Option<(f64, f64)> {
     Some((sa / n, sb / n))
 }
 
-/// `|live − sim|`, relative to `|base|` for a relative tolerance (a zero base
-/// is undefined).
+/// `|live − sim|`, relative to `|base|` for a relative tolerance (HYP-22). A
+/// relative divergence whose numerator is exactly zero is zero whatever its
+/// base, since the two modes agree; any other numerator over a zero base is
+/// undefined. `sim` and `live` are means summed in replicate-index order
+/// (`paired_mean`), so the comparison does not depend on evaluation order.
 fn diverge(sim: f64, live: f64, base: f64, tol: Tolerance) -> Option<f64> {
+    let gap = (live - sim).abs();
     match tol {
-        Tolerance::Absolute(_) => Some((live - sim).abs()),
-        Tolerance::Relative(_) => (base != 0.0).then(|| (live - sim).abs() / base.abs()),
+        Tolerance::Absolute(_) => Some(gap),
+        Tolerance::Relative(_) if gap == 0.0 => Some(0.0),
+        Tolerance::Relative(_) => (base != 0.0).then(|| gap / base.abs()),
     }
 }
 
@@ -961,7 +966,8 @@ fn twin_rule(
             (Some(s), Some(l)) => both(s, l).len() * 2 >= r,
             _ => false,
         };
-        out.twinned.insert(ci, paired(st, lt) && paired(sc, lc));
+        let twinned = paired(st, lt) && paired(sc, lc);
+        out.twinned.insert(ci, twinned);
         if lt.is_none() && lc.is_none() {
             continue;
         }
@@ -1001,7 +1007,10 @@ fn twin_rule(
             }
             per_q.insert(q.clone(), d);
         }
-        if failed && h.design.twin_required {
+        // HYP-22: only a twinned cell is judged. With one arm live, or too
+        // few paired replicates, the figures are recorded and say nothing
+        // about whether sim and live disagree on the cell.
+        if failed && twinned && h.design.twin_required {
             out.failed.push(key(&cd.cell));
         }
         out.divergences.insert(ci, per_q);
