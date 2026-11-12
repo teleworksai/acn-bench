@@ -159,7 +159,7 @@ fn pr_check_enforces_the_shape_of_a_freeze() {
     let pinned = real.replace(
         "backends = [\"real-api\"]",
         &format!(
-            "backends = [\"real-api\"]\npins = {{ scenario = [\"{s}\"], workload = [\"{s}\"], models = {{}} }}",
+            "backends = [\"real-api\"]\npins = {{ scenario = [\"{s}\"], workload = [\"{s}\"], models = {{ openai = \"a-model\" }} }}",
             s = acn_trace::identity::Digest::of(b"x").to_hex()
         ),
     );
