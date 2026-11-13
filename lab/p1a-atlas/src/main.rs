@@ -32,6 +32,8 @@ struct Args {
     /// `sim`, `live` or both, comma-separated. Live serves the mock per replicate.
     #[arg(long, default_value = "sim", value_delimiter = ',')]
     modes: Vec<String>,
+    /// Replicates a bundle. The verdict reads indices `0..[design].replicates`
+    /// of the hypothesis file only, so raise both together.
     #[arg(long, default_value_t = 4)]
     replicates: u32,
     /// Draw the verdict's effect (agent minus stand-in control) as an SVG here.
@@ -49,8 +51,12 @@ fn acn(args: &Args, argv: &[String]) -> Result<Value> {
         .args(argv)
         .output()
         .with_context(|| format!("running {}", args.acn.display()))?;
-    let v: Value = serde_json::from_slice(&out.stdout)
-        .with_context(|| format!("acn {argv:?} printed no JSON object"))?;
+    let v: Value = serde_json::from_slice(&out.stdout).with_context(|| {
+        format!(
+            "acn {argv:?} printed no JSON object; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        )
+    })?;
     if v["ok"] != Value::Bool(true) {
         bail!("acn {argv:?} refused: {v}");
     }
