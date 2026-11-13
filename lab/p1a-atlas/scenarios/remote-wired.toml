@@ -1,0 +1,20 @@
+# lab/p1a-atlas: placement `remote` (80 ms one way, 160 ms round trip) on profile `wired`.
+# Guessed numbers, not measured; exploratory (CON-24).
+schema_version = 1
+name = "remote-wired"
+
+[[link]]
+name = "path"
+direction = "up"
+
+[link.delay]
+delay_us = 80000
+jitter_us = 0
+
+[[link]]
+name = "path"
+direction = "down"
+
+[link.delay]
+delay_us = 80000
+jitter_us = 0

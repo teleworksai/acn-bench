@@ -1,0 +1,39 @@
+# CANDIDATE (editable; not frozen; verdicts are exploratory) — CON-17
+# lab/hypotheses/p1a.toml — POC 1a, first cut (lab/p1a-atlas, docs/lab/2026-11-12-p1a-atlas.md).
+# `placement` and `profile` are not harness knobs: the run path ignores them. The lab
+# driver maps each pair to one scenario file, lab/p1a-atlas/scenarios/<placement>-<profile>.toml.
+[poc]
+id = "p1a"
+status = "candidate"
+title = "Sensitivity atlas: where the network becomes a visible share of an agent turn"
+report_refs = ["Appendix E POC 1a"]
+
+[hypothesis]
+statement = "For a short agent session on the mock, the network-attributable share of turn time stays below 5% on every cell of a 3×3 grid of inference placement (round-trip time) and link profile."
+
+[varies]
+placement = { kind = "enum", values = ["edge", "regional", "remote"] }
+profile   = { kind = "enum", values = ["wired", "wifi", "cellular"] }
+
+[measures]
+primary   = ["network_attributable_share"]
+secondary = ["retry_share", "model_share", "tool_share", "ttft_p50_ms"]
+
+[control]
+description = "Four one-token request/response exchanges through the same harness and mock, on the same scenario: a stand-in for the plain-RPC control, which does not exist yet (T13b)."
+workload = "request_response"
+inherits = ["placement", "profile"]
+
+[design]
+twin_required = true
+search = "grid"
+replicates = 4
+backends = ["mockllm"]
+sim_live_tolerance = { network_attributable_share = { abs = 0.02 } }
+
+[falsifier]
+predicate = "max_over_knobs(network_attributable_share) >= 0.05"
+
+[expected]
+outcome = "fail"
+note = "Exploratory. At 160 ms round trip a one-second model call is expected to put the share above 5%."

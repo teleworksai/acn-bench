@@ -1,0 +1,20 @@
+# lab/p1a-atlas: placement `regional` (20 ms one way, 40 ms round trip) on profile `wired`.
+# Guessed numbers, not measured; exploratory (CON-24).
+schema_version = 1
+name = "regional-wired"
+
+[[link]]
+name = "path"
+direction = "up"
+
+[link.delay]
+delay_us = 20000
+jitter_us = 0
+
+[[link]]
+name = "path"
+direction = "down"
+
+[link.delay]
+delay_us = 20000
+jitter_us = 0

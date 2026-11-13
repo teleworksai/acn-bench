@@ -1,0 +1,55 @@
+# lab/p1a-atlas — the treatment: a short agent session. One task of four turns,
+# each a model call, local tools, and a streamed answer of up to 64 tokens.
+# Short on purpose: a live replicate takes seconds, not minutes.
+schema_version = 1
+
+[agent]
+system_prompt = """You are a careful software engineer working in a small repository. \
+Read before you edit, keep changes minimal, explain each step in one sentence, and \
+stop when the task is done. Prefer the read_file tool to guessing and prefer grep to \
+reading whole directories. Never invent file contents; quote what the tools return."""
+temperature = 0.0
+max_tokens = 64
+stream = true
+max_calls_per_turn = 6
+compact_at_tokens = 100000
+read_cost_threshold_tokens = 50000
+summary_instruction = "Summarise the conversation so far in a few sentences, keeping file names and decisions."
+summary_max_tokens = 32
+
+[[tool]]
+name = "read_file"
+class = "file"
+description = "Read a file from the repository and return its contents."
+parameters = { type = "object", properties = { path = { type = "string" } }, required = ["path"] }
+result_bytes = { min = 600, max = 1200 }
+duration_ns = { min = 1_000_000, max = 3_000_000 }
+
+[[tool]]
+name = "grep"
+class = "search"
+description = "Search the repository for a regular expression and return matching lines."
+parameters = { type = "object", properties = { pattern = { type = "string" } }, required = ["pattern"] }
+result_bytes = { min = 200, max = 500 }
+duration_ns = { min = 2_000_000, max = 6_000_000 }
+
+[[task]]
+id = "edit"
+tools = ["read_file", "grep"]
+
+[[task.turn]]
+user = "Open src/config.rs and tell me what the parser does with unknown keys."
+think_time_ns = { min = 0, max = 0 }
+expect_tools = ["read_file"]
+
+[[task.turn]]
+user = "Find every caller of the parser."
+think_time_ns = { min = 0, max = 0 }
+
+[[task.turn]]
+user = "Check whether unknown keys are rejected in the new version."
+think_time_ns = { min = 0, max = 0 }
+
+[[task.turn]]
+user = "Now make the error message name the offending key."
+think_time_ns = { min = 0, max = 0 }
