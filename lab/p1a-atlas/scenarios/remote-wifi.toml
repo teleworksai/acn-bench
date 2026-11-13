@@ -1,0 +1,38 @@
+# lab/p1a-atlas: placement `remote` (80 ms one way, 160 ms round trip) on profile `wifi`.
+# Guessed numbers, not measured; exploratory (CON-24).
+schema_version = 1
+name = "remote-wifi"
+
+[[link]]
+name = "path"
+direction = "up"
+
+[link.loss]
+kind = "iid"
+loss_ppm = 5_000
+
+[link.rate]
+rate_kbps = 50000
+burst_bytes = 128_000
+queue_bytes = 2_000_000
+
+[link.delay]
+delay_us = 80000
+jitter_us = 3_000
+
+[[link]]
+name = "path"
+direction = "down"
+
+[link.loss]
+kind = "iid"
+loss_ppm = 5_000
+
+[link.rate]
+rate_kbps = 100000
+burst_bytes = 128_000
+queue_bytes = 2_000_000
+
+[link.delay]
+delay_us = 80000
+jitter_us = 3_000

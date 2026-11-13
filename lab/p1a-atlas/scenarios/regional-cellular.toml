@@ -1,0 +1,41 @@
+# lab/p1a-atlas: placement `regional` (20 ms one way, 40 ms round trip) on profile `cellular`.
+# Guessed numbers, not measured; exploratory (CON-24).
+schema_version = 1
+name = "regional-cellular"
+
+[[link]]
+name = "path"
+direction = "up"
+
+[link.loss]
+kind = "gilbert_elliott"
+p_good_bad_ppm = 5_000
+p_bad_good_ppm = 200_000
+loss_good_ppm = 1_000
+loss_bad_ppm = 300_000
+
+[link.rate]
+rate_kbps = 20_000
+burst_bytes = 64_000
+queue_bytes = 1_000_000
+
+[link.delay]
+delay_us = 20000
+jitter_us = 8_000
+
+[[link]]
+name = "path"
+direction = "down"
+
+[link.loss]
+kind = "iid"
+loss_ppm = 2_000
+
+[link.rate]
+rate_kbps = 100_000
+burst_bytes = 256_000
+queue_bytes = 4_000_000
+
+[link.delay]
+delay_us = 20000
+jitter_us = 5_000
