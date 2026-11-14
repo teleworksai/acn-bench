@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 use xtask::{
-    docs_inventory, env_hash, import_5g_iana, logging, p16, pr_check, trace_check, workspace,
+    docs_inventory, env_hash, evidence_digests, import_5g_iana, logging, p16, pr_check,
+    trace_check, workspace,
 };
 
 #[derive(Parser)]
@@ -36,6 +37,14 @@ enum Cmd {
     },
     /// CON-7: hash the frozen set; --check against env-hash.json, --write to update it.
     EnvHash {
+        #[arg(long, conflicts_with = "write")]
+        check: bool,
+        #[arg(long)]
+        write: bool,
+    },
+    /// P16-20: the digest list of the committed evidence files under docs/runs/;
+    /// --check against docs/evidence-digests.txt, --write to update it.
+    EvidenceDigests {
         #[arg(long, conflicts_with = "write")]
         check: bool,
         #[arg(long)]
@@ -116,6 +125,13 @@ fn run() -> Value {
             };
             to_json(env_hash::run(&root, mode))
         }
+        Cmd::EvidenceDigests { check, write } => match (check, write) {
+            (true, false) => to_json(evidence_digests::run(&root, evidence_digests::Mode::Check)),
+            (false, true) => to_json(evidence_digests::run(&root, evidence_digests::Mode::Write)),
+            _ => {
+                json!({ "ok": false, "error": "evidence-digests needs exactly one of --check or --write" })
+            }
+        },
         Cmd::PrCheck {
             base,
             changed,

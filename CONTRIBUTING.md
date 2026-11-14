@@ -56,6 +56,7 @@ tools/ci.sh                          # the whole gate chain (CON-9); ordinary ca
 cargo xtask trace-check              # every in-scope ID cited; ID references in the docs resolve
 cargo xtask docs-inventory [--check] # docs/generated/
 cargo xtask env-hash [--check|--write]
+cargo xtask evidence-digests --check|--write  # docs/evidence-digests.txt, the list of the files under docs/runs/loop and verdicts
 cargo xtask pr-check --base refs/remotes/origin/main --labels spec-change
 ```
 

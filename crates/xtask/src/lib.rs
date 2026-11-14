@@ -1,8 +1,8 @@
 //! `xtask` — repository automation for acn-bench.
 //!
 //! Each task is a CON-8 command: `trace-check` (CON-12), `docs-inventory`
-//! (CON-9, later TRC-20 and LOOP-30), `env-hash` (CON-7), `pr-check` (CON-14)
-//! and `import-5g-iana` (EMU-65). The library holds
+//! (CON-9, later TRC-20 and LOOP-30), `env-hash` (CON-7), `pr-check` (CON-14),
+//! `evidence-digests` (P16-20) and `import-5g-iana` (EMU-65). The library holds
 //! the logic so it can be unit-tested; `main.rs` is the thin CLI.
 #![forbid(unsafe_code)]
 
@@ -13,6 +13,7 @@ pub mod docs_inventory;
 pub mod env_hash;
 pub mod error;
 pub mod evidence;
+pub mod evidence_digests;
 pub mod import_5g_iana;
 pub mod logging;
 pub mod model;

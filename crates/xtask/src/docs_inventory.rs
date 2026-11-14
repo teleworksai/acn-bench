@@ -31,6 +31,10 @@ pub struct Report {
     /// TRC-20: `acn.*` names that a crate emits and the inventory does not list.
     /// Any entry fails the task, in write mode as well as in check mode.
     pub unlisted_attributes: Vec<crate::attributes::Unlisted>,
+    /// P16-20, ADR-57: in check mode, how the committed evidence files differ
+    /// from their digest list. Write mode neither checks nor rewrites the list:
+    /// regenerating pages must not be a way to accept a changed file.
+    pub evidence_digests: Option<crate::evidence_digests::Problem>,
 }
 
 fn md_escape(s: &str) -> String {
@@ -330,7 +334,17 @@ pub fn run(root: &Path, check: bool) -> Result<Report> {
     for u in &unlisted_attributes {
         tracing::error!(file = %u.file, name = %u.name, "`acn.*` name is not in acn_attributes.toml (TRC-20)");
     }
-    let ok = unlisted_attributes.is_empty() && (!check || (changed.is_empty() && stale.is_empty()));
+    let evidence_digests = if check {
+        crate::evidence_digests::check(root)?
+    } else {
+        None
+    };
+    if let Some(p) = &evidence_digests {
+        tracing::error!("{}", p.error);
+    }
+    let ok = unlisted_attributes.is_empty()
+        && evidence_digests.is_none()
+        && (!check || (changed.is_empty() && stale.is_empty()));
     Ok(Report {
         ok,
         mode: if check { "check" } else { "write" },
@@ -339,5 +353,6 @@ pub fn run(root: &Path, check: bool) -> Result<Report> {
         stale,
         removed,
         unlisted_attributes,
+        evidence_digests,
     })
 }
