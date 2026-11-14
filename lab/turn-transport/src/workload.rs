@@ -14,6 +14,16 @@ const WORDS: [&str; 16] = [
     "plan", "gap", "probe", "edge", "burst", "trace",
 ];
 
+/// Server-side coalescing of output writes.
+#[derive(Clone, Copy, Debug)]
+pub struct Coalesce {
+    /// Write at most once per interval, so several tokens share a packet.
+    pub interval: Duration,
+    /// Write the first token as soon as it exists and hold only the ones after
+    /// it, so the interval is not added to the time to first token.
+    pub first_now: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Workload {
     pub turns: u32,

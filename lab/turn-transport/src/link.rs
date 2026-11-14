@@ -43,6 +43,11 @@ pub struct LinkCfg {
     pub one_way: Duration,
     pub up_bps: u64,
     pub down_bps: u64,
+    /// Header bytes the shaper charges, on top of the payload, for each UDP
+    /// datagram and for each TCP relay read. They take link time and are not
+    /// counted in a `Snapshot`. Zero is the first two notes' link.
+    pub udp_overhead: usize,
+    pub tcp_overhead: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, clap::ValueEnum)]
@@ -122,6 +127,8 @@ struct Shared {
     down: Shaper,
     up_count: DirCount,
     down_count: DirCount,
+    udp_overhead: usize,
+    tcp_overhead: usize,
     gap_until: Mutex<Option<Instant>>,
     /// Bumped by a `Break`: flows opened under an older epoch are dead.
     epoch: AtomicU64,
@@ -245,6 +252,8 @@ fn shared(cfg: LinkCfg) -> Arc<Shared> {
         down: Shaper::new(cfg.down_bps, cfg.one_way),
         up_count: DirCount::default(),
         down_count: DirCount::default(),
+        udp_overhead: cfg.udp_overhead,
+        tcp_overhead: cfg.tcp_overhead,
         gap_until: Mutex::new(None),
         epoch: AtomicU64::new(0),
         link_up: watch::Sender::new(true),
@@ -342,7 +351,9 @@ async fn udp_front(shared: Arc<Shared>, front: Arc<UdpSocket>, server: SocketAdd
             }
         };
         let _ = up_tx.send(Datagram {
-            at: shared.shaper(Dir::Up).schedule(n, None),
+            at: shared
+                .shaper(Dir::Up)
+                .schedule(n + shared.udp_overhead, None),
             dir: Dir::Up,
             opened: epoch,
             payload: buf[..n].to_vec(),
@@ -369,7 +380,9 @@ async fn udp_back(
             continue;
         }
         let _ = down_tx.send(Datagram {
-            at: shared.shaper(Dir::Down).schedule(n, None),
+            at: shared
+                .shaper(Dir::Down)
+                .schedule(n + shared.udp_overhead, None),
             dir: Dir::Down,
             opened,
             payload: buf[..n].to_vec(),
@@ -442,7 +455,9 @@ async fn tcp_pump(
                 shared.count(dir, n);
             }
             // Held through a gap, then serialised at the link's rate like anything else.
-            let at = shared.shaper(dir).schedule(n, shared.gap_end());
+            // The end of stream is charged nothing.
+            let charged = if n > 0 { n + shared.tcp_overhead } else { 0 };
+            let at = shared.shaper(dir).schedule(charged, shared.gap_end());
             let _ = tx.send((at, (n > 0).then(|| buf[..n].to_vec())));
             if n == 0 {
                 return anyhow::Ok(());

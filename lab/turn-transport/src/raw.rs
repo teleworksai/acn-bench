@@ -1,7 +1,8 @@
 //! The framing ablation: the same TCP path and the same whole-context request as the
 //! `sse` baseline, without HTTP, JSON or SSE. A request is `len u32 le | records`, the
 //! canonical records the QUIC arms send; the reply is the output as raw bytes, ended by
-//! one NUL. With `coalesce`, the server writes at most once per interval.
+//! one NUL. With `coalesce`, the server writes at most once per interval, the first
+//! token at once if `first_now` is set.
 //!
 //! No TLS, like the baseline. A connection that dies is retried from scratch: nothing
 //! resumes, so the server generates the turn again. Read against `sse`, it shows what
@@ -18,7 +19,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use crate::workload::{ASSISTANT, SYSTEM, TurnStats, USER, Workload, record};
+use crate::workload::{ASSISTANT, Coalesce, SYSTEM, TurnStats, USER, Workload, record};
 
 /// As in the baseline: a failure or two can land after link-up; more is not the link.
 const MAX_FAILURES_WITH_LINK_UP: u32 = 5;
@@ -39,7 +40,7 @@ impl Drop for RawServer {
 }
 
 impl RawServer {
-    pub async fn start(workload: Arc<Workload>, coalesce: Option<Duration>) -> Result<Self> {
+    pub async fn start(workload: Arc<Workload>, coalesce: Option<Coalesce>) -> Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         let accept = tokio::spawn(async move {
@@ -77,7 +78,7 @@ fn user_records(mut context: &[u8]) -> Result<u32> {
 async fn serve(
     mut stream: TcpStream,
     workload: &Workload,
-    coalesce: Option<Duration>,
+    coalesce: Option<Coalesce>,
 ) -> Result<()> {
     loop {
         let len = stream.read_u32_le().await? as usize;
@@ -107,9 +108,10 @@ async fn serve(
             tokio::time::sleep_until(due).await;
             match coalesce {
                 None => stream.write_all(token.as_bytes()).await?,
-                Some(interval) => {
+                Some(c) if c.first_now && i == 0 => stream.write_all(token.as_bytes()).await?,
+                Some(c) => {
                     held.extend_from_slice(token.as_bytes());
-                    flush_at.get_or_insert(due + interval);
+                    flush_at.get_or_insert(due + c.interval);
                 }
             }
         }

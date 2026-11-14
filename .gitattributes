@@ -15,3 +15,6 @@ crates/acn-ctl/openapi.json -text
 kit/** -text
 lab/**/*.toml -text
 docs/runs/**/*.json -text
+# The digest list of those copies, and the test fixture's copies and list (ADR-57).
+docs/evidence-digests.txt -text
+crates/xtask/tests/fixtures/evidence/** -text
