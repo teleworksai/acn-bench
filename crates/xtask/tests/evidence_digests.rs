@@ -156,7 +156,7 @@ fn a_byte_that_changes_no_value_is_still_a_change() {
     only_a_new_list_repairs(d.path(), "changed", &twin());
 }
 
-/// Cites: P16-20, LOOP-2
+/// Cites: P16-20
 #[test]
 fn a_twin_and_its_verdict_cannot_be_removed_together_quietly() {
     let d = root();
@@ -169,11 +169,119 @@ fn a_twin_and_its_verdict_cannot_be_removed_together_quietly() {
 
 /// Cites: P16-20
 #[test]
-fn a_file_added_beside_the_committed_ones_is_unlisted() {
+fn a_verdict_added_without_a_line_is_unlisted() {
     let d = root();
-    let rel = format!("docs/runs/loop/{LOOP}/note.txt");
-    fs::write(d.path().join(&rel), "x\n").unwrap();
-    only_a_new_list_repairs(d.path(), "unlisted", &rel);
+    let id = "ab".repeat(32);
+    let rel = format!("docs/runs/verdicts/{id}/verdict.json");
+    fs::create_dir_all(d.path().join(&rel).parent().unwrap()).unwrap();
+    fs::copy(
+        d.path()
+            .join(format!("docs/runs/verdicts/{L1}/verdict.json")),
+        d.path().join(&rel),
+    )
+    .unwrap();
+    let check = xtask_at(d.path(), &["evidence-digests", "--check"]);
+    assert!(!check.ok(), "{}", check.json);
+    assert_eq!(strings(diff(&check.json), "unlisted"), [rel.clone()]);
+    // The pages' own checks refuse this one earlier (its id is not its
+    // directory's name), so the gate fails either way; and a list written
+    // for it does not make the pages accept it.
+    assert!(!xtask_at(d.path(), &["docs-inventory", "--check"]).ok());
+    assert!(xtask_at(d.path(), &["evidence-digests", "--write"]).ok());
+    assert!(xtask_at(d.path(), &["evidence-digests", "--check"]).ok());
+    assert!(
+        fs::read_to_string(d.path().join(LIST))
+            .unwrap()
+            .contains(&rel)
+    );
+    assert!(!xtask_at(d.path(), &["docs-inventory", "--check"]).ok());
+}
+
+/// Both modes of `evidence-digests` refuse the tree, with `needle` in what
+/// they print; the gate, `docs-inventory --check`, fails too. The gate may
+/// fail earlier, on a check of the pages, so its message is not asserted.
+fn all_refuse(d: &Path, needle: &str) {
+    for args in [
+        &["evidence-digests", "--check"][..],
+        &["evidence-digests", "--write"][..],
+    ] {
+        let run = xtask_at(d, args);
+        assert!(!run.ok(), "{args:?}: {}", run.json);
+        assert!(
+            run.json.to_string().contains(needle),
+            "{args:?} lacks `{needle}`: {}",
+            run.json
+        );
+    }
+    let gate = xtask_at(d, &["docs-inventory", "--check"]);
+    assert!(!gate.ok(), "{}", gate.json);
+}
+
+/// Cites: P16-20
+#[test]
+fn a_file_the_spec_does_not_name_is_refused_not_listed() {
+    // A stray file must not be steered into the list: `--write` refuses it too.
+    for name in [".DS_Store", "note.txt", "report.md"] {
+        let d = root();
+        let before = fs::read(d.path().join(LIST)).unwrap();
+        fs::write(
+            d.path().join(format!("docs/runs/loop/{LOOP}/{name}")),
+            "x\n",
+        )
+        .unwrap();
+        all_refuse(d.path(), "is not a file P16-20 names");
+        assert_eq!(fs::read(d.path().join(LIST)).unwrap(), before);
+    }
+}
+
+/// Cites: P16-20
+#[cfg(unix)]
+#[test]
+fn an_entry_that_is_not_a_regular_file_or_has_a_control_character_is_refused() {
+    let d = root();
+    let fifo = d.path().join(format!("docs/runs/loop/{LOOP}/report.fifo"));
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    all_refuse(d.path(), "is not a regular file");
+    fs::remove_file(&fifo).unwrap();
+
+    let dir = d.path().join("docs/runs/verdicts/a\tb");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("verdict.json"), "{}").unwrap();
+    all_refuse(d.path(), "control character");
+}
+
+/// Cites: P16-20
+#[cfg(unix)]
+#[test]
+fn a_symlinked_directory_on_the_way_is_refused_for_reading_and_writing() {
+    use std::os::unix::fs::symlink;
+    // Each of these, moved outside the root and linked back, holds the same
+    // bytes; nothing may be read or written through the link.
+    for linked in ["docs/runs/loop", "docs/runs/verdicts", "docs/runs", "docs"] {
+        let d = root();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("moved");
+        fs::rename(d.path().join(linked), &target).unwrap();
+        symlink(&target, d.path().join(linked)).unwrap();
+        let list_outside = target.join("evidence-digests.txt");
+        let kept = fs::read(&list_outside).ok();
+        for args in [
+            &["evidence-digests", "--check"][..],
+            &["evidence-digests", "--write"][..],
+        ] {
+            let run = xtask_at(d.path(), args);
+            assert!(!run.ok(), "{linked}, {args:?}: {}", run.json);
+            assert!(run.json.to_string().contains("symlink"), "{}", run.json);
+        }
+        let run = xtask_at(d.path(), &["docs-inventory", "--check"]);
+        assert!(!run.ok(), "{linked}: {}", run.json);
+        // With `docs` linked, the list is outside the root: it is not rewritten.
+        assert_eq!(fs::read(&list_outside).ok(), kept, "{linked}");
+    }
 }
 
 /// Cites: P16-20

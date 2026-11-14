@@ -29,7 +29,7 @@ pub const LIST_FILE: &str = "docs/evidence-digests.txt";
 /// The directories whose every file is listed (P16-20).
 pub const COVERED: [&str; 2] = ["docs/runs/loop", "docs/runs/verdicts"];
 
-const WRITE_HINT: &str = "if the change is intended, run `cargo xtask evidence-digests --write` and commit the list with it (P16-20)";
+const WRITE_HINT: &str = "if the change is intended, run `cargo xtask evidence-digests --write` and commit the list with it; a file that should not be committed is removed, not listed (P16-20)";
 
 /// How the tree differs from the list, by repository-relative path.
 #[derive(Debug, Default, PartialEq, Eq, Serialize)]
@@ -74,8 +74,41 @@ fn invalid<T>(m: impl Into<String>) -> Result<T> {
     Err(Error::Invalid(m.into()))
 }
 
-fn is_symlink(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+/// Refuse `rel` when it, or any directory on the way to it from `root`, is a
+/// symlink: nothing is read or written through a link, wherever it sits. A
+/// component that does not exist ends the check; there is nothing below it.
+fn refuse_links(root: &Path, rel: &str) -> Result<()> {
+    let mut path = root.to_path_buf();
+    let mut seen = String::new();
+    for part in rel.split('/') {
+        path.push(part);
+        if !seen.is_empty() {
+            seen.push('/');
+        }
+        seen.push_str(part);
+        match std::fs::symlink_metadata(&path) {
+            Ok(m) if m.file_type().is_symlink() => {
+                return invalid(format!(
+                    "{seen} is a symlink; the evidence files and their list are regular files in regular directories of the repository (P16-20)"
+                ));
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    Ok(())
+}
+
+/// P16-20 names the committed files: a loop's `report.json`, each
+/// `twin/<verdict_id>/twin.json` under it, and each verdict's `verdict.json`.
+fn is_evidence(rel: &str) -> bool {
+    let parts: Vec<&str> = rel.split('/').collect();
+    matches!(
+        parts.as_slice(),
+        ["docs", "runs", "loop", _, "report.json"]
+            | ["docs", "runs", "loop", _, "twin", _, "twin.json"]
+            | ["docs", "runs", "verdicts", _, "verdict.json"]
+    )
 }
 
 /// Path → lower-case hex BLAKE3 of every regular file under [`COVERED`].
@@ -83,11 +116,7 @@ pub fn compute(root: &Path) -> Result<BTreeMap<String, String>> {
     let mut files = BTreeMap::new();
     for covered in COVERED {
         let dir = root.join(covered);
-        if is_symlink(&dir) {
-            return invalid(format!(
-                "{covered} is a symlink; evidence files are only read from the repository"
-            ));
-        }
+        refuse_links(root, covered)?;
         if !dir.is_dir() {
             continue;
         }
@@ -105,6 +134,11 @@ pub fn compute(root: &Path) -> Result<BTreeMap<String, String>> {
             }
             if !kind.is_file() {
                 return invalid(format!("{rel} is not a regular file"));
+            }
+            if !is_evidence(&rel) {
+                return invalid(format!(
+                    "{rel} is not a file P16-20 names (`loop/<id>/report.json`, `loop/<id>/twin/<id>/twin.json`, `verdicts/<id>/verdict.json`): remove it; only those are committed under docs/runs/loop/ and docs/runs/verdicts/"
+                ));
             }
             if rel.chars().any(char::is_control) {
                 return invalid(format!(
@@ -180,11 +214,7 @@ pub fn check(root: &Path) -> Result<Option<Problem>> {
 
 fn check_computed(root: &Path, computed: &BTreeMap<String, String>) -> Result<Option<Problem>> {
     let list = root.join(LIST_FILE);
-    if is_symlink(&list) {
-        return invalid(format!(
-            "{LIST_FILE} is a symlink; the list is a regular file"
-        ));
-    }
+    refuse_links(root, LIST_FILE)?;
     if !list.exists() {
         if computed.is_empty() {
             return Ok(None);
@@ -237,11 +267,7 @@ pub fn run(root: &Path, mode: Mode) -> Result<Report> {
         Mode::Write => {
             // Write mode repairs a corrupt list, so it does not parse the old one.
             let list = root.join(LIST_FILE);
-            if is_symlink(&list) {
-                return invalid(format!(
-                    "{LIST_FILE} is a symlink; the list is only written to a regular file"
-                ));
-            }
+            refuse_links(root, LIST_FILE)?;
             if !computed.is_empty() || list.exists() {
                 crate::workspace::write(&list, &render(&computed))?;
             }
@@ -273,6 +299,29 @@ mod tests {
             "\n".to_owned(),
         ] {
             assert!(parse(&bad).is_err(), "{bad:?}");
+        }
+    }
+
+    /// Cites: P16-20
+    #[test]
+    fn only_the_files_the_spec_names_are_evidence() {
+        for yes in [
+            "docs/runs/loop/a/report.json",
+            "docs/runs/loop/a/twin/b/twin.json",
+            "docs/runs/verdicts/b/verdict.json",
+        ] {
+            assert!(is_evidence(yes), "{yes}");
+        }
+        for no in [
+            "docs/runs/loop/a/.DS_Store",
+            "docs/runs/loop/a/report.md",
+            "docs/runs/loop/report.json",
+            "docs/runs/loop/a/twin/twin.json",
+            "docs/runs/loop/a/twin/b/verdict.json",
+            "docs/runs/verdicts/b/c/verdict.json",
+            "docs/runs/verdicts/verdict.json",
+        ] {
+            assert!(!is_evidence(no), "{no}");
         }
     }
 
