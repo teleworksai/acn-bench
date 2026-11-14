@@ -59,3 +59,4 @@
 | [ADR-53](../decisions/ADR-53.md) | GATE-26, the working-group package, is deferred to M2 | proposed with the M1 record, and accepted by the maintainer's merge of it (GATE-27) | GATE-26, GATE-27; by reference GATE-3, GATE-5, CON-23, CON-26 |
 | [ADR-54](../decisions/ADR-54.md) | SPEC 080 v0.3 in the verdict crate: three readings made while writing it | accepted (`env-change`; issues #10, #13, #15, #18, #81; follows ADR-50) | HYP-9, HYP-20, HYP-22, HYP-27, HYP-28; by reference HYP-15, HYP-24, LOOP-10, CON-7 |
 | [ADR-55](../decisions/ADR-55.md) | SPEC 080 v0.4: a file with no real backend pins no model | accepted (`spec-change`; issue #102; follows ADR-54) | HYP-9; by reference HYP-20, CON-13, CON-14, CON-26 |
+| [ADR-57](../decisions/ADR-57.md) | A committed digest list for the evidence files under `docs/runs/` | accepted (issue #84, the checks ADR-47 left open; Class A, `crates/xtask`) | P16-20, P16-21, LOOP-2, LOOP-12, GATE-2, GATE-23 |
