@@ -182,7 +182,10 @@ fn a_verdict_added_without_a_line_is_unlisted() {
     .unwrap();
     let check = xtask_at(d.path(), &["evidence-digests", "--check"]);
     assert!(!check.ok(), "{}", check.json);
-    assert_eq!(strings(diff(&check.json), "unlisted"), [rel.clone()]);
+    assert_eq!(
+        strings(diff(&check.json), "unlisted"),
+        std::slice::from_ref(&rel)
+    );
     // The pages' own checks refuse this one earlier (its id is not its
     // directory's name), so the gate fails either way; and a list written
     // for it does not make the pages accept it.
