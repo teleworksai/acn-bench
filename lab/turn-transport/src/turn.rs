@@ -46,7 +46,7 @@ use tokio::sync::watch;
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
-use crate::workload::{ASSISTANT, SYSTEM, TurnStats, USER, Workload, record};
+use crate::workload::{ASSISTANT, Coalesce, SYSTEM, TurnStats, USER, Workload, record};
 
 const OPEN: u8 = 1;
 const RESUME: u8 = 2;
@@ -83,7 +83,7 @@ pub struct Tuning {
     pub keep_alive: Option<Duration>,
     /// Server: write output at most once per interval, so several tokens share a
     /// packet. `None` writes each token as it is generated.
-    pub coalesce: Option<Duration>,
+    pub coalesce: Option<Coalesce>,
 }
 
 fn transport(tuning: Tuning, client: bool) -> Result<Arc<quinn::TransportConfig>> {
@@ -152,7 +152,7 @@ struct State {
     turns: Mutex<HashMap<TurnKey, Arc<Turn>>>,
     /// Output length of every turn the deadline cut short.
     expired: Mutex<Vec<usize>>,
-    coalesce: Option<Duration>,
+    coalesce: Option<Coalesce>,
 }
 
 pub struct TurnServer {
@@ -402,10 +402,13 @@ async fn stream_out(
     send: &mut SendStream,
     turn: &Turn,
     mut offset: usize,
-    coalesce: Option<Duration>,
+    coalesce: Option<Coalesce>,
 ) -> Result<()> {
     let mut out = turn.out.subscribe();
     let mut status_sent = false;
+    // Output written on this stream. A resumed stream starts again at "none", so
+    // with `first_now` what it owes the client goes out at once as well.
+    let mut output_sent = false;
     loop {
         let (chunk, phase) = {
             let out = out.borrow_and_update();
@@ -428,14 +431,17 @@ async fn stream_out(
         }
         send.write_all(&chunk).await?;
         offset += chunk.len();
+        output_sent |= !chunk.is_empty();
         if phase == Phase::Done {
             send.finish()?;
             return Ok(());
         }
         out.changed().await?;
-        if let Some(interval) = coalesce {
+        if let Some(c) = coalesce
+            && (output_sent || !c.first_now)
+        {
             // Hold the write back: what is generated meanwhile goes with it.
-            tokio::time::sleep(interval).await;
+            tokio::time::sleep(c.interval).await;
         }
     }
 }

@@ -10,3 +10,4 @@
 | [2026-11-10-p4-pilot](../lab/2026-11-10-p4-pilot.md) | Lab note — p4-pilot, what a real-provider POC 4 would spend (2026-11-10) |
 | [2026-11-10-turn-transport-2](../lab/2026-11-10-turn-transport-2.md) | Lab note — turn-transport, second spike: framing against transport (2026-11-10) |
 | [2026-11-12-p1a-atlas](../lab/2026-11-12-p1a-atlas.md) | Lab note — p1a-atlas: POC 1a by hand, to find what SPEC 110 has to decide (2026-11-12) |
+| [2026-11-13-turn-transport-3](../lab/2026-11-13-turn-transport-3.md) | Lab note — turn-transport, third spike: the coalescer's knobs and a slow link (2026-11-13) |
