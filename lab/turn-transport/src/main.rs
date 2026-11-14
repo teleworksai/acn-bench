@@ -31,7 +31,7 @@ use link::{GapKind, Link, LinkCfg, Snapshot};
 use raw::{RawClient, RawServer};
 use sse::{SseClient, SseServer};
 use turn::{ClientCfg, IDLE_TIMEOUT, Recovery, Tuning, TurnClient, TurnServer};
-use workload::{TurnStats, Workload};
+use workload::{Coalesce, TurnStats, Workload};
 
 #[derive(Parser, Clone, Debug, Serialize)]
 struct Args {
@@ -54,6 +54,16 @@ struct Args {
     /// The write interval of the coalescing arms.
     #[arg(long, default_value_t = 100)]
     coalesce_ms: u64,
+    /// Run the four coalescing arms, no gap, at each of these intervals as well.
+    /// `--arm` does not narrow this.
+    #[arg(long, value_delimiter = ',')]
+    coalesce_sweep_ms: Vec<u64>,
+    /// Make the link charge for headers the relay cannot see: 28 B for each UDP
+    /// datagram (IPv4, UDP) and 40 B for each TCP relay read (IPv4, TCP, no
+    /// options). The byte columns still count payload only. It matters when the
+    /// link's rate is low enough for one packet per token to fill it.
+    #[arg(long)]
+    wire_overhead: bool,
     #[arg(long, default_value_t = 10.0)]
     up_mbps: f64,
     #[arg(long, default_value_t = 50.0)]
@@ -119,6 +129,8 @@ impl Args {
             one_way: Duration::from_millis(self.rtt_ms) / 2,
             up_bps: (self.up_mbps * 1e6) as u64,
             down_bps: (self.down_mbps * 1e6) as u64,
+            udp_overhead: if self.wire_overhead { 28 } else { 0 },
+            tcp_overhead: if self.wire_overhead { 40 } else { 0 },
         }
     }
 
@@ -130,8 +142,17 @@ impl Args {
         }
     }
 
-    fn coalesce(&self) -> Duration {
-        Duration::from_millis(self.coalesce_ms)
+    /// The coalescer of `arm`, if it has one.
+    fn coalesce(&self, arm: Arm) -> Option<Coalesce> {
+        let first_now = match arm {
+            Arm::RawTcpCoalesce | Arm::TurnCoalesce => false,
+            Arm::RawTcpCoalesceFirst | Arm::TurnCoalesceFirst => true,
+            _ => return None,
+        };
+        Some(Coalesce {
+            interval: Duration::from_millis(self.coalesce_ms),
+            first_now,
+        })
     }
 
     /// Server time for a whole turn, without the network.
@@ -172,23 +193,35 @@ enum Arm {
     RawTcp,
     /// `raw-tcp`, the server writing at most once per `--coalesce-ms`.
     RawTcpCoalesce,
+    /// `raw-tcp-coalesce`, the first token of a turn written at once.
+    RawTcpCoalesceFirst,
     Quic,
     QuicMigrate,
     Turn,
     /// `turn`, the server writing at most once per `--coalesce-ms`.
     TurnCoalesce,
+    /// `turn-coalesce`, the first output of a stream written at once.
+    TurnCoalesceFirst,
     TurnProbe,
 }
 
-const ARMS: [Arm; 8] = [
+const ARMS: [Arm; 10] = [
     Arm::Sse,
     Arm::RawTcp,
     Arm::RawTcpCoalesce,
+    Arm::RawTcpCoalesceFirst,
     Arm::Quic,
     Arm::QuicMigrate,
     Arm::Turn,
     Arm::TurnCoalesce,
+    Arm::TurnCoalesceFirst,
     Arm::TurnProbe,
+];
+const COALESCE_ARMS: [Arm; 4] = [
+    Arm::RawTcpCoalesce,
+    Arm::RawTcpCoalesceFirst,
+    Arm::TurnCoalesce,
+    Arm::TurnCoalesceFirst,
 ];
 const SWEEP_ARMS: [Arm; 3] = [Arm::Sse, Arm::Turn, Arm::TurnProbe];
 const GAPS: [GapKind; 3] = [GapKind::None, GapKind::Blackout, GapKind::Break];
@@ -237,9 +270,8 @@ impl Rig {
                 };
                 return Ok((rig, link));
             }
-            Arm::RawTcp | Arm::RawTcpCoalesce => {
-                let coalesce = (arm == Arm::RawTcpCoalesce).then(|| args.coalesce());
-                let server = RawServer::start(workload, coalesce).await?;
+            Arm::RawTcp | Arm::RawTcpCoalesce | Arm::RawTcpCoalesceFirst => {
+                let server = RawServer::start(workload, args.coalesce(arm)).await?;
                 let link = Arc::new(Link::tcp(server.addr, args.link()).await?);
                 let client = RawClient::new(link.addr, link.state(), &system);
                 let rig = Rig::Raw {
@@ -250,10 +282,12 @@ impl Rig {
             }
             Arm::Quic => (false, Recovery::Restart),
             Arm::QuicMigrate => (false, Recovery::Migrate),
-            Arm::Turn | Arm::TurnCoalesce | Arm::TurnProbe => (true, Recovery::Resume),
+            Arm::Turn | Arm::TurnCoalesce | Arm::TurnCoalesceFirst | Arm::TurnProbe => {
+                (true, Recovery::Resume)
+            }
         };
         let server_tuning = Tuning {
-            coalesce: (arm == Arm::TurnCoalesce).then(|| args.coalesce()),
+            coalesce: args.coalesce(arm),
             ..args.tuning()
         };
         let cfg = ClientCfg {
@@ -294,6 +328,8 @@ struct Plan {
     gap_ms: u64,
     /// Make the server forget the session ahead of this turn.
     evict_before: Option<u32>,
+    /// The write interval, for an arm that coalesces.
+    coalesce_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -333,7 +369,8 @@ fn open_gap(
 /// One conversation on a fresh server and link. Per-turn bytes are link-ingress counts
 /// between turn boundaries, so a turn's trailing ACKs land in the next row; the
 /// conversation total is taken after the link has drained.
-async fn converse(args: Args, plan: Plan) -> Result<Conversation> {
+async fn converse(mut args: Args, plan: Plan) -> Result<Conversation> {
+    args.coalesce_ms = plan.coalesce_ms;
     let workload = Arc::new(args.workload());
     let deadline = Duration::from_millis(args.deadline_ms);
     let (mut rig, link) = Rig::build(&args, workload.clone(), plan.arm, deadline).await?;
@@ -472,6 +509,7 @@ async fn deadline_checks(args: &Args) -> DeadlineChecks {
 struct Report {
     args: Args,
     matrix: Vec<Conversation>,
+    coalesce_sweep: Vec<Conversation>,
     evicted: Vec<Conversation>,
     sweep: Vec<Conversation>,
     deadline: Option<DeadlineChecks>,
@@ -492,10 +530,11 @@ async fn run_batch(args: &Args, plans: Vec<Plan>, failures: &mut Vec<String>) ->
             Ok((_, Ok(conversation))) => done.push(conversation),
             Ok((plan, Err(e))) => {
                 let failure = format!(
-                    "{} / {} / {} ms: {e:#}",
+                    "{} / {} / {} ms / coalescing {} ms: {e:#}",
                     name(&plan.arm),
                     name(&plan.gap),
-                    plan.gap_ms
+                    plan.gap_ms,
+                    plan.coalesce_ms
                 );
                 eprintln!("FAILED {failure}");
                 failures.push(failure);
@@ -516,11 +555,13 @@ async fn main() -> Result<()> {
         gap,
         gap_ms,
         evict_before,
+        coalesce_ms: args.coalesce_ms,
     };
 
     let mut report = Report {
         args: args.clone(),
         matrix: Vec::new(),
+        coalesce_sweep: Vec::new(),
         evicted: Vec::new(),
         sweep: Vec::new(),
         deadline: None,
@@ -549,6 +590,22 @@ async fn main() -> Result<()> {
             .partition(|c| c.plan.evict_before.is_some());
         report.matrix.extend(matrix);
         report.evicted.extend(evicted);
+
+        if !args.coalesce_sweep_ms.is_empty() {
+            let plans = args
+                .coalesce_sweep_ms
+                .iter()
+                .flat_map(|interval| {
+                    COALESCE_ARMS.map(|arm| Plan {
+                        coalesce_ms: *interval,
+                        ..plan(arm, GapKind::None, 0, None)
+                    })
+                })
+                .collect();
+            report
+                .coalesce_sweep
+                .extend(run_batch(&args, plans, &mut report.failures).await);
+        }
 
         if full_run {
             let plans = args
@@ -617,8 +674,20 @@ fn print_tables(report: &Report) {
         a.turns, a.system_bytes, a.user_bytes, a.out_tokens, a.token_ms, a.prefill_ms
     );
     println!(
-        "link: RTT {} ms, {} Mbit/s up, {} Mbit/s down; gap {} ms at {} ms into turn {}; QUIC keep-alive {keep_alive}; median of {} reps\n",
-        a.rtt_ms, a.up_mbps, a.down_mbps, a.gap_ms, a.gap_at_ms, a.gap_turn, a.reps
+        "link: RTT {} ms, {} Mbit/s up, {} Mbit/s down, {}; gap {} ms at {} ms into turn {}; QUIC keep-alive {keep_alive}; coalescing interval {} ms; median of {} reps\n",
+        a.rtt_ms,
+        a.up_mbps,
+        a.down_mbps,
+        if a.wire_overhead {
+            "headers charged (28 B a datagram, 40 B a TCP read)"
+        } else {
+            "payload only"
+        },
+        a.gap_ms,
+        a.gap_at_ms,
+        a.gap_turn,
+        a.coalesce_ms,
+        a.reps
     );
 
     let matrix = &report.matrix;
@@ -678,7 +747,10 @@ fn print_tables(report: &Report) {
             .collect()
     };
     for arm in ARMS {
-        for gap in GAPS {
+        for gap in GAPS
+            .into_iter()
+            .filter(|g| a.gap.is_none_or(|only| only == *g))
+        {
             let m = |f: &dyn Fn(&Conversation) -> f64| cell(arm, gap, f);
             let lost = match arm {
                 Arm::Sse => "-".to_owned(),
@@ -703,6 +775,31 @@ fn print_tables(report: &Report) {
                 }),
                 m(&|c| c.turns[gap_turn].discarded as f64),
             );
+        }
+    }
+
+    if !report.coalesce_sweep.is_empty() {
+        println!("\n### Coalescing interval sweep, no gap\n");
+        println!(
+            "| interval ms | arm | up B | down B | up pkts | down pkts | other turns ms | warm TTFT ms |"
+        );
+        println!("|---|---|---|---|---|---|---|---|");
+        for interval in &a.coalesce_sweep_ms {
+            for arm in COALESCE_ARMS {
+                let pick = |p: &Plan| p.arm == arm && p.coalesce_ms == *interval;
+                let m =
+                    |f: &dyn Fn(&Conversation) -> f64| over_reps(&report.coalesce_sweep, pick, f);
+                println!(
+                    "| {interval} | {} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} |",
+                    name(&arm),
+                    m(&|c| c.link.up_bytes as f64),
+                    m(&|c| c.link.down_bytes as f64),
+                    m(&|c| c.link.up_pkts as f64),
+                    m(&|c| c.link.down_pkts as f64),
+                    m(&|c| median(steady(c, &|t| t.total_ms))),
+                    m(&|c| median(steady(c, &|t| t.ttft_ms))),
+                );
+            }
         }
     }
 
