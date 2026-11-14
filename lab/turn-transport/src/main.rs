@@ -55,6 +55,7 @@ struct Args {
     #[arg(long, default_value_t = 100)]
     coalesce_ms: u64,
     /// Run the four coalescing arms, no gap, at each of these intervals as well.
+    /// `--arm` does not narrow this.
     #[arg(long, value_delimiter = ',')]
     coalesce_sweep_ms: Vec<u64>,
     /// Make the link charge for headers the relay cannot see: 28 B for each UDP
@@ -529,10 +530,11 @@ async fn run_batch(args: &Args, plans: Vec<Plan>, failures: &mut Vec<String>) ->
             Ok((_, Ok(conversation))) => done.push(conversation),
             Ok((plan, Err(e))) => {
                 let failure = format!(
-                    "{} / {} / {} ms: {e:#}",
+                    "{} / {} / {} ms / coalescing {} ms: {e:#}",
                     name(&plan.arm),
                     name(&plan.gap),
-                    plan.gap_ms
+                    plan.gap_ms,
+                    plan.coalesce_ms
                 );
                 eprintln!("FAILED {failure}");
                 failures.push(failure);

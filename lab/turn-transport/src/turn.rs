@@ -406,8 +406,9 @@ async fn stream_out(
 ) -> Result<()> {
     let mut out = turn.out.subscribe();
     let mut status_sent = false;
-    // Output written on this stream. A resumed stream starts again at "none", so
-    // with `first_now` what it owes the client goes out at once as well.
+    // Output written on this stream. The first pass below writes whatever a resumed
+    // stream owes before any hold, with or without `first_now`; the flag only
+    // matters for the first new output when nothing is owed.
     let mut output_sent = false;
     loop {
         let (chunk, phase) = {
